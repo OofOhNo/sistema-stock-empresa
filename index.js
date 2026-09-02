@@ -15,32 +15,32 @@ app.get('/', (req, res) => {
 });
 
 //importamos rutas de usuarios
-const usuarioRoutes = require('./src/routes/usuarioRoutes');
+const usuarioRoutes = require('./src/routes/usuarioRoutes.js');
 //le decimos a Express: "cualquier peticion que empiece con /api/usuarios, mandala a este archivo de rutas"
 app.use('/api/usuarios', usuarioRoutes);
 
 //rutas de autenticacion
-const authRoutes = require('./src/routes/authRoutes');
+const authRoutes = require('./src/routes/authRoutes.js');
 app.use('/api/auth', authRoutes);
 
 //rutas de stock
-const stockRoutes = require('./src/routes/stockRoutes');
+const stockRoutes = require('./src/routes/stockRoutes.js');
 app.use('/api/stock', stockRoutes);
 
 //rutas pedidos
-const pedidoRoutes = require('./src/routes/pedidoRoutes');
+const pedidoRoutes = require('./src/routes/pedidoRoutes.js');
 app.use('/api/pedidos', pedidoRoutes);
 
 //rutas reuniones
-const reunionRoutes = require('./src/routes/reunionRoutes');
+const reunionRoutes = require('./src/routes/reunionRoutes.js');
 app.use('/api/reuniones', reunionRoutes);
 
 //rutas facturacion
-const facturaRoutes = require('./src/routes/facturaRoutes');
+const facturaRoutes = require('./src/routes/facturaRoutes.js');
 app.use('/api/facturacion', facturaRoutes);
 
 //ruta kardex
-const kardexRoutes = require('./routes/kardexRoutes');
+const kardexRoutes = require('./routes/kardexRoutes.js');
 app.use('/api/kardex', kardexRoutes);
 
 //configurar el puerto y encender el servidor
