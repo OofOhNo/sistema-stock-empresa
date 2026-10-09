@@ -40,7 +40,7 @@ const facturaRoutes = require('./src/routes/facturaRoutes.js');
 app.use('/api/facturacion', facturaRoutes);
 
 //ruta kardex
-const kardexRoutes = require('./routes/kardexRoutes.js');
+const kardexRoutes = require('./src/routes/kardexRoutes.js');
 app.use('/api/kardex', kardexRoutes);
 
 //configurar el puerto y encender el servidor
