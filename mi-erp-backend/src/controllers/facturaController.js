@@ -62,7 +62,10 @@ const facturaController = {
             const montoIgv = montoTotal - montoSubtotal;
 
             const serie = tipo_comprobante === '01' ? 'F001' : 'B001';
-            const correlativo = Math.floor(Math.random() * 90000) + 1000;
+            
+            const resCorrelativo = await client.query("SELECT MAX(correlativo) as max_corr FROM comprobantes WHERE serie = $1", [serie]);
+            const maxCorr = resCorrelativo.rows[0].max_corr ? parseInt(resCorrelativo.rows[0].max_corr, 10) : 0;
+            const correlativo = maxCorr + 1;
 
             //simulacion de respuesta SUNAT
             const respuestaSunat = {

@@ -30,8 +30,8 @@ const usuarioController = {
         const { nuevo_rol } = req.body;
         const adminSolicitante = req.usuario; // el usuario que hace la peticion (desde el token)
 
-        // validacion estricta: solo el Admin puede cambiar roles
-        if (adminSolicitante.rol !== 'Administrador' && adminSolicitante.rol !== 'Admin Central') {
+        // validacion estricta: solo el Admin Central puede cambiar roles
+        if (adminSolicitante.nombre_rol !== 'Admin Central') {
             return res.status(403).json({ exito: false, mensaje: "Acceso denegado. Solo un Administrador puede cambiar roles." });
         }
 

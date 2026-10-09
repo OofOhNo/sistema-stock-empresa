@@ -21,13 +21,26 @@ const kardexController = {
         try {
             await client.query('BEGIN');
 
+            const cantidadNum = Number(cantidad);
+
+            if (tipo_movimiento === 'SALIDA') {
+                const stockCheck = await client.query('SELECT cantidad_fisica, cantidad_reservada FROM inventario WHERE id_producto = $1 AND id_sucursal = $2', [id_producto, id_sucursal]);
+                if (stockCheck.rows.length === 0) {
+                    throw new Error("El producto no existe en esta sucursal.");
+                }
+                const disponible = stockCheck.rows[0].cantidad_fisica - stockCheck.rows[0].cantidad_reservada;
+                if (disponible < cantidadNum) {
+                    throw new Error(`Stock insuficiente. Disponible: ${disponible}, Solicitado: ${cantidadNum}`);
+                }
+            }
+
             // 1. guardamos la huella en el Kardex
             const queryKardex = `
                 INSERT INTO movimientos_kardex (id_producto, id_sucursal, id_usuario, tipo_movimiento, cantidad, motivo)
                 VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING id_movimiento, fecha_movimiento;
             `;
-            const resMovimiento = await client.query(queryKardex, [id_producto, id_sucursal, id_usuario, tipo_movimiento, motivo]);
+            const resMovimiento = await client.query(queryKardex, [id_producto, id_sucursal, id_usuario, tipo_movimiento, cantidadNum, motivo]);
 
             // 2. actualizamos la foto actual (la tabla inventario) para consultas rapidas
             let operador = tipo_movimiento === 'INGRESO' ? '+' : '-';
@@ -35,7 +48,7 @@ const kardexController = {
                 UPDATE inventario 
                 SET cantidad_fisica = cantidad_fisica ${operador} $1 
                 WHERE id_producto = $2 AND id_sucursal = $3
-            `, [cantidad, id_producto, id_sucursal]);
+            `, [cantidadNum, id_producto, id_sucursal]);
 
             await client.query('COMMIT');
             res.status(201).json({ exito: true, mensaje: "Movimiento registrado con huella de auditoría.", datos: resMovimiento.rows[0] });

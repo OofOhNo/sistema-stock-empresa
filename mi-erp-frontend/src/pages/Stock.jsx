@@ -59,7 +59,7 @@ export default function Stock({ usuario }) {
     try {
       await api.post('/kardex/movimiento', {
         id_producto: form.id_producto,
-        id_sucursal: 1,
+        id_sucursal: usuario?.id_sucursal,
         tipo_movimiento: form.tipo_movimiento,
         cantidad: form.cantidad,
         motivo: form.motivo
@@ -89,7 +89,7 @@ export default function Stock({ usuario }) {
   };
 
   const puedeAnular = (fechaMovimiento, idUsuarioMovimiento) => {
-    if (usuario?.rol === 'Administrador') return true; 
+    if (usuario?.rol === 'Admin Central') return true; 
     if (usuario?.id_usuario !== idUsuarioMovimiento) return false; 
     
     const fechaMov = new Date(fechaMovimiento);
@@ -197,7 +197,7 @@ export default function Stock({ usuario }) {
         <div className="space-y-4">
           
           {/* PANEL EXCLUSIVO PARA ADMINISTRADORES */}
-          {usuario?.rol === 'Administrador' && (
+          {usuario?.rol === 'Admin Central' && (
             <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex justify-between items-center">
               <div className="flex items-center space-x-3">
                 <ShieldAlert className="text-red-500" size={24} />

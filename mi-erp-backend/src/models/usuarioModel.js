@@ -12,6 +12,7 @@ const Usuario = {
                     u.nombre_completo, 
                     u.email, 
                     u.sucursal_id,
+                    u.rol_id,
                     r.nombre AS nombre_rol, -- Usamos 'AS' para que en el JSON salga bonito
                     u.creado_en
                 FROM usuarios u
@@ -30,7 +31,7 @@ const Usuario = {
 
     cambiarRol: async (id_usuario, nuevo_rol) => {
         try {
-            const query = "UPDATE usuarios SET rol_id = (SELECT id_rol FROM roles WHERE nombre = $1) WHERE id_usuario = $2";
+            const query = "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2";
             await pool.query(query, [nuevo_rol, id_usuario]);
             return true;
         } catch (error) {

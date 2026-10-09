@@ -11,25 +11,29 @@ export default function Usuarios({ usuarioLogueado }) {
   // definimos la jerarquia de roles de la empresa
   const rolesDisponibles = [
     {
-      id: 'Admin Central',
+      id: 1,
+      nombre: 'Admin Central',
       icono: <ShieldAlert size={16} className="text-red-500" />,
       color: 'bg-red-100 text-red-700 border-red-200',
       descripcion: 'Acceso total. Puede ver todas las sucursales, anular movimientos y gestionar roles.'
     },
     {
-      id: 'Administrador', // actua como gerente de area
+      id: 2, 
+      nombre: 'Administrador', // actua como gerente de area
       icono: <Shield size={16} className="text-indigo-500" />,
       color: 'bg-indigo-100 text-indigo-700 border-indigo-200',
       descripcion: 'Gestión completa de su área. Puede anular movimientos pasados los 10 mins.'
     },
     {
-      id: 'Jefe de División',
+      id: 3,
+      nombre: 'Jefe de División',
       icono: <Briefcase size={16} className="text-blue-500" />,
       color: 'bg-blue-100 text-blue-700 border-blue-200',
       descripcion: 'Puede aprobar pedidos y ver reportes del personal a su cargo.'
     },
     {
-      id: 'Vendedor', // empleado Normal
+      id: 4,
+      nombre: 'Vendedor', // empleado Normal
       icono: <UserCheck size={16} className="text-emerald-500" />,
       color: 'bg-emerald-100 text-emerald-700 border-emerald-200',
       descripcion: 'Operaciones básicas. Factura, registra stock y tiene 10 mins para correcciones.'
@@ -68,7 +72,7 @@ export default function Usuarios({ usuarioLogueado }) {
   };
 
   // proteccion de la pantalla: si no es Admin Central, no deberia estar aqui
-  if (usuarioLogueado?.rol !== 'Administrador' && usuarioLogueado?.rol !== 'Admin Central') {
+  if (usuarioLogueado?.rol !== 'Admin Central') {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center h-full">
         <Lock size={64} className="text-red-400 mb-4" />
@@ -105,14 +109,14 @@ export default function Usuarios({ usuarioLogueado }) {
           </thead>
           <tbody className="divide-y divide-slate-100 text-sm">
             {usuarios.map((user) => {
-              const rolActual = rolesDisponibles.find(r => r.id === user.rol) || rolesDisponibles[3];
+              const rolActual = rolesDisponibles.find(r => r.id === user.rol_id) || rolesDisponibles[3];
               const esYoMismo = user.id_usuario === usuarioLogueado.id_usuario;
 
               return (
                 <tr key={user.id_usuario} className={`hover:bg-slate-50 transition-colors ${esYoMismo ? 'bg-indigo-50/20' : ''}`}>
                   <td className="p-4">
                     <div className="font-bold text-slate-900 flex items-center space-x-2">
-                      <span>{user.nombre}</span>
+                      <span>{user.nombre_completo}</span>
                       {esYoMismo && <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Tú</span>}
                     </div>
                   </td>
@@ -121,7 +125,7 @@ export default function Usuarios({ usuarioLogueado }) {
                     <div className="flex items-center space-x-2" title={rolActual.descripcion}>
                       {rolActual.icono}
                       <span className={`px-2 py-1 rounded-md text-xs font-bold border ${rolActual.color}`}>
-                        {user.rol}
+                        {user.nombre_rol}
                       </span>
                     </div>
                   </td>
@@ -129,13 +133,13 @@ export default function Usuarios({ usuarioLogueado }) {
                     <div className="flex justify-center">
                       <select
                         disabled={actualizando === user.id_usuario || esYoMismo}
-                        value={user.rol}
-                        onChange={(e) => cambiarRol(user.id_usuario, e.target.value)}
+                        value={user.rol_id}
+                        onChange={(e) => cambiarRol(user.id_usuario, Number(e.target.value))}
                         className="bg-white border border-slate-300 rounded-lg text-sm px-3 py-1.5 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-100 cursor-pointer"
                         title={esYoMismo ? "No puedes cambiar tu propio rol por seguridad." : "Selecciona para cambiar permisos"}
                       >
                         {rolesDisponibles.map(rol => (
-                          <option key={rol.id} value={rol.id}>{rol.id}</option>
+                          <option key={rol.id} value={rol.id}>{rol.nombre}</option>
                         ))}
                       </select>
                     </div>
@@ -155,7 +159,7 @@ export default function Usuarios({ usuarioLogueado }) {
             <div key={rol.id} className="flex items-start space-x-3">
               <div className="mt-1">{rol.icono}</div>
               <div>
-                <p className="font-bold text-slate-700 text-sm">{rol.id}</p>
+                <p className="font-bold text-slate-700 text-sm">{rol.nombre}</p>
                 <p className="text-slate-500 text-xs mt-0.5">{rol.descripcion}</p>
               </div>
             </div>

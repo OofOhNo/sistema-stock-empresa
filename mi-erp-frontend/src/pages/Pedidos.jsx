@@ -74,7 +74,7 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
     try {
       await api.post('/pedidos', {
         id_cliente: 1,
-        id_sucursal: 1, 
+        id_sucursal: usuario?.id_sucursal || 1, 
         id_usuario: usuario?.id_usuario || 1, // <--- REGISTRAMOS QUIEN LO CREO
         fecha_limite_despacho: fechaLimite,   // viene sin hora (YYYY-MM-DD)
         items: items

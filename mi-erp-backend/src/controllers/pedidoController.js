@@ -64,7 +64,7 @@ const pedidoController = {
     cancelarPedido: async (req, res) => {
         try {
             const { id } = req.params;
-            await Pedido.cancelarPedido(id);
+            await Pedido.cancelarPedido(id, req.usuario);
             
             res.status(200).json({
                 exito: true,

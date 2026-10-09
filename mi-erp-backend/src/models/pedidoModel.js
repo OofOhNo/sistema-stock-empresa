@@ -92,7 +92,7 @@ const Pedido = {
     },
 
     //cancelar pedido y liberar el stock reservado
-    cancelarPedido: async (id_pedido) => {
+    cancelarPedido: async (id_pedido, usuario) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -103,6 +103,9 @@ const Pedido = {
             if (resPedido.rows[0].estado_pedido !== 'PENDIENTE') throw new Error("Solo se pueden cancelar pedidos pendientes.");
 
             const id_sucursal = resPedido.rows[0].id_sucursal;
+            if (usuario.nombre_rol !== 'Admin Central' && id_sucursal !== usuario.id_sucursal) {
+                throw new Error("No tienes permisos para cancelar pedidos de otra sucursal.");
+            }
 
             //cambiar el estado a CANCELADO
             await client.query("UPDATE pedidos SET estado_pedido = 'CANCELADO' WHERE id_pedido = $1", [id_pedido]);
