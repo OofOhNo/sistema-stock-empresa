@@ -29,7 +29,8 @@ const authController = {
             const datosToken = {
                 id_usuario: usuario.id_usuario,
                 email: usuario.email,
-                nombre_rol: usuario.nombre_rol
+                nombre_rol: usuario.nombre_rol,
+                id_sucursal: usuario.sucursal_id
             };
 
             //firmamos el token, expira en 8 horas
@@ -41,6 +42,7 @@ const authController = {
                 mensaje: 'Login exitoso',
                 token: token, //la llave
                 usuario: {
+                    id_usuario: usuario.id_usuario,
                     nombre: usuario.nombre_completo,
                     rol: usuario.nombre_rol
                 }

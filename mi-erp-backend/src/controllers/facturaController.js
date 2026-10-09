@@ -9,6 +9,15 @@ const facturaController = {
 
             const { id_pedido, tipo_comprobante } = req.body; // '01' para Factura, '03' para Boleta
 
+            if (!id_pedido || !tipo_comprobante) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Faltan datos obligatorios (id_pedido o tipo_comprobante).' });
+            }
+            if (tipo_comprobante !== '01' && tipo_comprobante !== '03') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Tipo de comprobante inválido. Use "01" (Factura) o "03" (Boleta).' });
+            }
+
             //VALIDACION BLINDADA: Verificar si el pedido ya fue facturado
             const resPedidoCheck = await client.query("SELECT estado_pedido FROM pedidos WHERE id_pedido = $1", [id_pedido]);
             if (resPedidoCheck.rows.length === 0) {

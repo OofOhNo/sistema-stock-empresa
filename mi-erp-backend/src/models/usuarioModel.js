@@ -29,9 +29,13 @@ const Usuario = {
     },
 
     cambiarRol: async (id_usuario, nuevo_rol) => {
-        const query = "UPDATE usuarios SET rol = $1 WHERE id_usuario = $2";
-        await pool.query(query, [nuevo_rol, id_usuario]);
-        return true;
+        try {
+            const query = "UPDATE usuarios SET rol_id = (SELECT id_rol FROM roles WHERE nombre = $1) WHERE id_usuario = $2";
+            await pool.query(query, [nuevo_rol, id_usuario]);
+            return true;
+        } catch (error) {
+            throw error;
+        }
     },
 
     buscarPorEmail: async (email) => {

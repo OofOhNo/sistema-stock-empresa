@@ -7,7 +7,15 @@ const kardexController = {
         const { id_producto, id_sucursal, cantidad, tipo_movimiento, motivo } = req.body;
         const id_usuario = req.usuario.id_usuario; // el token nos dice quien es
 
-        if (cantidad <= 0) return res.status(400).json({ exito: false, mensaje: "La cantidad debe ser mayor a 0." });
+        if (!id_producto || !id_sucursal || !cantidad || !tipo_movimiento || !motivo) {
+            return res.status(400).json({ exito: false, mensaje: "Todos los campos son obligatorios." });
+        }
+        if (isNaN(cantidad) || cantidad <= 0) {
+            return res.status(400).json({ exito: false, mensaje: "La cantidad debe ser un número mayor a 0." });
+        }
+        if (tipo_movimiento !== 'INGRESO' && tipo_movimiento !== 'SALIDA') {
+            return res.status(400).json({ exito: false, mensaje: "El tipo de movimiento debe ser INGRESO o SALIDA." });
+        }
 
         const client = await pool.connect();
         try {
@@ -62,12 +70,12 @@ const kardexController = {
             const minutosPasados = (ahora - fechaMov) / (1000 * 60);
 
             //si es un empleado normal y pasaron mas de 10 min, BLOQUEAR
-            if (usuarioSolicitante.rol !== 'Administrador' && minutosPasados > 10) {
+            if (usuarioSolicitante.nombre_rol !== 'Admin Central' && minutosPasados > 10) {
                 throw new Error("Han pasado más de 10 minutos. No puedes deshacer este movimiento. Solicita ayuda a un Administrador.");
             }
 
             //si es empleado normal, solo puede anular SUS PROPIOS movimientos
-            if (usuarioSolicitante.rol !== 'Administrador' && mov.id_usuario !== usuarioSolicitante.id_usuario) {
+            if (usuarioSolicitante.nombre_rol !== 'Admin Central' && mov.id_usuario !== usuarioSolicitante.id_usuario) {
                 throw new Error("Solo un Administrador puede anular movimientos registrados por otros usuarios.");
             }
 

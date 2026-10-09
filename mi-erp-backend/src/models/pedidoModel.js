@@ -73,7 +73,6 @@ const Pedido = {
                 JOIN clientes c ON p.id_cliente = c.id_cliente
                 LEFT JOIN sucursales s ON p.id_sucursal = s.id_sucursal
                 LEFT JOIN usuarios u ON p.id_usuario = u.id_usuario
-                ORDER BY p.fecha_limite_despacho ASC;
             `;
 
             //si no es Admin Central, filtramos estrictamente por su sucursal
