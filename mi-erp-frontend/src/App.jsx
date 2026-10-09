@@ -5,6 +5,9 @@ import Stock from './pages/Stock';
 import Pedidos from './pages/Pedidos';
 import Dashboard from './pages/Dashboard';
 import Usuarios from './pages/Usuarios';
+import Productos from './pages/Productos';
+import Reuniones from './pages/Reuniones';
+import { Toaster } from 'react-hot-toast';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -36,23 +39,30 @@ export default function App() {
         return <Stock usuario={usuario} />;
       case 'pedidos':
         return <Pedidos usuario={usuario} />;
+      case 'productos':
+        return <Productos usuario={usuario} />;
       case 'dashboard':
-        return <Dashboard usuario={usuario} />; // <-- ¡Aquí conectamos el nuevo Dashboard!
+        return <Dashboard usuario={usuario} />; 
       case 'usuarios':
         return <Usuarios usuarioLogueado={usuario} />;
+      case 'reuniones':
+        return <Reuniones usuario={usuario} />;
       default:
         return <div className="text-slate-500">Módulo en construcción...</div>;
     }
   };
 
   return (
-    <Layout 
-      usuario={usuario} 
-      cerrarSesion={cerrarSesion} 
-      vistaActual={vistaActual}
-      setVistaActual={setVistaActual}
-    >
-      {renderizarVista()}
-    </Layout>
+    <>
+      <Toaster position="top-right" />
+      <Layout 
+        usuario={usuario} 
+        cerrarSesion={cerrarSesion} 
+        vistaActual={vistaActual}
+        setVistaActual={setVistaActual}
+      >
+        {renderizarVista()}
+      </Layout>
+    </>
   );
 }

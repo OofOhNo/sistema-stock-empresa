@@ -17,6 +17,7 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
   const [items, setItems] = useState([]);
   const [productoSeleccionado, setProductoSeleccionado] = useState('');
   const [cantidad, setCantidad] = useState(1);
+  const [solicitadoPor, setSolicitadoPor] = useState('');
   const [guardandoPedido, setGuardandoPedido] = useState(false);
 
   useEffect(() => {
@@ -68,24 +69,26 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
 
   const enviarNuevoPedido = async (e) => {
     e.preventDefault();
-    if (items.length === 0) return alert('Debes agregar al menos un producto al pedido.');
+    if (items.length === 0) return toast.error('Debes agregar al menos un producto al pedido.');
     
     setGuardandoPedido(true);
     try {
       await api.post('/pedidos', {
         id_cliente: 1,
-        id_sucursal: usuario?.id_sucursal || 1, 
-        id_usuario: usuario?.id_usuario || 1, // <--- REGISTRAMOS QUIEN LO CREO
-        fecha_limite_despacho: fechaLimite,   // viene sin hora (YYYY-MM-DD)
-        items: items
+        id_ubicacion: usuario?.id_ubicacion, 
+        id_usuario: usuario?.id_usuario, 
+        fecha_limite_despacho: fechaLimite,
+        items: items,
+        solicitado_por: solicitadoPor || null
       });
-      alert('¡Pedido creado y stock reservado con éxito!');
+      toast.success('¡Pedido creado y stock reservado con éxito!');
       setItems([]);
       setFechaLimite('');
+      setSolicitadoPor('');
       setVista('lista');
       cargarPedidos(); 
     } catch (err) {
-      alert('Error al crear el pedido: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error al crear el pedido: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setGuardandoPedido(false);
     }
@@ -96,27 +99,48 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
     try {
       const respuesta = await api.post('/facturacion/emitir', { id_pedido: idPedido, tipo_comprobante: '01' });
       if (respuesta.data.exito) {
-        alert('¡Factura emitida exitosamente!');
+        toast.success('¡Factura emitida exitosamente!');
         cargarPedidos();
       }
     } catch (err) {
-      alert('Error al emitir: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error al emitir: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setFacturando(null);
     }
   };
 
   const cancelarPedido = async (idPedido) => {
-    if (!window.confirm('¿Estás segura de que deseas cancelar este pedido? Se liberará el stock.')) return;
+    toast((t) => (
+      <div className="flex flex-col space-y-3">
+        <p className="text-sm font-medium">¿Estás segura de que deseas cancelar este pedido? Se liberará el stock.</p>
+        <div className="flex justify-end space-x-2">
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarCancelacion(idPedido); }}
+            className="bg-red-500 text-white px-3 py-1 rounded text-xs font-bold"
+          >
+            Sí, cancelar
+          </button>
+          <button 
+            onClick={() => toast.dismiss(t.id)}
+            className="bg-slate-200 text-slate-800 px-3 py-1 rounded text-xs font-bold"
+          >
+            No
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
+  const ejecutarCancelacion = async (idPedido) => {
     setCancelando(idPedido);
     try {
       const respuesta = await api.put(`/pedidos/${idPedido}/cancelar`);
       if (respuesta.data.exito) {
-        alert('Pedido cancelado exitosamente.');
+        toast.success('Pedido cancelado exitosamente.');
         cargarPedidos();
       }
     } catch (err) {
-      alert('Error al cancelar: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error al cancelar: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setCancelando(null);
     }
@@ -199,19 +223,28 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
       {/* VISTA 1: NUEVO PEDIDO */}
       {vista === 'nuevo' && (
         <form onSubmit={enviarNuevoPedido} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Cliente</label>
               <input type="text" disabled value="Empresa Cliente SAC" className="w-full p-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 text-sm" />
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">Día de Despacho (Sin hora)</label>
-              {/* NUEVO TIPO DE INPUT: DATE */}
               <input 
                 type="date" 
                 required 
                 value={fechaLimite}
                 onChange={(e) => setFechaLimite(e.target.value)}
+                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500" 
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-2">Solicitado por (Opcional)</label>
+              <input 
+                type="text" 
+                placeholder="Nombre de quien solicitó"
+                value={solicitadoPor}
+                onChange={(e) => setSolicitadoPor(e.target.value)}
                 className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500" 
               />
             </div>
@@ -299,7 +332,7 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
                 <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                   <th className="p-4 font-semibold">ID</th>
                   <th className="p-4 font-semibold">Cliente</th>
-                  <th className="p-4 font-semibold">Vendedor</th> {/* NUEVA COLUMNA */}
+                  <th className="p-4 font-semibold">Vendedor / Solicitado Por</th> {/* NUEVA COLUMNA */}
                   <th className="p-4 font-semibold">Día de Despacho</th>
                   <th className="p-4 font-semibold text-right">Total</th>
                   <th className="p-4 font-semibold text-center">Estado</th>
@@ -312,11 +345,16 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
                     <td className="p-4 font-bold text-slate-900">#{pedido.id_pedido}</td>
                     <td className="p-4 font-medium text-slate-700">{pedido.cliente}</td>
                     
-                    {/* NUEVO: DATO DEL VENDEDOR */}
+                    {/* NUEVO: DATO DEL VENDEDOR Y SOLICITADO POR */}
                     <td className="p-4 text-slate-600">
-                      <div className="flex items-center space-x-2">
-                        <User size={14} className="text-slate-400" />
-                        <span>{pedido.creador || 'Sistema'}</span>
+                      <div className="flex flex-col space-y-1">
+                        <div className="flex items-center space-x-2" title="Usuario Creador">
+                          <User size={14} className="text-slate-400" />
+                          <span>{pedido.creador || 'Sistema'}</span>
+                        </div>
+                        {pedido.solicitado_por && (
+                          <span className="text-xs text-slate-500 italic">Sol: {pedido.solicitado_por}</span>
+                        )}
                       </div>
                     </td>
 

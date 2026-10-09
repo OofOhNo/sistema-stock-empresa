@@ -11,7 +11,7 @@ const Usuario = {
                     u.id_usuario, 
                     u.nombre_completo, 
                     u.email, 
-                    u.sucursal_id,
+                    u.ubicacion_id,
                     u.rol_id,
                     r.nombre AS nombre_rol, -- Usamos 'AS' para que en el JSON salga bonito
                     u.creado_en

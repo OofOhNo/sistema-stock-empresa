@@ -1,9 +1,9 @@
 const pool = require('../config/db');
-
+const { registrarAuditoria } = require('../utils/auditoria');
 const Pedido = {
 
     //crear un pedido y descontar/reservar stock de forma segura (usando Transacciones)
-    crearPedido: async (id_cliente, id_usuario, id_sucursal, fecha_limite_despacho, items) => {
+    crearPedido: async (id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, items, solicitado_por = null) => {
         //las transacciones aseguran que si algo falla, no se rompa la base de datos
         const client = await pool.connect();
         
@@ -18,12 +18,12 @@ const Pedido = {
 
             //insertar la cabecera del pedido
             const queryPedido = `
-                INSERT INTO pedidos (id_cliente, id_usuario, id_sucursal, estado_pedido, fecha_limite_despacho, monto_total)
-                VALUES ($1, $2, $3, 'PENDIENTE', $4, $5)
+                INSERT INTO pedidos (id_cliente, id_usuario, id_ubicacion, estado_pedido, fecha_limite_despacho, monto_total, solicitado_por)
+                VALUES ($1, $2, $3, 'PENDIENTE', $4, $5, $6)
                 RETURNING *;
             `;
             const resultadoPedido = await client.query(queryPedido, [
-                id_cliente, id_usuario, id_sucursal, fecha_limite_despacho, monto_total
+                id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, monto_total, solicitado_por
             ]);
             const nuevoPedido = resultadoPedido.rows[0];
 
@@ -44,10 +44,12 @@ const Pedido = {
                 const queryInventario = `
                     UPDATE inventario 
                     SET cantidad_reservada = cantidad_reservada + $1
-                    WHERE id_producto = $2 AND id_sucursal = $3;
+                    WHERE id_producto = $2 AND id_ubicacion = $3;
                 `;
-                await client.query(queryInventario, [item.cantidad, item.id_producto, id_sucursal]);
+                await client.query(queryInventario, [item.cantidad, item.id_producto, id_ubicacion]);
             }
+
+            await registrarAuditoria(client, id_usuario, 'CREAR_PEDIDO', 'pedidos', nuevoPedido.id_pedido, null, nuevoPedido);
 
             await client.query('COMMIT'); //todo salio bien, guardamos cambios permanentemente
             return nuevoPedido;
@@ -61,25 +63,26 @@ const Pedido = {
     },
 
     //obtener los pedidos para el calendario de logistica
-    obtenerParaCalendario: async (id_sucursal, rol) => {
+    obtenerParaCalendario: async (id_ubicacion, rol) => {
         try {
             let query = `
                 SELECT 
-                    p.id_pedido, p.estado_pedido, p.fecha_limite_despacho, p.monto_total, 
+                    p.id_pedido, p.estado_pedido, p.fecha_limite_despacho, p.monto_total, p.solicitado_por,
                     c.razon_social_o_nombre AS cliente, 
-                    s.nombre AS sucursal,
+                    s.nombre AS ubicacion,
                     u.nombre AS creador
                 FROM pedidos p
                 JOIN clientes c ON p.id_cliente = c.id_cliente
-                LEFT JOIN sucursales s ON p.id_sucursal = s.id_sucursal
+                LEFT JOIN ubicaciones s ON p.id_ubicacion = s.id_ubicacion
                 LEFT JOIN usuarios u ON p.id_usuario = u.id_usuario
+                WHERE p.fecha_limite_despacho >= date_trunc('week', now())
+                  AND p.fecha_limite_despacho < date_trunc('week', now()) + interval '1 week'
             `;
 
-            //si no es Admin Central, filtramos estrictamente por su sucursal
             const params = [];
-            if (rol !== 'Admin Central' && id_sucursal) {
-                query += ` WHERE p.id_sucursal = $1`;
-                params.push(id_sucursal);
+            if (rol !== 'Admin Central' && id_ubicacion) {
+                query += ` AND p.id_ubicacion = $1`;
+                params.push(id_ubicacion);
             }
 
             query += ` ORDER BY p.fecha_limite_despacho ASC;`;
@@ -98,13 +101,13 @@ const Pedido = {
             await client.query('BEGIN');
 
             //verificar que el pedido exista y este PENDIENTE
-            const resPedido = await client.query("SELECT estado_pedido, id_sucursal FROM pedidos WHERE id_pedido = $1", [id_pedido]);
+            const resPedido = await client.query("SELECT estado_pedido, id_ubicacion FROM pedidos WHERE id_pedido = $1", [id_pedido]);
             if (resPedido.rows.length === 0) throw new Error("Pedido no encontrado.");
             if (resPedido.rows[0].estado_pedido !== 'PENDIENTE') throw new Error("Solo se pueden cancelar pedidos pendientes.");
 
-            const id_sucursal = resPedido.rows[0].id_sucursal;
-            if (usuario.nombre_rol !== 'Admin Central' && id_sucursal !== usuario.id_sucursal) {
-                throw new Error("No tienes permisos para cancelar pedidos de otra sucursal.");
+            const id_ubicacion = resPedido.rows[0].id_ubicacion;
+            if (usuario.nombre_rol !== 'Admin Central' && id_ubicacion !== usuario.id_ubicacion) {
+                throw new Error("No tienes permisos para cancelar pedidos de otra ubicacion.");
             }
 
             //cambiar el estado a CANCELADO
@@ -117,9 +120,11 @@ const Pedido = {
                 await client.query(`
                     UPDATE inventario 
                     SET cantidad_reservada = cantidad_reservada - $1
-                    WHERE id_producto = $2 AND id_sucursal = $3;
-                `, [item.cantidad, item.id_producto, id_sucursal]);
+                    WHERE id_producto = $2 AND id_ubicacion = $3;
+                `, [item.cantidad, item.id_producto, id_ubicacion]);
             }
+
+            await registrarAuditoria(client, usuario.id_usuario, 'CANCELAR_PEDIDO', 'pedidos', id_pedido, resPedido.rows[0], { estado_pedido: 'CANCELADO' });
 
             await client.query('COMMIT');
             return true;

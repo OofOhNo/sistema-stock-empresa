@@ -1,13 +1,17 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const usuarioController = require('../controllers/usuarioController');
 
 //importamos nuestros guardias
-const { verificarToken, esAdmin } = require('../middlewares/authMiddleware');
+const { verificarToken } = require('../middlewares/authMiddleware');
+const requierePermiso = require('../middlewares/requierePermiso');
 
 //colocamos los guardias EN MEDIO de la ruta y el controlador - el orden importa: primero verifica el token, luego verifica el rol, luego muestra los datos
-router.get('/', verificarToken, esAdmin, usuarioController.listarUsuarios);
+router.get('/', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarUsuarios);
 
-router.put('/:id_usuario/rol', verificarToken, usuarioController.cambiarRol);
+router.put('/:id_usuario/rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarRol);
+
+router.get('/permisos', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.obtenerPermisos);
+router.put('/permisos', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarPermisos);
 
 module.exports = router;

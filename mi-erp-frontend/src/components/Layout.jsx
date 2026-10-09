@@ -6,6 +6,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const menu = [
     { id: 'dashboard', nombre: 'Inicio', icono: <LayoutDashboard size={20} /> },
     { id: 'stock', nombre: 'Inventario', icono: <Package size={20} /> },
+    { id: 'productos', nombre: 'Productos', icono: <Package size={20} /> },
     { id: 'pedidos', nombre: 'Pedidos', icono: <ShoppingCart size={20} /> },
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} /> },
     { id: 'facturacion', nombre: 'Facturación', icono: <FileText size={20} /> },

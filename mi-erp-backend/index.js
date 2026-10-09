@@ -43,6 +43,10 @@ app.use('/api/facturacion', facturaRoutes);
 const kardexRoutes = require('./src/routes/kardexRoutes.js');
 app.use('/api/kardex', kardexRoutes);
 
+//rutas productos
+const productoRoutes = require('./src/routes/productoRoutes.js');
+app.use('/api/productos', productoRoutes);
+
 //configurar el puerto y encender el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { Users, Shield, ShieldAlert, UserCheck, Briefcase, Lock } from 'lucide-react';
+import toast from 'react-hot-toast';
+import PermisosGrid from '../components/PermisosGrid';
 
 export default function Usuarios({ usuarioLogueado }) {
   const [usuarios, setUsuarios] = useState([]);
@@ -15,7 +17,7 @@ export default function Usuarios({ usuarioLogueado }) {
       nombre: 'Admin Central',
       icono: <ShieldAlert size={16} className="text-red-500" />,
       color: 'bg-red-100 text-red-700 border-red-200',
-      descripcion: 'Acceso total. Puede ver todas las sucursales, anular movimientos y gestionar roles.'
+      descripcion: 'Acceso total. Puede ver todas las ubicaciones, anular movimientos y gestionar roles.'
     },
     {
       id: 2, 
@@ -40,32 +42,52 @@ export default function Usuarios({ usuarioLogueado }) {
     }
   ];
 
-  useEffect(() => {
-    cargarUsuarios();
-  }, []);
-
   const cargarUsuarios = async () => {
     setCargando(true);
     try {
-        const res = await api.get('/usuarios'); // Usa la ruta que tengas configurada
-        setUsuarios(res.data.datos); // <--- CAMBIAR res.data.usuarios POR res.data.datos
+        const res = await api.get('/usuarios');
+        setUsuarios(res.data.datos);
     } catch (err) {
         setError('Error al cargar la lista de personal.');
     } finally {
         setCargando(false);
-  }
-};
+    }
+  };
+
+  useEffect(() => {
+    cargarUsuarios();
+  }, []);
 
   const cambiarRol = async (idUsuario, nuevoRol) => {
-    if (!window.confirm(`¿Seguro que deseas cambiar el rol a ${nuevoRol}? Esto modificará sus accesos inmediatamente.`)) return;
-    
+    toast((t) => (
+      <div className="flex flex-col space-y-3">
+        <p className="text-sm font-medium">¿Seguro que deseas cambiar el rol a este usuario? Esto modificará sus accesos inmediatamente.</p>
+        <div className="flex justify-end space-x-2">
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarCambioRol(idUsuario, nuevoRol); }}
+            className="bg-indigo-600 text-white px-3 py-1 rounded text-xs font-bold"
+          >
+            Sí, cambiar
+          </button>
+          <button 
+            onClick={() => toast.dismiss(t.id)}
+            className="bg-slate-200 text-slate-800 px-3 py-1 rounded text-xs font-bold"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
+  const ejecutarCambioRol = async (idUsuario, nuevoRol) => {
     setActualizando(idUsuario);
     try {
       const res = await api.put(`/usuarios/${idUsuario}/rol`, { nuevo_rol: nuevoRol });
-      alert(res.data.mensaje);
+      toast.success(res.data.mensaje);
       cargarUsuarios(); // recargar la tabla para ver el cambio
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setActualizando(null);
     }
@@ -165,6 +187,10 @@ export default function Usuarios({ usuarioLogueado }) {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="mt-8">
+        <PermisosGrid />
       </div>
     </div>
   );

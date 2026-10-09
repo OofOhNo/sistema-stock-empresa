@@ -1,14 +1,15 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const kardexController = require('../controllers/kardexController');
 const { verificarToken } = require('../middlewares/authMiddleware');
+const requierePermiso = require('../middlewares/requierePermiso');
 const pool = require('../config/db');
 
 // --- RUTAS DEL KARDEX ---
 
 // 1. obtener todo el historial de movimientos (Kardex)
 // usamos directamente pool.query aqui para hacerlo rapido (es un GET)
-router.get('/', verificarToken, async (req, res) => {
+router.get('/', verificarToken, requierePermiso('stock', 'ver'), async (req, res) => {
     try {
         const query = `
             SELECT 
@@ -32,10 +33,10 @@ router.get('/', verificarToken, async (req, res) => {
 });
 
 // 2. registrar un nuevo movimiento manual (Ingreso o Salida)
-router.post('/movimiento', verificarToken, kardexController.registrarMovimiento);
+router.post('/movimiento', verificarToken, requierePermiso('stock', 'editar'), kardexController.registrarMovimiento);
 
 // 3. anular un movimiento existente (pasa por la regla de los 10 minutos)
-router.put('/:id_movimiento/anular', verificarToken, kardexController.anularMovimiento);
+router.put('/:id_movimiento/anular', verificarToken, requierePermiso('stock', 'editar'), kardexController.anularMovimiento);
 
 
 module.exports = router;

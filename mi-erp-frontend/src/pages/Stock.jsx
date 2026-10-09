@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import api from '../api';
 import { Package, History, Plus, ArrowLeft, RotateCcw, CheckCircle, AlertCircle, Clock, ShieldAlert, Filter, XCircle } from 'lucide-react';
 
@@ -59,30 +60,51 @@ export default function Stock({ usuario }) {
     try {
       await api.post('/kardex/movimiento', {
         id_producto: form.id_producto,
-        id_sucursal: usuario?.id_sucursal,
+        id_ubicacion: usuario?.id_ubicacion,
         tipo_movimiento: form.tipo_movimiento,
         cantidad: form.cantidad,
         motivo: form.motivo
       });
-      alert('Movimiento registrado con éxito.');
+      toast.success('Movimiento registrado con éxito.');
       setForm({ ...form, cantidad: 1, motivo: '' });
       setVista('historial');
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setProcesando(false);
     }
   };
 
   const anularMovimiento = async (id_movimiento) => {
-    if (!window.confirm('¿Anular este movimiento? Se revertirá el stock físico asociado.')) return;
+    toast((t) => (
+      <div className="flex flex-col space-y-3">
+        <p className="text-sm font-medium">¿Anular este movimiento? Se revertirá el stock físico asociado.</p>
+        <div className="flex justify-end space-x-2">
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarAnulacion(id_movimiento); }}
+            className="bg-red-500 text-white px-3 py-1 rounded text-xs font-bold"
+          >
+            Sí, anular
+          </button>
+          <button 
+            onClick={() => toast.dismiss(t.id)}
+            className="bg-slate-200 text-slate-800 px-3 py-1 rounded text-xs font-bold"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
+  const ejecutarAnulacion = async (id_movimiento) => {
     setProcesando(true);
     try {
       const respuesta = await api.put(`/kardex/${id_movimiento}/anular`);
-      alert(respuesta.data.mensaje || 'Anulado con éxito.');
+      toast.success(respuesta.data.mensaje || 'Anulado con éxito.');
       cargarHistorial();
     } catch (err) {
-      alert('Error al anular: ' + (err.response?.data?.mensaje || err.message));
+      toast.error('Error al anular: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setProcesando(false);
     }

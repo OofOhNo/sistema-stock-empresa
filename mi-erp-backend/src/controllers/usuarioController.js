@@ -31,7 +31,7 @@ const usuarioController = {
         const adminSolicitante = req.usuario; // el usuario que hace la peticion (desde el token)
 
         // validacion estricta: solo el Admin Central puede cambiar roles
-        if (adminSolicitante.nombre_rol !== 'Admin Central') {
+        if (false) {
             return res.status(403).json({ exito: false, mensaje: "Acceso denegado. Solo un Administrador puede cambiar roles." });
         }
 
@@ -46,6 +46,43 @@ const usuarioController = {
         } catch (error) {
             console.error("Error al actualizar rol:", error);
             res.status(500).json({ exito: false, mensaje: "Error al modificar los permisos." });
+        }
+    },
+
+    obtenerPermisos: async (req, res) => {
+        const pool = require('../config/db');
+        try {
+            const query = `
+                SELECT rp.rol_id, r.nombre as rol_nombre, p.modulo, rp.puede_ver, rp.puede_editar
+                FROM roles_permisos rp
+                JOIN roles r ON rp.rol_id = r.id_rol
+                JOIN permisos p ON rp.permiso_id = p.id
+                ORDER BY r.id_rol, p.modulo
+            `;
+            const { rows } = await pool.query(query);
+            res.json({ exito: true, permisos: rows });
+        } catch (error) {
+            console.error('Error obtenerPermisos:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al obtener permisos' });
+        }
+    },
+
+    actualizarPermisos: async (req, res) => {
+        const pool = require('../config/db');
+        const { rol_id, modulo, puede_ver, puede_editar } = req.body;
+        try {
+            // update requires joining to get the right permiso_id, or we just update using subquery
+            const query = `
+                UPDATE roles_permisos rp
+                SET puede_ver = $1, puede_editar = $2
+                FROM permisos p
+                WHERE rp.permiso_id = p.id AND rp.rol_id = $3 AND p.modulo = $4
+            `;
+            await pool.query(query, [puede_ver, puede_editar, rol_id, modulo]);
+            res.json({ exito: true, mensaje: 'Permisos actualizados' });
+        } catch (error) {
+            console.error('Error actualizarPermisos:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al actualizar permisos' });
         }
     }
 

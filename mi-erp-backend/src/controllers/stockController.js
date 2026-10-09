@@ -5,29 +5,29 @@ const stockController = {
     verInventario: async (req, res) => {
         try {
             //el middleware de autenticacion guardo los datos del usuario en req.usuario
-            const { nombre_rol, id_sucursal } = req.usuario;
+            const { nombre_rol, id_ubicacion } = req.usuario;
 
             let inventario;
 
             //si es Admin Central, puede ver el consolidado global o filtrar
             if (nombre_rol === 'Admin Central') {
-                //si el jefe pasa un ?sucursal=X en la URL, filtramos por esa sucursal, sino global
-                const sucursalQuery = req.query.sucursal;
+                //si el jefe pasa un ?ubicacion=X en la URL, filtramos por esa ubicacion, sino global
+                const ubicacionQuery = req.query.ubicacion;
                 
-                if (sucursalQuery) {
-                    inventario = await Stock.obtenerStockPorSucursal(sucursalQuery);
+                if (ubicacionQuery) {
+                    inventario = await Stock.obtenerStockPorUbicacion(ubicacionQuery);
                 } else {
                     inventario = await Stock.obtenerStockGlobal();
                 }
             } else {
-                //si es un empleado o jefe de division, SOLO puede ver el stock de su propia sucursal asignada
-                if (!id_sucursal) {
+                //si es un empleado o jefe de division, SOLO puede ver el stock de su propia ubicacion asignada
+                if (!id_ubicacion) {
                     return res.status(403).json({ 
                         exito: false, 
-                        mensaje: 'No tienes una sucursal asignada para ver el inventario.' 
+                        mensaje: 'No tienes una ubicacion asignada para ver el inventario.' 
                     });
                 }
-                inventario = await Stock.obtenerStockPorSucursal(id_sucursal);
+                inventario = await Stock.obtenerStockPorUbicacion(id_ubicacion);
             }
 
             res.status(200).json({

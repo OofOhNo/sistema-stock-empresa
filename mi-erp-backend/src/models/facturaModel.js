@@ -7,7 +7,7 @@ const Factura = {
         try {
             const queryPedido = `
                 SELECT 
-                    p.id_pedido, p.monto_total, p.id_sucursal,
+                    p.id_pedido, p.monto_total, p.id_ubicacion,
                     c.tipo_documento, c.numero_documento, c.razon_social_o_nombre, c.direccion, c.email
                 FROM pedidos p
                 JOIN clientes c ON p.id_cliente = c.id_cliente

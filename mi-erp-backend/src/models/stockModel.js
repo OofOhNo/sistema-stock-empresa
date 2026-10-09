@@ -2,8 +2,8 @@ const pool = require('../config/db');
 
 const Stock = {
 
-    //ver el stock de una sucursal especifica
-    obtenerStockPorSucursal: async (idSucursal) => {
+    //ver el stock de una ubicacion especifica
+    obtenerStockPorUbicacion: async (idUbicacion) => {
         try {
             const query = `
                 SELECT 
@@ -11,17 +11,17 @@ const Stock = {
                     p.sku,
                     p.nombre AS nombre_producto,
                     p.precio_venta,
-                    s.nombre AS nombre_sucursal,
+                    s.nombre AS nombre_ubicacion,
                     i.cantidad_fisica,
                     i.cantidad_reservada,
                     (i.cantidad_fisica - i.cantidad_reservada) AS cantidad_disponible,
                     i.ultima_actualizacion
                 FROM inventario i
                 JOIN productos p ON i.id_producto = p.id_producto
-                JOIN sucursales s ON i.id_sucursal = s.id_sucursal
-                WHERE i.id_sucursal = $1;
+                JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
+                WHERE i.id_ubicacion = $1;
             `;
-            const resultado = await pool.query(query, [idSucursal]);
+            const resultado = await pool.query(query, [idUbicacion]);
             return resultado.rows;
         } catch (error) {
             throw error;
