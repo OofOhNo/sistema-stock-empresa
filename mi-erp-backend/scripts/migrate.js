@@ -105,6 +105,24 @@ function getSslConfig(connectionUrl) {
                 aplicado_en TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )`);
 
+        // Si la base es completamente nueva (no existe la tabla usuarios), inicializar desde schema.sql
+        const { rows: testTable } = await client.query(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'usuarios'"
+        );
+        if (testTable.length === 0) {
+            console.log('ℹ Base de datos nueva/vacía detectada. Inicializando estructura desde schema.sql...');
+            const schemaFile = path.join(__dirname, '..', 'schema.sql');
+            if (fs.existsSync(schemaFile)) {
+                const schemaSql = fs.readFileSync(schemaFile, 'utf8');
+                await client.query(schemaSql);
+                console.log('✔ Estructura base inicializada exitosamente desde schema.sql.');
+            }
+            await client.query(`
+                INSERT INTO divisiones (id_division, nombre) VALUES (1, 'División Central') ON CONFLICT (id_division) DO NOTHING;
+                INSERT INTO ubicaciones (id_ubicacion, id_division, nombre) VALUES (1, 1, 'Sede Principal') ON CONFLICT (id_ubicacion) DO NOTHING;
+            `);
+        }
+
         const { rows } = await client.query('SELECT version, archivo, checksum, aplicado_en FROM schema_migrations');
         const aplicadas = new Map(rows.map((r) => [r.version, r]));
         const migraciones = leerMigraciones();
