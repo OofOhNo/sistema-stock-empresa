@@ -126,6 +126,7 @@ const Pedido = {
                     p.sellado_vacio,
                     p.solicitado_por,
                     p.id_ubicacion,
+                    (SELECT COUNT(*) FROM fotos_pedidos fp WHERE fp.id_pedido = p.id_pedido AND fp.expira_en > CURRENT_TIMESTAMP)::int AS total_fotos,
                     c.numero_documento AS ruc_cliente,
                     c.razon_social_o_nombre AS cliente, 
                     c.nombre_comercial,

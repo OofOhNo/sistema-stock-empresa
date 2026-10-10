@@ -7,8 +7,9 @@ import {
 
 function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorPrimario = 'indigo' }) {
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [seleccionadoIdx, setSeleccionadoIdx] = useState(null);
 
-  const valores = datos.map(d => parseFloat(d[keyTotal]) || 0);
+  const valores = (datos || []).map(d => parseFloat(d[keyTotal]) || 0);
   const maxVal = Math.max(...valores, 100);
   const totalSuma = valores.reduce((a, b) => a + b, 0);
 
@@ -18,6 +19,8 @@ function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorP
     blue: { bar: 'bg-blue-600 hover:bg-blue-500', bg: 'bg-blue-50 text-blue-700' },
     purple: { bar: 'bg-purple-600 hover:bg-purple-500', bg: 'bg-purple-50 text-purple-700' }
   }[colorPrimario] || { bar: 'bg-indigo-600 hover:bg-indigo-500', bg: 'bg-indigo-50 text-indigo-700' };
+
+  const activo = seleccionadoIdx !== null ? (datos || [])[seleccionadoIdx] : (hoverIdx !== null ? (datos || [])[hoverIdx] : null);
 
   return (
     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
@@ -38,24 +41,32 @@ function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorP
 
       {/* Área del Gráfico SVG / Barras */}
       <div className="h-48 pt-6 pb-2 flex items-end justify-between gap-2 border-b border-slate-100 relative">
-        {datos.map((item, idx) => {
+        {(datos || []).map((item, idx) => {
           const val = parseFloat(item[keyTotal]) || 0;
-          const alturaPct = maxVal > 0 ? Math.max((val / maxVal) * 100, val > 0 ? 6 : 2) : 2;
-          const isHover = hoverIdx === idx;
+          const alturaPct = maxVal > 0 ? Math.max((val / maxVal) * 100, val > 0 ? 8 : 2) : 2;
+          const isSelected = seleccionadoIdx === idx || hoverIdx === idx;
 
           return (
             <div 
               key={idx} 
-              className="flex-1 flex flex-col items-center h-full justify-end group relative"
+              className="flex-1 flex flex-col items-center h-full justify-end group relative cursor-pointer"
               onMouseEnter={() => setHoverIdx(idx)}
               onMouseLeave={() => setHoverIdx(null)}
+              onClick={() => setSeleccionadoIdx(seleccionadoIdx === idx ? null : idx)}
             >
+              {/* Monto directo visible arriba de la barra para móviles */}
+              {val > 0 && (
+                <span className="text-[10px] font-extrabold text-blue-950 mb-1 font-mono tracking-tight text-center">
+                  S/{val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(0)}
+                </span>
+              )}
+
               {/* Tooltip flotante */}
-              {isHover && (
+              {hoverIdx === idx && (
                 <div className="absolute -top-12 z-20 bg-slate-900 text-white text-[11px] font-mono py-1 px-2.5 rounded-lg shadow-xl whitespace-nowrap pointer-events-none animate-in fade-in zoom-in-95">
                   <span className="font-bold">S/ {val.toFixed(2)}</span>
                   {item.cantidad !== undefined && (
-                    <span className="text-slate-400 ml-1">({item.cantidad} docs)</span>
+                    <span className="text-slate-400 ml-1">({item.cantidad} doc{item.cantidad === 1 ? '' : 's'})</span>
                   )}
                 </div>
               )}
@@ -63,9 +74,11 @@ function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorP
               {/* Barra */}
               <div 
                 style={{ height: `${alturaPct}%` }}
-                className={`w-full max-w-[36px] rounded-t-lg transition-all duration-300 ${colorClases.bar} ${
-                  val === 0 ? 'bg-slate-100' : ''
-                } ${isHover ? 'scale-y-105 shadow-md' : ''}`}
+                className={`w-full max-w-[36px] rounded-t-lg transition-all duration-300 ${
+                  val === 0 
+                    ? 'bg-slate-100 hover:bg-slate-200' 
+                    : `${colorClases.bar} shadow-xs`
+                } ${isSelected ? 'ring-2 ring-indigo-500 scale-y-105 shadow-md' : ''}`}
               />
             </div>
           );
@@ -74,12 +87,38 @@ function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorP
 
       {/* Etiquetas Eje X */}
       <div className="flex items-center justify-between gap-2 pt-2 text-[11px] font-semibold text-slate-500">
-        {datos.map((item, idx) => (
-          <div key={idx} className="flex-1 text-center truncate" title={item[keyEtiqueta]}>
+        {(datos || []).map((item, idx) => (
+          <div 
+            key={idx} 
+            onClick={() => setSeleccionadoIdx(seleccionadoIdx === idx ? null : idx)}
+            className={`flex-1 text-center truncate cursor-pointer transition-colors ${
+              seleccionadoIdx === idx ? 'text-indigo-600 font-bold' : ''
+            }`}
+            title={item.nombreCompleto || item[keyEtiqueta]}
+          >
             {item[keyEtiqueta]}
           </div>
         ))}
       </div>
+
+      {/* Detalle interactivo para Móvil / Táctil al tocar una barra */}
+      {activo ? (
+        <div className="mt-4 p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
+          <div className="truncate pr-2">
+            <span className="font-bold text-blue-950">{activo.nombreCompleto || activo[keyEtiqueta]}</span>
+            <span className="text-slate-500 ml-2">
+              {activo.cantidad !== undefined ? `(${activo.cantidad} comprobante${activo.cantidad === 1 ? '' : 's'})` : ''}
+            </span>
+          </div>
+          <span className="font-bold text-sm text-indigo-700 shrink-0">
+            S/ {Number(activo[keyTotal] || 0).toLocaleString('es-PE', { minimumFractionDigits: 2 })}
+          </span>
+        </div>
+      ) : (
+        <p className="mt-3 text-[11px] text-slate-400 text-center italic">
+          Toca cualquier barra para ver el detalle
+        </p>
+      )}
     </div>
   );
 }
@@ -101,7 +140,7 @@ export default function Dashboard({ usuario }) {
   }, []);
 
   useEffect(() => {
-    if (subTab === 'graficos' && !datosGraficos) {
+    if (subTab === 'graficos') {
       cargarGraficos();
     }
   }, [subTab]);
@@ -259,6 +298,18 @@ export default function Dashboard({ usuario }) {
           ) : (
             <>
               {/* Banner de Resumen de Facturación */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-slate-500">Métricas consolidadas de facturación y evolución de ventas</span>
+                <button
+                  onClick={cargarGraficos}
+                  disabled={cargandoGraficos}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-2xs"
+                >
+                  <RefreshCw size={13} className={cargandoGraficos ? 'animate-spin text-indigo-600' : 'text-slate-500'} />
+                  <span>Actualizar Gráficos</span>
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
                   <div>
@@ -315,7 +366,7 @@ export default function Dashboard({ usuario }) {
                   titulo="Facturación Mensual"
                   subtitulo="Semanas en este mes"
                   datos={datosGraficos.graficos.mensual}
-                  keyEtiqueta="semana"
+                  keyEtiqueta="etiqueta"
                   keyTotal="total"
                   colorPrimario="emerald"
                 />

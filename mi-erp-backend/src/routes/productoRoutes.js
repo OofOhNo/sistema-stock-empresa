@@ -7,7 +7,8 @@ const {
     updateProducto, 
     deleteProducto,
     getUnidades,
-    createUnidad 
+    createUnidad,
+    deleteUnidad
 } = require('../controllers/productoController');
 const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
@@ -16,6 +17,7 @@ router.use(verificarToken);
 
 router.get('/unidades', requierePermiso('productos', 'ver'), getUnidades);
 router.post('/unidades', requierePermiso('productos', 'editar'), createUnidad);
+router.delete('/unidades/:id', requierePermiso('productos', 'editar'), deleteUnidad);
 
 router.get('/', requierePermiso('productos', 'ver'), getAllProductos);
 router.get('/:id', requierePermiso('productos', 'ver'), getProductoById);

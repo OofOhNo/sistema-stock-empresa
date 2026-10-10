@@ -155,6 +155,20 @@ const createUnidad = async (req, res) => {
     }
 };
 
+const deleteUnidad = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const eliminada = await ProductoModel.deleteUnidad(id);
+        if (!eliminada) {
+            return res.status(404).json({ exito: false, message: 'Unidad de medida no encontrada.' });
+        }
+        res.status(200).json({ exito: true, message: 'Unidad de medida eliminada o retirada con éxito.' });
+    } catch (error) {
+        console.error('Error deleting unidad:', error);
+        res.status(500).json({ exito: false, message: 'Error al eliminar unidad de medida', error: error.message });
+    }
+};
+
 module.exports = {
     getAllProductos,
     getProductoById,
@@ -162,5 +176,6 @@ module.exports = {
     updateProducto,
     deleteProducto,
     getUnidades,
-    createUnidad
+    createUnidad,
+    deleteUnidad
 };

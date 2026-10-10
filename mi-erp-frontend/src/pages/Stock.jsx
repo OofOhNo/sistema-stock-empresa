@@ -25,6 +25,17 @@ export default function Stock({ usuario }) {
   const esAdminOGerente = usuario?.rol === 'Admin Central' || usuario?.rol === 'Gerente de Área';
 
   useEffect(() => {
+    cargarAlertasSilencioso();
+  }, []);
+
+  const cargarAlertasSilencioso = async () => {
+    try {
+      const res = await api.get('/stock/alertas');
+      setAlertas(res.data.alertas || []);
+    } catch (e) {}
+  };
+
+  useEffect(() => {
     if (vista === 'inventario' || vista === 'nuevo') cargarStock();
     if (vista === 'historial') cargarHistorial();
     if (vista === 'alertas') cargarAlertas();
@@ -231,6 +242,11 @@ export default function Stock({ usuario }) {
           <button onClick={() => setVista('alertas')} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-2 ${vista === 'alertas' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
             <AlertTriangle size={16} />
             <span>Alertas de Stock Mínimo</span>
+            {alertas.length > 0 && (
+              <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold ml-1">
+                {alertas.length}
+              </span>
+            )}
           </button>
         </div>
       )}

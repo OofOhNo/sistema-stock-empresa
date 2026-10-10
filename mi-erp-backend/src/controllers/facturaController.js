@@ -381,43 +381,43 @@ const facturaController = {
             const anioActual = new Date().getFullYear();
 
             const [querySemanaActual, queryMesActual, queryTrimestres, queryAnios] = await Promise.all([
-                // 1. SEMANAL: Los 7 días de ESTA semana (Lunes a Domingo)
+                // 1. SEMANAL: Los 7 días de ESTA semana (Lunes a Domingo) con hora local de Lima
                 pool.query(`
                     SELECT 
-                        to_char(c.fecha_emision, 'YYYY-MM-DD') AS fecha,
-                        EXTRACT(ISODOW FROM c.fecha_emision)::int AS dia_iso,
+                        EXTRACT(ISODOW FROM (c.fecha_emision AT TIME ZONE 'America/Lima'))::int AS dia_iso,
+                        to_char(c.fecha_emision AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS fecha_str,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
                     WHERE c.estado_sunat != 'ANULADO'
-                      AND c.fecha_emision >= date_trunc('week', CURRENT_DATE)
-                      AND c.fecha_emision < date_trunc('week', CURRENT_DATE) + INTERVAL '7 days'
-                    GROUP BY fecha, dia_iso;
+                      AND (c.fecha_emision AT TIME ZONE 'America/Lima') >= date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima'))
+                      AND (c.fecha_emision AT TIME ZONE 'America/Lima') < date_trunc('week', (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')) + INTERVAL '7 days'
+                    GROUP BY dia_iso, fecha_str;
                 `),
-                // 2. MENSUAL: Las semanas de ESTE mes actual (Semana 1 a Semana 5)
+                // 2. MENSUAL: Las semanas de ESTE mes actual (Semana 1 a Semana 5) con hora local de Lima
                 pool.query(`
                     SELECT 
                         CASE 
-                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 1 AND 7 THEN 1
-                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 8 AND 14 THEN 2
-                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 15 AND 21 THEN 3
-                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 22 AND 28 THEN 4
+                            WHEN EXTRACT(DAY FROM (c.fecha_emision AT TIME ZONE 'America/Lima')) BETWEEN 1 AND 7 THEN 1
+                            WHEN EXTRACT(DAY FROM (c.fecha_emision AT TIME ZONE 'America/Lima')) BETWEEN 8 AND 14 THEN 2
+                            WHEN EXTRACT(DAY FROM (c.fecha_emision AT TIME ZONE 'America/Lima')) BETWEEN 15 AND 21 THEN 3
+                            WHEN EXTRACT(DAY FROM (c.fecha_emision AT TIME ZONE 'America/Lima')) BETWEEN 22 AND 28 THEN 4
                             ELSE 5
                         END AS num_semana,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
                     WHERE c.estado_sunat != 'ANULADO'
-                      AND c.fecha_emision >= date_trunc('month', CURRENT_DATE)
-                      AND c.fecha_emision < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+                      AND (c.fecha_emision AT TIME ZONE 'America/Lima') >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima'))
+                      AND (c.fecha_emision AT TIME ZONE 'America/Lima') < date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')) + INTERVAL '1 month'
                     GROUP BY num_semana
                     ORDER BY num_semana ASC;
                 `),
                 // 3. TRIMESTRAL: Trimestres del año
                 pool.query(`
                     SELECT 
-                        EXTRACT(QUARTER FROM c.fecha_emision)::int AS q_num,
-                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        EXTRACT(QUARTER FROM (c.fecha_emision AT TIME ZONE 'America/Lima'))::int AS q_num,
+                        EXTRACT(YEAR FROM (c.fecha_emision AT TIME ZONE 'America/Lima'))::int AS anio,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
@@ -428,7 +428,7 @@ const facturaController = {
                 // 4. ANUAL: Por años
                 pool.query(`
                     SELECT 
-                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        EXTRACT(YEAR FROM (c.fecha_emision AT TIME ZONE 'America/Lima'))::int AS anio,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
@@ -464,17 +464,18 @@ const facturaController = {
 
             // Generar semanas de ESTE mes
             const semanasDef = [
-                { num: 1, label: 'Semana 1 (Días 1-7)' },
-                { num: 2, label: 'Semana 2 (Días 8-14)' },
-                { num: 3, label: 'Semana 3 (Días 15-21)' },
-                { num: 4, label: 'Semana 4 (Días 22-28)' },
-                { num: 5, label: 'Semana 5 (Días 29-Fin)' }
+                { num: 1, etiqueta: 'Sem 1', label: 'Semana 1 (Días 1 al 7)' },
+                { num: 2, etiqueta: 'Sem 2', label: 'Semana 2 (Días 8 al 14)' },
+                { num: 3, etiqueta: 'Sem 3', label: 'Semana 3 (Días 15 al 21)' },
+                { num: 4, etiqueta: 'Sem 4', label: 'Semana 4 (Días 22 al 28)' },
+                { num: 5, etiqueta: 'Sem 5', label: 'Semana 5 (Días 29 a Fin)' }
             ];
 
             const mensual = semanasDef.map(sem => {
                 const match = queryMesActual.rows.find(r => r.num_semana === sem.num);
                 return {
-                    semana: sem.label,
+                    etiqueta: sem.etiqueta,
+                    nombreCompleto: sem.label,
                     numSemana: sem.num,
                     total: match ? parseFloat(match.total) : 0,
                     cantidad: match ? match.cantidad : 0

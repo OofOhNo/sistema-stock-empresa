@@ -121,6 +121,18 @@ class ProductoModel {
         ]);
         return rows[0];
     }
+
+    static async deleteUnidad(id) {
+        const resCheck = await pool.query('SELECT COUNT(*) FROM productos WHERE id_unidad = $1', [id]);
+        if (parseInt(resCheck.rows[0].count) > 0) {
+            const query = 'UPDATE unidades_medida SET activo = false WHERE id_unidad = $1 RETURNING *';
+            const { rows } = await pool.query(query, [id]);
+            return rows[0];
+        }
+        const query = 'DELETE FROM unidades_medida WHERE id_unidad = $1 RETURNING *';
+        const { rows } = await pool.query(query, [id]);
+        return rows[0];
+    }
 }
 
 module.exports = ProductoModel;

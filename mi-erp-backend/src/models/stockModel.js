@@ -65,40 +65,84 @@ const Stock = {
         }
     },
 
-    // REGLA DE NEGOCIO ETAPA 4: Alertas de stock mínimo
+    // REGLA DE NEGOCIO ETAPA 4: Alertas de stock mínimo reales (sin falsos positivos por CROSS JOIN)
     obtenerAlertasStockMinimo: async (idUbicacion = null) => {
         try {
-            let query = `
-                SELECT 
-                    p.id_producto,
-                    p.sku,
-                    p.nombre AS nombre_producto,
-                    p.stock_minimo,
-                    p.precio_venta,
-                    u.id_ubicacion,
-                    u.nombre AS nombre_ubicacion,
-                    COALESCE(i.cantidad_fisica, 0) AS cantidad_fisica,
-                    COALESCE(i.cantidad_reservada, 0) AS cantidad_reservada,
-                    COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS cantidad_disponible,
-                    CASE 
-                        WHEN COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) <= 0 THEN 'CRITICO'
-                        WHEN COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) <= p.stock_minimo THEN 'BAJO'
-                        ELSE 'NORMAL'
-                    END AS nivel_alerta
-                FROM productos p
-                CROSS JOIN ubicaciones u
-                LEFT JOIN inventario i ON p.id_producto = i.id_producto AND u.id_ubicacion = i.id_ubicacion
-                WHERE p.activo = true
-            `;
-            const params = [];
             if (idUbicacion) {
-                query += ` AND u.id_ubicacion = $1`;
-                params.push(idUbicacion);
+                const query = `
+                    SELECT 
+                        p.id_producto,
+                        p.sku,
+                        p.nombre AS nombre_producto,
+                        p.stock_minimo,
+                        p.precio_venta,
+                        u.id_ubicacion,
+                        u.nombre AS nombre_ubicacion,
+                        COALESCE(i.cantidad_fisica, 0) AS cantidad_fisica,
+                        COALESCE(i.cantidad_reservada, 0) AS cantidad_reservada,
+                        COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS cantidad_disponible,
+                        CASE 
+                            WHEN COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) <= 0 THEN 'CRITICO'
+                            ELSE 'BAJO'
+                        END AS nivel_alerta
+                    FROM inventario i
+                    JOIN productos p ON i.id_producto = p.id_producto
+                    JOIN ubicaciones u ON i.id_ubicacion = u.id_ubicacion
+                    WHERE p.activo = true
+                      AND i.id_ubicacion = $1
+                      AND (i.cantidad_fisica - i.cantidad_reservada) <= p.stock_minimo
+                    ORDER BY cantidad_disponible ASC, p.nombre ASC;
+                `;
+                const resultado = await pool.query(query, [idUbicacion]);
+                return resultado.rows;
+            } else {
+                const query = `
+                    SELECT 
+                        p.id_producto,
+                        p.sku,
+                        p.nombre AS nombre_producto,
+                        p.stock_minimo,
+                        p.precio_venta,
+                        u.id_ubicacion,
+                        u.nombre AS nombre_ubicacion,
+                        COALESCE(i.cantidad_fisica, 0) AS cantidad_fisica,
+                        COALESCE(i.cantidad_reservada, 0) AS cantidad_reservada,
+                        COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS cantidad_disponible,
+                        CASE 
+                            WHEN COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) <= 0 THEN 'CRITICO'
+                            ELSE 'BAJO'
+                        END AS nivel_alerta
+                    FROM inventario i
+                    JOIN productos p ON i.id_producto = p.id_producto
+                    JOIN ubicaciones u ON i.id_ubicacion = u.id_ubicacion
+                    WHERE p.activo = true
+                      AND (i.cantidad_fisica - i.cantidad_reservada) <= p.stock_minimo
+
+                    UNION ALL
+
+                    SELECT 
+                        p.id_producto,
+                        p.sku,
+                        p.nombre AS nombre_producto,
+                        p.stock_minimo,
+                        p.precio_venta,
+                        NULL AS id_ubicacion,
+                        'Sin stock asignado' AS nombre_ubicacion,
+                        0 AS cantidad_fisica,
+                        0 AS cantidad_reservada,
+                        0 AS cantidad_disponible,
+                        'CRITICO' AS nivel_alerta
+                    FROM productos p
+                    WHERE p.activo = true
+                      AND NOT EXISTS (
+                          SELECT 1 FROM inventario inv WHERE inv.id_producto = p.id_producto
+                      )
+
+                    ORDER BY cantidad_disponible ASC, nombre_producto ASC;
+                `;
+                const resultado = await pool.query(query);
+                return resultado.rows;
             }
-            query += ` AND (COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) <= p.stock_minimo)
-                       ORDER BY cantidad_disponible ASC;`;
-            const resultado = await pool.query(query, params);
-            return resultado.rows;
         } catch (error) {
             throw error;
         }

@@ -194,6 +194,42 @@ export default function Productos({ usuario }) {
     }
   };
 
+  const handleEliminarUnidad = async (id_unidad, nombre) => {
+    toast((t) => (
+      <div className="flex flex-col space-y-3">
+        <p className="text-sm font-medium">¿Seguro que deseas retirar la unidad <strong>"{nombre}"</strong>?</p>
+        <div className="flex justify-end space-x-2">
+          <button 
+            onClick={async () => { 
+              toast.dismiss(t.id);
+              try {
+                await api.delete(`/productos/unidades/${id_unidad}`);
+                toast.success(`Unidad "${nombre}" retirada.`);
+                const resUni = await api.get('/productos/unidades');
+                const actualizadas = resUni.data?.unidades || [];
+                setUnidades(actualizadas);
+                if (form.id_unidad === id_unidad && actualizadas.length > 0) {
+                  setForm(f => ({ ...f, id_unidad: actualizadas[0].id_unidad }));
+                }
+              } catch (err) {
+                toast.error('Error al retirar unidad: ' + (err.response?.data?.message || err.message));
+              }
+            }}
+            className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-xs font-bold"
+          >
+            Sí, retirar
+          </button>
+          <button 
+            onClick={() => toast.dismiss(t.id)}
+            className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1 rounded text-xs font-bold"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
   if (cargando) return <div className="p-8 text-slate-500 font-medium">Cargando productos y formatos...</div>;
 
   return (
@@ -513,26 +549,54 @@ export default function Productos({ usuario }) {
                 <span className="text-[11px] text-slate-400 mt-1 block">Símbolo para cantidades y etiquetas de empaque</span>
               </div>
 
-              {/* Footer */}
-              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setModalUnidad(false)}
-                  disabled={guardandoUnidad}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Cancelar
-                </button>
+              {/* Botón Guardar Formato */}
+              <div className="flex justify-end space-x-3 pt-2">
                 <button
                   type="submit"
                   disabled={guardandoUnidad}
-                  className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+                  className="w-full py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   <Check size={16} />
-                  <span>{guardandoUnidad ? 'Guardando...' : 'Crear Formato'}</span>
+                  <span>{guardandoUnidad ? 'Guardando...' : '+ Agregar Formato'}</span>
                 </button>
               </div>
             </form>
+
+            {/* Catálogo de Formatos Actuales con Opción de Retirar */}
+            <div className="p-6 pt-2 border-t border-slate-100 bg-slate-50">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                Formatos de Medida Registrados ({unidades.length})
+              </h4>
+              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                {unidades.map(u => (
+                  <div 
+                    key={u.id_unidad} 
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 shadow-2xs"
+                  >
+                    <span className="font-semibold">{u.nombre}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">({u.simbolo})</span>
+                    <button
+                      type="button"
+                      onClick={() => handleEliminarUnidad(u.id_unidad, u.nombre)}
+                      className="text-slate-400 hover:text-red-600 p-0.5 rounded cursor-pointer transition-colors ml-1"
+                      title={`Retirar formato "${u.nombre}"`}
+                    >
+                      <Trash size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end pt-4">
+                <button
+                  type="button"
+                  onClick={() => setModalUnidad(false)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
