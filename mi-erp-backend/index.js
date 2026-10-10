@@ -59,6 +59,22 @@ app.use('/api/auditoria', auditoriaRoutes);
 const clienteRoutes = require('./src/routes/clienteRoutes.js');
 app.use('/api/clientes', clienteRoutes);
 
+//rutas calidad y certificados
+const calidadRoutes = require('./src/routes/calidadRoutes.js');
+app.use('/api/calidad', calidadRoutes);
+
+//rutas reportes de errores
+const errorRoutes = require('./src/routes/errorRoutes.js');
+app.use('/api/errores', errorRoutes);
+
+//rutas organizacion y gerentes de sitio
+const organizacionRoutes = require('./src/routes/organizacionRoutes.js');
+app.use('/api/organizacion', organizacionRoutes);
+
+//rutas busqueda global
+const busquedaRoutes = require('./src/routes/busquedaRoutes.js');
+app.use('/api/busqueda', busquedaRoutes);
+
 //configurar el puerto y encender el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

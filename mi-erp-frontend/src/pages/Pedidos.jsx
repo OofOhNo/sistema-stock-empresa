@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 import api from '../api';
 import { 
   ShoppingCart, Calendar, CheckCircle, FileText, Plus, ArrowLeft, 
-  Trash2, XCircle, User, Filter, Tag, ShieldCheck, PackageCheck, Truck 
+  Trash2, XCircle, User, Filter, Tag, ShieldCheck, PackageCheck, Truck, Clock 
 } from 'lucide-react';
 
 export default function Pedidos({ usuario }) {
@@ -193,10 +193,31 @@ export default function Pedidos({ usuario }) {
     }
   };
 
-  const formatearFecha = (fechaISO) => {
-    if (!fechaISO) return '-';
-    const opciones = { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' };
-    return new Date(fechaISO).toLocaleDateString('es-ES', opciones);
+  const esProduccion = usuario?.area === 'PRODUCCION';
+
+  const formatearFechaYHoraDespacho = (fechaISO) => {
+    if (!fechaISO) return { fechaStr: '-', horaStr: null, esProduccion };
+    const dateObj = new Date(fechaISO);
+    
+    // Regla de Negocio: Personal de producción ve 1 hora menos para despacho
+    const fechaAjustada = esProduccion 
+      ? new Date(dateObj.getTime() - 60 * 60 * 1000) 
+      : dateObj;
+
+    const fechaStr = fechaAjustada.toLocaleDateString('es-ES', { 
+      day: '2-digit', month: 'short', year: 'numeric' 
+    });
+
+    const tieneHora = !(dateObj.getUTCHours() === 0 && dateObj.getUTCMinutes() === 0 && dateObj.getUTCSeconds() === 0);
+    const horaStr = fechaAjustada.toLocaleTimeString('es-ES', { 
+      hour: '2-digit', minute: '2-digit' 
+    });
+
+    return {
+      fechaStr,
+      horaStr: tieneHora ? horaStr : null,
+      esProduccion
+    };
   };
 
   const colorEstado = (estado) => {
@@ -296,16 +317,21 @@ export default function Pedidos({ usuario }) {
               </select>
             </div>
 
-            {/* Fecha límite de despacho */}
+            {/* Fecha y Hora límite de despacho */}
             <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Día de Despacho *</label>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                Fecha y Hora de Despacho *
+              </label>
               <input 
-                type="date" 
+                type="datetime-local" 
                 required 
                 value={fechaLimite}
                 onChange={(e) => setFechaLimite(e.target.value)}
-                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500" 
+                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500 font-mono" 
               />
+              <span className="text-[11px] text-slate-400 mt-1 block">
+                Hora de entrega pactada (Producción ve 1h previa).
+              </span>
             </div>
 
             {/* Solicitado por */}
@@ -546,12 +572,30 @@ export default function Pedidos({ usuario }) {
                       </div>
                     </td>
 
-                    {/* Fecha de despacho */}
+                    {/* Fecha y Hora de despacho */}
                     <td className="p-4 text-slate-700">
-                      <div className="flex items-center space-x-1.5 text-xs">
-                        <Calendar size={14} className="text-slate-400" />
-                        <span>{formatearFecha(pedido.fecha_limite_despacho)}</span>
-                      </div>
+                      {(() => {
+                        const { fechaStr, horaStr, esProduccion: prod } = formatearFechaYHoraDespacho(pedido.fecha_limite_despacho);
+                        return (
+                          <div>
+                            <div className="flex items-center space-x-1.5 text-xs font-medium text-slate-700">
+                              <Calendar size={14} className="text-slate-400" />
+                              <span>{fechaStr}</span>
+                            </div>
+                            {horaStr ? (
+                              <div className="flex items-center space-x-1.5 mt-1 font-semibold text-xs">
+                                <Clock size={12} className={prod ? "text-amber-600" : "text-blue-600"} />
+                                <span className={prod ? "text-amber-700 font-mono" : "text-blue-700 font-mono"}>{horaStr}</span>
+                                <span className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
+                                  prod ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-100 text-blue-800 border border-blue-200"
+                                }`}>
+                                  {prod ? "Planta (-1h)" : "Hora Real"}
+                                </span>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* Checks Etiquetado y Sellado */}

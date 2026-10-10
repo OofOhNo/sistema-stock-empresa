@@ -88,3 +88,4 @@ ON CONFLICT (rol_id, permiso_id) DO UPDATE
 SET puede_ver = true, puede_editar = EXCLUDED.puede_editar;
 
 COMMIT;
+

@@ -5,8 +5,12 @@ class ProductoModel {
         let query = `
             SELECT 
                 p.*,
-                (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen
+                (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen,
+                u.codigo AS codigo_unidad,
+                u.simbolo AS simbolo_unidad,
+                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre
             FROM productos p
+            LEFT JOIN unidades_medida u ON p.id_unidad = u.id_unidad
         `;
         if (!incluirInactivos) {
             query += ` WHERE p.activo = true`;
@@ -21,8 +25,12 @@ class ProductoModel {
         const query = `
             SELECT 
                 p.*,
-                (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen
+                (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen,
+                u.codigo AS codigo_unidad,
+                u.simbolo AS simbolo_unidad,
+                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre
             FROM productos p
+            LEFT JOIN unidades_medida u ON p.id_unidad = u.id_unidad
             WHERE p.id_producto = $1
         `;
         const { rows } = await pool.query(query, [id]);
@@ -32,19 +40,22 @@ class ProductoModel {
     static async create(data) {
         const {
             sku, nombre, descripcion, id_categoria, 
-            precio_venta, precio_costo, stock_minimo
+            precio_venta, precio_costo, stock_minimo,
+            id_unidad, unidad_medida
         } = data;
         
         const query = `
             INSERT INTO productos (
                 sku, nombre, descripcion, id_categoria, 
-                precio_venta, precio_costo, stock_minimo, activo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                precio_venta, precio_costo, stock_minimo, 
+                id_unidad, unidad_medida, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
             RETURNING *
         `;
         const values = [
             sku, nombre, descripcion, id_categoria,
-            precio_venta, precio_costo || 0, stock_minimo || 5
+            precio_venta, precio_costo || 0, stock_minimo || 5,
+            id_unidad || null, unidad_medida || 'Unidad'
         ];
         
         const { rows } = await pool.query(query, values);
@@ -54,7 +65,8 @@ class ProductoModel {
     static async update(id, data) {
         const {
             sku, nombre, descripcion, id_categoria, 
-            precio_venta, precio_costo, stock_minimo, activo
+            precio_venta, precio_costo, stock_minimo, activo,
+            id_unidad, unidad_medida
         } = data;
 
         const query = `
@@ -67,13 +79,16 @@ class ProductoModel {
                 precio_venta = COALESCE($5, precio_venta),
                 precio_costo = COALESCE($6, precio_costo),
                 stock_minimo = COALESCE($7, stock_minimo),
-                activo = COALESCE($8, activo)
-            WHERE id_producto = $9
+                activo = COALESCE($8, activo),
+                id_unidad = COALESCE($9, id_unidad),
+                unidad_medida = COALESCE($10, unidad_medida)
+            WHERE id_producto = $11
             RETURNING *
         `;
         const values = [
             sku, nombre, descripcion, id_categoria,
             precio_venta, precio_costo, stock_minimo, activo,
+            id_unidad || null, unidad_medida || null,
             id
         ];
 
@@ -81,10 +96,29 @@ class ProductoModel {
         return rows[0];
     }
 
-    // Regla de Seguridad Etapa 3: Baja lógica (activo = false) en vez de DELETE
     static async delete(id) {
         const query = 'UPDATE productos SET activo = false WHERE id_producto = $1 RETURNING *';
         const { rows } = await pool.query(query, [id]);
+        return rows[0];
+    }
+
+    static async getUnidades() {
+        const query = 'SELECT * FROM unidades_medida WHERE activo = true ORDER BY id_unidad ASC';
+        const { rows } = await pool.query(query);
+        return rows;
+    }
+
+    static async createUnidad({ codigo, nombre, simbolo }) {
+        const query = `
+            INSERT INTO unidades_medida (codigo, nombre, simbolo)
+            VALUES ($1, $2, $3)
+            RETURNING *
+        `;
+        const { rows } = await pool.query(query, [
+            codigo.trim().toUpperCase(),
+            nombre.trim(),
+            simbolo.trim()
+        ]);
         return rows[0];
     }
 }

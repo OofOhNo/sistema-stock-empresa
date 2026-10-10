@@ -12,6 +12,9 @@ const Stock = {
                     p.nombre AS nombre_producto,
                     p.precio_venta,
                     p.stock_minimo,
+                    p.id_unidad,
+                    COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
+                    COALESCE(um.simbolo, 'und') AS simbolo_unidad,
                     s.id_ubicacion,
                     s.nombre AS nombre_ubicacion,
                     i.cantidad_fisica,
@@ -21,6 +24,7 @@ const Stock = {
                 FROM inventario i
                 JOIN productos p ON i.id_producto = p.id_producto
                 JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
+                LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 WHERE i.id_ubicacion = $1 AND p.activo = true
                 ORDER BY p.nombre ASC;
             `;
@@ -41,13 +45,17 @@ const Stock = {
                     p.nombre AS nombre_producto,
                     p.precio_venta,
                     p.stock_minimo,
+                    p.id_unidad,
+                    COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
+                    COALESCE(um.simbolo, 'und') AS simbolo_unidad,
                     COALESCE(SUM(i.cantidad_fisica), 0) AS total_fisico,
                     COALESCE(SUM(i.cantidad_reservada), 0) AS total_reservado,
                     COALESCE(SUM(i.cantidad_fisica - i.cantidad_reservada), 0) AS total_disponible
                 FROM productos p
                 LEFT JOIN inventario i ON p.id_producto = i.id_producto
+                LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 WHERE p.activo = true
-                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo
+                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.unidad_medida, um.nombre, um.simbolo
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query);

@@ -55,10 +55,31 @@ export default function Despacho({ usuario }) {
     }
   };
 
-  const formatearFecha = (fechaISO) => {
-    if (!fechaISO) return '-';
-    const opciones = { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' };
-    return new Date(fechaISO).toLocaleDateString('es-ES', opciones);
+  const esProduccion = usuario?.area === 'PRODUCCION';
+
+  const formatearFechaYHoraDespacho = (fechaISO) => {
+    if (!fechaISO) return { fechaStr: '-', horaStr: null, esProduccion };
+    const dateObj = new Date(fechaISO);
+    
+    // Regla de Negocio: Si es producción ve 1 hora menos para tener margen operativo antes de entrega
+    const fechaAjustada = esProduccion 
+      ? new Date(dateObj.getTime() - 60 * 60 * 1000) 
+      : dateObj;
+
+    const fechaStr = fechaAjustada.toLocaleDateString('es-ES', { 
+      day: '2-digit', month: 'short', year: 'numeric' 
+    });
+
+    const tieneHora = !(dateObj.getUTCHours() === 0 && dateObj.getUTCMinutes() === 0 && dateObj.getUTCSeconds() === 0);
+    const horaStr = fechaAjustada.toLocaleTimeString('es-ES', { 
+      hour: '2-digit', minute: '2-digit' 
+    });
+
+    return {
+      fechaStr,
+      horaStr: tieneHora ? horaStr : null,
+      esProduccion
+    };
   };
 
   const pedidosFiltrados = pedidos.filter(p => {
@@ -263,13 +284,31 @@ export default function Despacho({ usuario }) {
                       </div>
                     </td>
 
-                    {/* Fecha de despacho */}
+                    {/* Fecha y Hora de despacho */}
                     <td className="py-4 px-6 text-slate-600 text-xs">
-                      <div className="flex items-center space-x-1.5">
-                        <Calendar size={14} className="text-slate-400" />
-                        <span className="font-medium">{formatearFecha(pedido.fecha_limite_despacho)}</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">Ubicación: {pedido.ubicacion || 'Central'}</div>
+                      {(() => {
+                        const { fechaStr, horaStr, esProduccion: prod } = formatearFechaYHoraDespacho(pedido.fecha_limite_despacho);
+                        return (
+                          <div>
+                            <div className="flex items-center space-x-1.5 font-medium text-slate-700">
+                              <Calendar size={14} className="text-slate-400" />
+                              <span>{fechaStr}</span>
+                            </div>
+                            {horaStr ? (
+                              <div className="flex items-center space-x-1.5 mt-1 font-semibold">
+                                <Clock size={13} className={prod ? "text-amber-600" : "text-blue-600"} />
+                                <span className={prod ? "text-amber-700 font-mono" : "text-blue-700 font-mono"}>{horaStr}</span>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                  prod ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-100 text-blue-800 border border-blue-200"
+                                }`}>
+                                  {prod ? "Planta (-1h)" : "Hora Real"}
+                                </span>
+                              </div>
+                            ) : null}
+                            <div className="text-[11px] text-slate-400 mt-0.5">Ubicación: {pedido.ubicacion || 'Central'}</div>
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* Check Etiquetado */}

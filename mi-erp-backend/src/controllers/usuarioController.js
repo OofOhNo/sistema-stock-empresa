@@ -1,6 +1,7 @@
 const Usuario = require('../models/usuarioModel');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const bcrypt = require('bcryptjs');
 
 const usuarioController = {
 
@@ -190,6 +191,121 @@ const usuarioController = {
         } catch (error) {
             console.error('Error al actualizar configuración de usuario:', error);
             res.status(500).json({ exito: false, mensaje: 'Error interno al actualizar usuario', error: error.message });
+        }
+    },
+
+    listarRoles: async (req, res) => {
+        try {
+            const roles = await Usuario.obtenerRoles();
+            res.status(200).json({
+                exito: true,
+                datos: roles
+            });
+        } catch (error) {
+            console.error('Error al listar roles:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al listar roles', error: error.message });
+        }
+    },
+
+    crearRol: async (req, res) => {
+        const { nombre, descripcion } = req.body;
+        const usuarioSolicitante = req.usuario;
+
+        if (!nombre || !nombre.trim()) {
+            return res.status(400).json({ exito: false, mensaje: 'El nombre del rol es obligatorio.' });
+        }
+
+        try {
+            // Verificar si el rol ya existe
+            const rolExistente = await pool.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nombre.trim()]);
+            if (rolExistente.rows.length > 0) {
+                return res.status(400).json({ exito: false, mensaje: 'Ya existe un rol con ese nombre.' });
+            }
+
+            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion);
+
+            await registrarAuditoria(
+                pool,
+                usuarioSolicitante.id_usuario,
+                'CREAR_ROL',
+                'roles',
+                nuevoRol.id_rol,
+                null,
+                nuevoRol
+            );
+
+            res.status(201).json({
+                exito: true,
+                mensaje: `Rol "${nuevoRol.nombre}" creado exitosamente y registrado en la matriz de permisos.`,
+                rol: nuevoRol
+            });
+        } catch (error) {
+            console.error('Error al crear rol:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al crear el rol', error: error.message });
+        }
+    },
+
+    crearUsuario: async (req, res) => {
+        const { nombre_completo, email, password, rol_id, id_ubicacion, area, puede_ver_celulares } = req.body;
+        const usuarioSolicitante = req.usuario;
+
+        if (!nombre_completo || !email || !password || !rol_id || !id_ubicacion) {
+            return res.status(400).json({ 
+                exito: false, 
+                mensaje: 'Todos los campos son obligatorios: Nombre completo, Email, Contraseña, Rol y Sede/Ubicación.' 
+            });
+        }
+
+        try {
+            // Verificar si email ya existe
+            const emailExistente = await pool.query('SELECT id_usuario FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+            if (emailExistente.rows.length > 0) {
+                return res.status(400).json({ exito: false, mensaje: 'El correo electrónico ya está registrado en el sistema.' });
+            }
+
+            // Verificar si rol existe
+            const rolCheck = await pool.query('SELECT id_rol FROM roles WHERE id_rol = $1', [rol_id]);
+            if (rolCheck.rows.length === 0) {
+                return res.status(400).json({ exito: false, mensaje: 'El rol seleccionado no es válido.' });
+            }
+
+            // Verificar si ubicacion existe
+            const ubCheck = await pool.query('SELECT id_ubicacion FROM ubicaciones WHERE id_ubicacion = $1', [id_ubicacion]);
+            if (ubCheck.rows.length === 0) {
+                return res.status(400).json({ exito: false, mensaje: 'La sede/ubicación seleccionada no es válida.' });
+            }
+
+            // Encriptar contraseña
+            const password_hash = await bcrypt.hash(password, 10);
+
+            const nuevoUsuario = await Usuario.crearUsuario({
+                nombre_completo: nombre_completo.trim(),
+                email: email.trim().toLowerCase(),
+                password_hash,
+                rol_id: Number(rol_id),
+                id_ubicacion: Number(id_ubicacion),
+                area: area || 'ADMINISTRACION',
+                puede_ver_celulares: puede_ver_celulares === true
+            });
+
+            await registrarAuditoria(
+                pool,
+                usuarioSolicitante.id_usuario,
+                'CREAR_USUARIO',
+                'usuarios',
+                nuevoUsuario.id_usuario,
+                null,
+                { nombre_completo: nuevoUsuario.nombre_completo, email: nuevoUsuario.email, rol_id, id_ubicacion }
+            );
+
+            res.status(201).json({
+                exito: true,
+                mensaje: `Usuario ${nuevoUsuario.nombre_completo} creado con éxito.`,
+                usuario: nuevoUsuario
+            });
+        } catch (error) {
+            console.error('Error al crear usuario:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error interno al crear usuario', error: error.message });
         }
     }
 

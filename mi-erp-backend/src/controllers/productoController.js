@@ -125,10 +125,42 @@ const deleteProducto = async (req, res) => {
     }
 };
 
+const getUnidades = async (req, res) => {
+    try {
+        const unidades = await ProductoModel.getUnidades();
+        res.status(200).json({ exito: true, unidades });
+    } catch (error) {
+        console.error('Error fetching unidades:', error);
+        res.status(500).json({ exito: false, message: 'Error al obtener unidades de medida', error: error.message });
+    }
+};
+
+const createUnidad = async (req, res) => {
+    const { codigo, nombre, simbolo } = req.body;
+    if (!codigo || !nombre || !simbolo) {
+        return res.status(400).json({ exito: false, message: 'Código, nombre y símbolo son obligatorios.' });
+    }
+    try {
+        const nueva = await ProductoModel.createUnidad({ codigo, nombre, simbolo });
+        res.status(201).json({ exito: true, mensaje: 'Unidad de medida creada exitosamente.', unidad: nueva });
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ 
+                exito: false, 
+                message: `Ya existe una unidad de medida registrada con el código "${codigo}".` 
+            });
+        }
+        console.error('Error creating unidad:', error);
+        res.status(500).json({ exito: false, message: 'Error al crear unidad de medida', error: error.message });
+    }
+};
+
 module.exports = {
     getAllProductos,
     getProductoById,
     createProducto,
     updateProducto,
-    deleteProducto
+    deleteProducto,
+    getUnidades,
+    createUnidad
 };

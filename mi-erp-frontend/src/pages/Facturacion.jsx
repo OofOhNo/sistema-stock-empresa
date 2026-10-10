@@ -18,6 +18,8 @@ export default function Facturacion({ usuario }) {
   const [modalEmitir, setModalEmitir] = useState(false);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
   const [tipoComprobante, setTipoComprobante] = useState('01'); // '01' Factura, '03' Boleta
+  const [formaPago, setFormaPago] = useState('CONTADO'); // 'CONTADO' o 'CREDITO'
+  const [diasCredito, setDiasCredito] = useState(30);
   const [procesando, setProcesando] = useState(false);
 
   // Modal Anular
@@ -57,6 +59,8 @@ export default function Facturacion({ usuario }) {
     }
     setPedidoSeleccionado(pedidosPendientes[0]);
     setTipoComprobante('01');
+    setFormaPago('CONTADO');
+    setDiasCredito(30);
     setModalEmitir(true);
   };
 
@@ -71,7 +75,9 @@ export default function Facturacion({ usuario }) {
     try {
       const res = await api.post('/facturacion/emitir', {
         id_pedido: pedidoSeleccionado.id_pedido,
-        tipo_comprobante: tipoComprobante
+        tipo_comprobante: tipoComprobante,
+        forma_pago: formaPago,
+        dias_credito: formaPago === 'CREDITO' ? parseInt(diasCredito, 10) : 0
       });
       toast.success(res.data.mensaje || 'Comprobante emitido con éxito ante la SUNAT.');
       setModalEmitir(false);
@@ -298,6 +304,7 @@ export default function Facturacion({ usuario }) {
                   <th className="py-4 px-6">Comprobante</th>
                   <th className="py-4 px-6">Serie - Correlativo</th>
                   <th className="py-4 px-6">Cliente / Pedido</th>
+                  <th className="py-4 px-6 text-center">Condición</th>
                   <th className="py-4 px-6">Fecha Emisión</th>
                   <th className="py-4 px-6 text-right">Subtotal</th>
                   <th className="py-4 px-6 text-right">IGV (18%)</th>
@@ -325,6 +332,25 @@ export default function Facturacion({ usuario }) {
                       <td className="py-4 px-6">
                         <div className="font-semibold text-slate-800">{comp.nombre_cliente || 'Consumidor Final'}</div>
                         <div className="text-xs text-slate-400">Pedido #{comp.id_pedido} · {comp.nombre_ubicacion || 'Central'}</div>
+                      </td>
+                      {/* Condición de Pago */}
+                      <td className="py-4 px-6 text-center">
+                        {comp.forma_pago === 'CREDITO' ? (
+                          <div>
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              Crédito ({comp.dias_credito || 30}d)
+                            </span>
+                            {comp.fecha_vencimiento_cuota && (
+                              <div className="text-[10px] text-purple-600 font-mono mt-0.5">
+                                Vence: {new Date(comp.fecha_vencimiento_cuota).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                            Contado
+                          </span>
+                        )}
                       </td>
                       <td className="py-4 px-6 text-slate-600 text-xs font-medium">
                         {new Date(comp.fecha_emision).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -452,6 +478,67 @@ export default function Facturacion({ usuario }) {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Condición de Pago: Contado o Crédito */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Condición de Pago *
+                </label>
+                <div className="grid grid-cols-2 gap-3 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormaPago('CONTADO')}
+                    className={`p-3 rounded-xl border text-left transition-colors ${
+                      formaPago === 'CONTADO'
+                        ? 'border-emerald-600 bg-emerald-50/50 text-emerald-950 shadow-xs'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <span className="block font-bold text-sm">💵 Al Contado</span>
+                    <span className="text-xs text-slate-500">Pago inmediato (Efectivo / Transferencia)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormaPago('CREDITO')}
+                    className={`p-3 rounded-xl border text-left transition-colors ${
+                      formaPago === 'CREDITO'
+                        ? 'border-purple-600 bg-purple-50/50 text-purple-950 shadow-xs'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <span className="block font-bold text-sm">🗓️ Al Crédito</span>
+                    <span className="text-xs text-slate-500">Pago diferido con plazo acordado</span>
+                  </button>
+                </div>
+
+                {formaPago === 'CREDITO' && (
+                  <div className="bg-purple-50/70 p-3.5 rounded-xl border border-purple-200 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-purple-900">Plazo en días:</span>
+                      <select
+                        value={diasCredito}
+                        onChange={(e) => setDiasCredito(Number(e.target.value))}
+                        className="bg-white border border-purple-300 rounded-lg px-3 py-1 font-bold text-purple-950 text-xs focus:outline-none focus:border-purple-500"
+                      >
+                        <option value={15}>15 días calendario</option>
+                        <option value={30}>30 días calendario</option>
+                        <option value={45}>45 días calendario</option>
+                        <option value={60}>60 días calendario</option>
+                        <option value={90}>90 días calendario</option>
+                      </select>
+                    </div>
+                    <div className="text-purple-800 font-medium pt-1 border-t border-purple-200/60">
+                      📅 Fecha de vencimiento estimada: <b className="font-mono">
+                        {(() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + Number(diasCredito));
+                          return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+                        })()}
+                      </b>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {pedidoSeleccionado && (

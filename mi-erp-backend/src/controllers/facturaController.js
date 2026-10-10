@@ -7,7 +7,7 @@ const facturaController = {
         try {
             await client.query('BEGIN');
 
-            const { id_pedido, tipo_comprobante } = req.body; // '01' para Factura, '03' para Boleta
+            const { id_pedido, tipo_comprobante, forma_pago, dias_credito, fecha_vencimiento_cuota } = req.body; // '01' para Factura, '03' para Boleta
 
             if (!id_pedido || !tipo_comprobante) {
                 await client.query('ROLLBACK');
@@ -16,6 +16,21 @@ const facturaController = {
             if (tipo_comprobante !== '01' && tipo_comprobante !== '03') {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ exito: false, mensaje: 'Tipo de comprobante inválido. Use "01" (Factura) o "03" (Boleta).' });
+            }
+
+            // Condición de pago: CONTADO o CREDITO
+            const esCredito = forma_pago === 'CREDITO';
+            const formaPagoFinal = esCredito ? 'CREDITO' : 'CONTADO';
+            const diasCreditoFinal = esCredito ? (parseInt(dias_credito, 10) || 30) : 0;
+            let fechaVencimientoFinal = null;
+            if (esCredito) {
+                if (fecha_vencimiento_cuota) {
+                    fechaVencimientoFinal = fecha_vencimiento_cuota;
+                } else {
+                    const f = new Date();
+                    f.setDate(f.getDate() + diasCreditoFinal);
+                    fechaVencimientoFinal = f.toISOString().split('T')[0];
+                }
             }
 
             //VALIDACION BLINDADA: Verificar si el pedido ya fue facturado
@@ -138,8 +153,13 @@ const facturaController = {
 
             //guardar el comprobante en la base de datos
             const queryComprobante = `
-                INSERT INTO comprobantes (id_pedido, tipo_comprobante, serie, correlativo, monto_subtotal, monto_igv, monto_total, estado_sunat, codigo_hash, mensaje_cdr)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                INSERT INTO comprobantes (
+                    id_pedido, tipo_comprobante, serie, correlativo, 
+                    monto_subtotal, monto_igv, monto_total, 
+                    forma_pago, dias_credito, fecha_vencimiento_cuota,
+                    estado_sunat, codigo_hash, mensaje_cdr
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING *;
             `;
             const resComprobante = await client.query(queryComprobante, [
@@ -150,6 +170,9 @@ const facturaController = {
                 montoSubtotal.toFixed(2),
                 montoIgv.toFixed(2),
                 montoTotal.toFixed(2), 
+                formaPagoFinal,
+                diasCreditoFinal,
+                fechaVencimientoFinal,
                 'ACEPTADO', 
                 respuestaSunat.codigo_hash, 
                 respuestaSunat.mensaje_cdr
@@ -350,6 +373,139 @@ const facturaController = {
         } catch (error) {
             console.error('Error al listar comprobantes:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al listar comprobantes', error: error.message });
+        }
+    },
+
+    obtenerGraficosFacturacion: async (req, res) => {
+        try {
+            const [queryDias, queryMeses, queryTrimestres, queryAnios] = await Promise.all([
+                pool.query(`
+                    SELECT 
+                        to_char(c.fecha_emision, 'YYYY-MM-DD') AS fecha,
+                        to_char(c.fecha_emision, 'Dy') AS dia_semana,
+                        COALESCE(SUM(c.monto_total), 0) AS total,
+                        COUNT(c.id_comprobante)::int AS cantidad
+                    FROM comprobantes c
+                    WHERE c.estado_sunat != 'ANULADO'
+                    GROUP BY fecha, dia_semana
+                    ORDER BY fecha DESC
+                    LIMIT 7;
+                `),
+                pool.query(`
+                    SELECT 
+                        EXTRACT(MONTH FROM c.fecha_emision)::int AS mes_num,
+                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        COALESCE(SUM(c.monto_total), 0) AS total,
+                        COUNT(c.id_comprobante)::int AS cantidad
+                    FROM comprobantes c
+                    WHERE c.estado_sunat != 'ANULADO'
+                    GROUP BY mes_num, anio
+                    ORDER BY anio ASC, mes_num ASC;
+                `),
+                pool.query(`
+                    SELECT 
+                        EXTRACT(QUARTER FROM c.fecha_emision)::int AS q_num,
+                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        COALESCE(SUM(c.monto_total), 0) AS total,
+                        COUNT(c.id_comprobante)::int AS cantidad
+                    FROM comprobantes c
+                    WHERE c.estado_sunat != 'ANULADO'
+                    GROUP BY q_num, anio
+                    ORDER BY anio ASC, q_num ASC;
+                `),
+                pool.query(`
+                    SELECT 
+                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        COALESCE(SUM(c.monto_total), 0) AS total,
+                        COUNT(c.id_comprobante)::int AS cantidad
+                    FROM comprobantes c
+                    WHERE c.estado_sunat != 'ANULADO'
+                    GROUP BY anio
+                    ORDER BY anio ASC;
+                `)
+            ]);
+
+            const diasNombres = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+            let semanal = diasNombres.map((dia) => {
+                const match = queryDias.rows.find(r => r.dia_semana && r.dia_semana.toLowerCase().startsWith(dia.toLowerCase().slice(0, 2)));
+                return {
+                    etiqueta: dia,
+                    total: match ? parseFloat(match.total) : 0,
+                    cantidad: match ? match.cantidad : 0
+                };
+            });
+
+            if (semanal.every(s => s.total === 0) && queryDias.rows.length > 0) {
+                semanal = queryDias.rows.map(r => ({
+                    etiqueta: r.fecha.slice(5),
+                    total: parseFloat(r.total),
+                    cantidad: r.cantidad
+                }));
+            }
+
+            const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Set', 'Oct', 'Nov', 'Dic'];
+            const anioActual = new Date().getFullYear();
+            const mensual = mesesNombres.map((nombre, idx) => {
+                const mesNum = idx + 1;
+                const match = queryMeses.rows.find(r => r.mes_num === mesNum && r.anio === anioActual) 
+                           || queryMeses.rows.find(r => r.mes_num === mesNum);
+                return {
+                    mes: nombre,
+                    mesNum,
+                    total: match ? parseFloat(match.total) : 0,
+                    cantidad: match ? match.cantidad : 0
+                };
+            });
+
+            const trimestresNombres = [
+                { id: 1, nombre: 'T1 (Ene-Mar)' },
+                { id: 2, nombre: 'T2 (Abr-Jun)' },
+                { id: 3, nombre: 'T3 (Jul-Set)' },
+                { id: 4, nombre: 'T4 (Oct-Dic)' }
+            ];
+            const trimestral = trimestresNombres.map(t => {
+                const match = queryTrimestres.rows.find(r => r.q_num === t.id && r.anio === anioActual)
+                           || queryTrimestres.rows.find(r => r.q_num === t.id);
+                return {
+                    trimestre: t.nombre,
+                    id: t.id,
+                    total: match ? parseFloat(match.total) : 0,
+                    cantidad: match ? match.cantidad : 0
+                };
+            });
+
+            const aniosRango = [anioActual - 2, anioActual - 1, anioActual, anioActual + 1];
+            const anual = aniosRango.map(anio => {
+                const match = queryAnios.rows.find(r => r.anio === anio);
+                return {
+                    anio: String(anio),
+                    total: match ? parseFloat(match.total) : 0,
+                    cantidad: match ? match.cantidad : 0
+                };
+            });
+
+            const totalHistorico = queryAnios.rows.reduce((sum, r) => sum + parseFloat(r.total), 0);
+            const totalComprobantes = queryAnios.rows.reduce((sum, r) => sum + r.cantidad, 0);
+
+            res.status(200).json({
+                exito: true,
+                moneda: 'PEN (S/)',
+                resumen: {
+                    totalHistorico,
+                    totalComprobantes,
+                    promedioMensual: totalHistorico > 0 ? (totalHistorico / 12).toFixed(2) : '0.00'
+                },
+                graficos: {
+                    semanal,
+                    mensual,
+                    trimestral,
+                    anual
+                }
+            });
+
+        } catch (error) {
+            console.error('Error al generar gráficos de facturación:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al generar métricas de facturación', error: error.message });
         }
     }
 

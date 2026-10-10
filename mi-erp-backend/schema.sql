@@ -57,12 +57,23 @@ CREATE TABLE IF NOT EXISTS categorias (
     nombre VARCHAR(100) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS unidades_medida (
+    id_unidad SERIAL PRIMARY KEY,
+    codigo VARCHAR(20) NOT NULL UNIQUE,
+    nombre VARCHAR(100) NOT NULL,
+    simbolo VARCHAR(20) NOT NULL,
+    activo BOOLEAN DEFAULT true,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS productos (
     id_producto SERIAL PRIMARY KEY,
     sku VARCHAR(50) NOT NULL UNIQUE,
     nombre VARCHAR(150) NOT NULL,
     descripcion TEXT,
     id_categoria INTEGER REFERENCES categorias(id_categoria) ON DELETE SET NULL,
+    id_unidad INTEGER REFERENCES unidades_medida(id_unidad) ON DELETE SET NULL,
+    unidad_medida VARCHAR(50) DEFAULT 'Unidad',
     precio_venta NUMERIC(10,2) NOT NULL,
     precio_costo NUMERIC(12,2) DEFAULT 0,
     stock_minimo INTEGER DEFAULT 5,
@@ -151,6 +162,9 @@ CREATE TABLE IF NOT EXISTS comprobantes (
     monto_subtotal NUMERIC(10,2) NOT NULL,
     monto_igv NUMERIC(10,2) NOT NULL,
     monto_total NUMERIC(10,2) NOT NULL,
+    forma_pago VARCHAR(20) DEFAULT 'CONTADO' CHECK (forma_pago IN ('CONTADO', 'CREDITO')),
+    dias_credito INTEGER DEFAULT 0,
+    fecha_vencimiento_cuota DATE,
     estado_sunat VARCHAR(50) DEFAULT 'PENDIENTE_ENVIO' CHECK (estado_sunat IN ('PENDIENTE_ENVIO', 'ACEPTADO', 'RECHAZADO', 'ANULADO')),
     codigo_hash TEXT,
     mensaje_cdr TEXT,
@@ -221,4 +235,39 @@ DROP TRIGGER IF EXISTS trg_block_auditoria_updates ON auditoria;
 CREATE TRIGGER trg_block_auditoria_updates
 BEFORE UPDATE OR DELETE ON auditoria
 FOR EACH ROW EXECUTE FUNCTION block_auditoria_updates();
+
+-- 10. CALIDAD Y SANIDAD (CERTIFICADOS)
+CREATE TABLE IF NOT EXISTS certificados_calidad (
+    id_certificado SERIAL PRIMARY KEY,
+    codigo_certificado VARCHAR(100) NOT NULL UNIQUE,
+    tipo_certificado VARCHAR(100) NOT NULL,
+    lote_o_producto VARCHAR(150),
+    entidad_emisora VARCHAR(150) NOT NULL,
+    fecha_emision DATE NOT NULL,
+    fecha_vencimiento DATE NOT NULL,
+    estado VARCHAR(50) NOT NULL DEFAULT 'VIGENTE' CHECK (estado IN ('VIGENTE', 'POR_VENCER', 'VENCIDO', 'SUSPENDIDO')),
+    id_ubicacion INTEGER REFERENCES ubicaciones(id_ubicacion) ON DELETE SET NULL,
+    id_usuario INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    archivo_url TEXT,
+    observaciones TEXT,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 11. REPORTES DE ERRORES E INCIDENCIAS
+CREATE TABLE IF NOT EXISTS reportes_errores (
+    id_error SERIAL PRIMARY KEY,
+    codigo_incidencia VARCHAR(50) NOT NULL UNIQUE,
+    titulo VARCHAR(200) NOT NULL,
+    descripcion TEXT NOT NULL,
+    area_modulo VARCHAR(100) NOT NULL,
+    severidad VARCHAR(20) NOT NULL CHECK (severidad IN ('BAJA', 'MEDIA', 'ALTA', 'CRITICA')),
+    estado VARCHAR(50) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE', 'EN_REVISION', 'RESUELTO', 'DESCARTADO')),
+    id_usuario_reporta INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    id_usuario_asigna INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    id_pedido INTEGER REFERENCES pedidos(id_pedido) ON DELETE SET NULL,
+    solucion_adoptada TEXT,
+    fecha_reporte TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_solucion TIMESTAMP
+);
+
 

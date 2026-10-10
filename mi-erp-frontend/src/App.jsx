@@ -11,6 +11,9 @@ import Ubicaciones from './pages/Ubicaciones';
 import Facturacion from './pages/Facturacion';
 import Clientes from './pages/Clientes';
 import Despacho from './pages/Despacho';
+import Calidad from './pages/Calidad';
+import Errores from './pages/Errores';
+import Organizacion from './pages/Organizacion';
 import api from './api';
 import { Toaster } from 'react-hot-toast';
 
@@ -69,6 +72,12 @@ export default function App() {
         return <Reuniones usuario={usuario} />;
       case 'facturacion':
         return <Facturacion usuario={usuario} />;
+      case 'calidad':
+        return <Calidad usuario={usuario} />;
+      case 'errores':
+        return <Errores usuario={usuario} />;
+      case 'organizacion':
+        return <Organizacion usuario={usuario} />;
       case 'usuarios':
         return <Usuarios usuarioLogueado={usuario} />;
       case 'ubicaciones':

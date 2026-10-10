@@ -84,6 +84,80 @@ const Usuario = {
         } catch (error) {
             throw error;
         }
+    },
+
+    obtenerRoles: async () => {
+        try {
+            const query = `
+                SELECT 
+                    r.id_rol, 
+                    r.nombre, 
+                    r.descripcion, 
+                    r.creado_en,
+                    COUNT(u.id_usuario)::int AS total_usuarios
+                FROM roles r
+                LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND u.activo = true
+                GROUP BY r.id_rol, r.nombre, r.descripcion, r.creado_en
+                ORDER BY r.id_rol ASC;
+            `;
+            const res = await pool.query(query);
+            return res.rows;
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    crearRol: async (nombre, descripcion) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const insertRol = await client.query(
+                `INSERT INTO roles (nombre, descripcion) VALUES ($1, $2) RETURNING *`,
+                [nombre, descripcion || null]
+            );
+            const nuevoRol = insertRol.rows[0];
+
+            // Inicializar roles_permisos para todos los permisos existentes (por defecto en false)
+            await client.query(`
+                INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
+                SELECT $1, p.id, false, false
+                FROM permisos p
+                ON CONFLICT (rol_id, permiso_id) DO NOTHING;
+            `, [nuevoRol.id_rol]);
+
+            await client.query('COMMIT');
+            return nuevoRol;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares }) => {
+        try {
+            const query = `
+                INSERT INTO usuarios (
+                    nombre_completo, email, password_hash, rol_id, id_ubicacion, 
+                    area, puede_ver_celulares, activo
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, activo, creado_en;
+            `;
+            const res = await pool.query(query, [
+                nombre_completo,
+                email,
+                password_hash,
+                rol_id,
+                id_ubicacion,
+                area || 'ADMINISTRACION',
+                puede_ver_celulares === true
+            ]);
+            return res.rows[0];
+        } catch (error) {
+            throw error;
+        }
     }
 
 };

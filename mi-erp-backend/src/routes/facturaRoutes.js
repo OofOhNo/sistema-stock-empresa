@@ -7,6 +7,9 @@ const requierePermiso = require('../middlewares/requierePermiso');
 // Listar comprobantes emitidos
 router.get('/', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarComprobantes);
 
+// Gráficos y métricas de facturación (Semanal, Mensual, Trimestral, Anual)
+router.get('/graficos', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerGraficosFacturacion);
+
 // Emitir comprobante electrónico (Factura '01' o Boleta '03')
 router.post('/emitir', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.emitirComprobante);
 

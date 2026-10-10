@@ -243,6 +243,7 @@ export default function Stock({ usuario }) {
               <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                 <th className="p-4 font-semibold">SKU</th>
                 <th className="p-4 font-semibold">Producto</th>
+                <th className="p-4 font-semibold text-center">Unidad</th>
                 <th className="p-4 font-semibold text-center">Físico</th>
                 <th className="p-4 font-semibold text-center">Reservado</th>
                 <th className="p-4 font-semibold text-center text-indigo-600">Disponible</th>
@@ -260,6 +261,11 @@ export default function Stock({ usuario }) {
                   <tr key={index} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4 font-bold text-slate-900">{item.sku}</td>
                     <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
+                    <td className="p-4 text-center">
+                      <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
+                        {item.simbolo_unidad || item.unidad_medida || 'und'}
+                      </span>
+                    </td>
                     <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? item.total_fisico ?? 0}</td>
                     <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? item.total_reservado ?? 0}</td>
                     <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
