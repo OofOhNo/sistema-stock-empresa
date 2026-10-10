@@ -5,7 +5,7 @@ const pedidoController = {
     //crear un nuevo pedido
     nuevoPedido: async (req, res) => {
         try {
-            const { id_cliente, fecha_limite_despacho, items, solicitado_por } = req.body;
+            const { id_cliente, fecha_limite_despacho, items, solicitado_por, etiquetado, sellado_vacio } = req.body;
             const id_usuario = req.usuario.id_usuario; //viene del token seguro
             const id_ubicacion = req.usuario.id_ubicacion; //ubicacion del empleado
 
@@ -13,15 +13,18 @@ const pedidoController = {
                 return res.status(400).json({ exito: false, mensaje: 'El pedido debe contener al menos un producto.' });
             }
 
-            if (!id_ubicacion) {
-                return res.status(403).json({ exito: false, mensaje: 'No tienes una ubicacion asignada para realizar pedidos.' });
+            if (!id_cliente) {
+                return res.status(400).json({ exito: false, mensaje: 'Debe seleccionar un cliente para el pedido.' });
             }
 
             //si es admin central, puede especificar una ubicacion en el body, sino usa la suya
             const ubicacionPedido = req.body.id_ubicacion || id_ubicacion;
+            if (!ubicacionPedido) {
+                return res.status(400).json({ exito: false, mensaje: 'Debe especificar una ubicación para el pedido.' });
+            }
 
             const pedidoCreado = await Pedido.crearPedido(
-                id_cliente, id_usuario, ubicacionPedido, fecha_limite_despacho, items, solicitado_por
+                id_cliente, id_usuario, ubicacionPedido, fecha_limite_despacho, items, solicitado_por, etiquetado, sellado_vacio
             );
 
             res.status(201).json({
@@ -32,15 +35,14 @@ const pedidoController = {
 
         } catch (error) {
             console.error('Error al crear pedido:', error);
-            res.status(500).json({
+            res.status(400).json({
                 exito: false,
-                mensaje: 'Error interno al procesar el pedido',
-                error: error.message
+                mensaje: error.message || 'Error al procesar el pedido'
             });
         }
     },
 
-    //obtener eventos para el calendario de logistica
+    //obtener eventos para el calendario de logistica y despachos
     obtenerCalendarioLogistica: async (req, res) => {
         try {
             const { nombre_rol, id_ubicacion } = req.usuario;
@@ -53,11 +55,41 @@ const pedidoController = {
             });
 
         } catch (error) {
-            console.error('Error en calendario de logÃ­stica:', error);
+            console.error('Error en calendario de logística:', error);
             res.status(500).json({
                 exito: false,
                 mensaje: 'Error al obtener los datos del calendario de pedidos'
             });
+        }
+    },
+
+    marcarListoDespacho: async (req, res) => {
+        try {
+            const { id } = req.params;
+            const pedido = await Pedido.marcarListoDespacho(id, req.usuario);
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Pedido marcado como listo para despacho.',
+                pedido
+            });
+        } catch (error) {
+            console.error('Error al marcar listo para despacho:', error);
+            res.status(400).json({ exito: false, mensaje: error.message });
+        }
+    },
+
+    marcarDespachado: async (req, res) => {
+        try {
+            const { id } = req.params;
+            const pedido = await Pedido.marcarDespachado(id, req.usuario);
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Pedido marcado como despachado.',
+                pedido
+            });
+        } catch (error) {
+            console.error('Error al marcar despachado:', error);
+            res.status(400).json({ exito: false, mensaje: error.message });
         }
     },
 

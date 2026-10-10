@@ -9,6 +9,9 @@ import Productos from './pages/Productos';
 import Reuniones from './pages/Reuniones';
 import Ubicaciones from './pages/Ubicaciones';
 import Facturacion from './pages/Facturacion';
+import Clientes from './pages/Clientes';
+import Despacho from './pages/Despacho';
+import api from './api';
 import { Toaster } from 'react-hot-toast';
 
 export default function App() {
@@ -20,7 +23,20 @@ export default function App() {
     const usuarioGuardado = localStorage.getItem('usuario_erp');
     const tokenGuardado = localStorage.getItem('token_erp');
     if (usuarioGuardado && tokenGuardado) {
-      setUsuario(JSON.parse(usuarioGuardado));
+      const parsed = JSON.parse(usuarioGuardado);
+      setUsuario(parsed);
+
+      // Sincronizar perfil actualizado desde el servidor (área, permisos de celular, etc.)
+      api.get('/auth/perfil')
+        .then(res => {
+          if (res.data.exito && res.data.usuario) {
+            setUsuario(res.data.usuario);
+            localStorage.setItem('usuario_erp', JSON.stringify(res.data.usuario));
+          }
+        })
+        .catch(() => {
+          // Si el token expiró, cerrar sesión
+        });
     }
   }, []);
 
@@ -37,22 +53,26 @@ export default function App() {
   //controlador para renderizar la pantalla correcta segun el menu
   const renderizarVista = () => {
     switch (vistaActual) {
-      case 'stock':
-        return <Stock usuario={usuario} />;
-      case 'pedidos':
-        return <Pedidos usuario={usuario} />;
-      case 'productos':
-        return <Productos usuario={usuario} />;
       case 'dashboard':
         return <Dashboard usuario={usuario} />; 
+      case 'stock':
+        return <Stock usuario={usuario} />;
+      case 'productos':
+        return <Productos usuario={usuario} />;
+      case 'clientes':
+        return <Clientes usuario={usuario} />;
+      case 'pedidos':
+        return <Pedidos usuario={usuario} />;
+      case 'despacho':
+        return <Despacho usuario={usuario} />;
+      case 'reuniones':
+        return <Reuniones usuario={usuario} />;
+      case 'facturacion':
+        return <Facturacion usuario={usuario} />;
       case 'usuarios':
         return <Usuarios usuarioLogueado={usuario} />;
       case 'ubicaciones':
         return <Ubicaciones usuario={usuario} />;
-      case 'facturacion':
-        return <Facturacion usuario={usuario} />;
-      case 'reuniones':
-        return <Reuniones usuario={usuario} />;
       default:
         return <div className="text-slate-500">Módulo en construcción...</div>;
     }

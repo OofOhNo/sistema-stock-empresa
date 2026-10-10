@@ -121,6 +121,23 @@ export default function Usuarios({ usuarioLogueado }) {
     }
   };
 
+  const actualizarConfiguracion = async (idUsuario, puede_ver_celulares, area) => {
+    setActualizando(idUsuario);
+    try {
+      const res = await api.put(`/usuarios/${idUsuario}/configuracion`, { puede_ver_celulares, area });
+      toast.success(res.data.mensaje);
+      cargarUsuarios();
+      if (idUsuario === usuarioLogueado.id_usuario) {
+        const actualizado = { ...usuarioLogueado, puede_ver_celulares, area };
+        localStorage.setItem('usuario_erp', JSON.stringify(actualizado));
+      }
+    } catch (err) {
+      toast.error('Error: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setActualizando(null);
+    }
+  };
+
   // Protección de la pantalla
   if (usuarioLogueado?.rol !== 'Admin Central' && usuarioLogueado?.rol !== 'Administrador') {
     return (
@@ -212,7 +229,9 @@ export default function Usuarios({ usuarioLogueado }) {
                   <th className="p-4 font-semibold">Nombre del Empleado</th>
                   <th className="p-4 font-semibold">Email (Usuario)</th>
                   <th className="p-4 font-semibold">Rol Actual</th>
-                  <th className="p-4 font-semibold text-center">Asignar Nuevo Rol</th>
+                  <th className="p-4 font-semibold text-center">Asignar Rol</th>
+                  <th className="p-4 font-semibold text-center">Área (Horario)</th>
+                  <th className="p-4 font-semibold text-center">Ver Celulares Clientes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -237,6 +256,8 @@ export default function Usuarios({ usuarioLogueado }) {
                           </span>
                         </div>
                       </td>
+                      
+                      {/* Asignar Rol */}
                       <td className="p-4 text-center">
                         <div className="flex justify-center">
                           <select
@@ -252,6 +273,42 @@ export default function Usuarios({ usuarioLogueado }) {
                           </select>
                         </div>
                       </td>
+
+                      {/* Área: Administración vs Producción */}
+                      <td className="p-4 text-center">
+                        <div className="flex justify-center">
+                          <select
+                            disabled={actualizando === user.id_usuario}
+                            value={user.area || 'ADMINISTRACION'}
+                            onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, e.target.value)}
+                            className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 font-semibold cursor-pointer"
+                          >
+                            <option value="ADMINISTRACION">Administración (Hora Real)</option>
+                            <option value="PRODUCCION">Producción (1h Menos)</option>
+                          </select>
+                        </div>
+                      </td>
+
+                      {/* Permiso Celulares Clientes */}
+                      <td className="p-4 text-center">
+                        <label className="inline-flex items-center space-x-2 cursor-pointer">
+                          <input 
+                            type="checkbox"
+                            disabled={actualizando === user.id_usuario}
+                            checked={Boolean(user.puede_ver_celulares)}
+                            onChange={(e) => actualizarConfiguracion(user.id_usuario, e.target.checked, user.area || 'ADMINISTRACION')}
+                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                          />
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                            user.puede_ver_celulares 
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                              : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}>
+                            {user.puede_ver_celulares ? 'Permitido' : 'Oculto'}
+                          </span>
+                        </label>
+                      </td>
+
                     </tr>
                   );
                 })}

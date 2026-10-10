@@ -14,6 +14,8 @@ const Usuario = {
                     ub.nombre AS nombre_ubicacion,
                     u.rol_id,
                     r.nombre AS nombre_rol,
+                    u.puede_ver_celulares,
+                    u.area,
                     u.activo,
                     u.creado_en
                 FROM usuarios u
@@ -42,6 +44,23 @@ const Usuario = {
 
             const query = "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2 RETURNING *";
             const res = await pool.query(query, [rolId, id_usuario]);
+            return res.rows[0];
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area) => {
+        try {
+            const query = `
+                UPDATE usuarios 
+                SET 
+                    puede_ver_celulares = COALESCE($1, puede_ver_celulares),
+                    area = COALESCE($2, area)
+                WHERE id_usuario = $3 
+                RETURNING *;
+            `;
+            const res = await pool.query(query, [puede_ver_celulares, area, id_usuario]);
             return res.rows[0];
         } catch (error) {
             throw error;

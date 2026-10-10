@@ -166,6 +166,31 @@ const usuarioController = {
         } finally {
             client.release();
         }
+    },
+
+    actualizarConfiguracion: async (req, res) => {
+        const { id_usuario } = req.params;
+        const { puede_ver_celulares, area } = req.body;
+        const adminSolicitante = req.usuario;
+
+        if (adminSolicitante.nombre_rol !== 'Admin Central') {
+            return res.status(403).json({ 
+                exito: false, 
+                mensaje: "Acceso denegado. Solo un Admin Central puede modificar los permisos y área de un usuario." 
+            });
+        }
+
+        try {
+            const actualizado = await Usuario.actualizarConfiguracion(id_usuario, puede_ver_celulares, area);
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Configuración de usuario actualizada correctamente.',
+                usuario: actualizado
+            });
+        } catch (error) {
+            console.error('Error al actualizar configuración de usuario:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error interno al actualizar usuario', error: error.message });
+        }
     }
 
 };

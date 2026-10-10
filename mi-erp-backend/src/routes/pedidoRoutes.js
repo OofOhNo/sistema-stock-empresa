@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const pedidoController = require('../controllers/pedidoController');
 const { verificarToken } = require('../middlewares/authMiddleware');
@@ -12,5 +12,9 @@ router.post('/', verificarToken, requierePermiso('pedidos', 'editar'), pedidoCon
 
 //ruta para cancelar un pedido (PUT)
 router.put('/:id/cancelar', verificarToken, requierePermiso('pedidos', 'editar'), pedidoController.cancelarPedido);
+
+//rutas de gestion de despacho (PUT)
+router.put('/:id/listo-despacho', verificarToken, requierePermiso('pedidos', 'editar'), pedidoController.marcarListoDespacho);
+router.put('/:id/despachar', verificarToken, requierePermiso('pedidos', 'editar'), pedidoController.marcarDespachado);
 
 module.exports = router;

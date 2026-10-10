@@ -225,7 +225,7 @@ export default function Facturacion({ usuario }) {
             <span className="p-2 bg-amber-50 text-amber-600 rounded-lg"><DollarSign size={16} /></span>
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-slate-900">${totalMonto.toFixed(2)}</span>
+            <span className="text-2xl font-bold text-slate-900">S/ {totalMonto.toFixed(2)}</span>
             <span className="text-xs text-emerald-600 font-semibold">SUNAT OK</span>
           </div>
         </div>
@@ -330,13 +330,13 @@ export default function Facturacion({ usuario }) {
                         {new Date(comp.fecha_emision).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </td>
                       <td className="py-4 px-6 text-right text-slate-600 font-mono text-xs">
-                        ${parseFloat(comp.monto_subtotal || 0).toFixed(2)}
+                        S/ {parseFloat(comp.monto_subtotal || 0).toFixed(2)}
                       </td>
                       <td className="py-4 px-6 text-right text-slate-600 font-mono text-xs">
-                        ${parseFloat(comp.monto_igv || 0).toFixed(2)}
+                        S/ {parseFloat(comp.monto_igv || 0).toFixed(2)}
                       </td>
                       <td className="py-4 px-6 text-right font-bold text-slate-900 font-mono">
-                        ${parseFloat(comp.monto_total || 0).toFixed(2)}
+                        S/ {parseFloat(comp.monto_total || 0).toFixed(2)}
                       </td>
                       <td className="py-4 px-6 text-center">
                         <div className="flex flex-col items-center">
@@ -448,7 +448,7 @@ export default function Facturacion({ usuario }) {
                 >
                   {pedidosPendientes.map((p) => (
                     <option key={p.id_pedido} value={p.id_pedido}>
-                      Pedido #{p.id_pedido} · {p.cliente} · Total: ${parseFloat(p.monto_total).toFixed(2)}
+                      Pedido #{p.id_pedido} · {p.cliente} · Total: S/ {parseFloat(p.monto_total).toFixed(2)}
                     </option>
                   ))}
                 </select>
@@ -466,15 +466,15 @@ export default function Facturacion({ usuario }) {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Monto Subtotal (Base Gravada):</span>
-                    <span className="font-mono text-slate-800">${(parseFloat(pedidoSeleccionado.monto_total) / 1.18).toFixed(2)}</span>
+                    <span className="font-mono text-slate-800">S/ {(parseFloat(pedidoSeleccionado.monto_total) / 1.18).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">IGV (18%):</span>
-                    <span className="font-mono text-slate-800">${(parseFloat(pedidoSeleccionado.monto_total) - (parseFloat(pedidoSeleccionado.monto_total) / 1.18)).toFixed(2)}</span>
+                    <span className="font-mono text-slate-800">S/ {(parseFloat(pedidoSeleccionado.monto_total) - (parseFloat(pedidoSeleccionado.monto_total) / 1.18)).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold">
                     <span className="text-slate-900">Monto Total:</span>
-                    <span className="text-indigo-600 font-mono">${parseFloat(pedidoSeleccionado.monto_total).toFixed(2)}</span>
+                    <span className="text-indigo-600 font-mono">S/ {parseFloat(pedidoSeleccionado.monto_total).toFixed(2)}</span>
                   </div>
                 </div>
               )}

@@ -121,8 +121,8 @@ export default function Productos({ usuario }) {
           <input name="nombre" value={form.nombre} onChange={handleChange} placeholder="Nombre" className="border p-2 rounded" required />
           <input name="descripcion" value={form.descripcion} onChange={handleChange} placeholder="Descripción" className="border p-2 rounded" />
           <input name="id_categoria" type="number" value={form.id_categoria} onChange={handleChange} placeholder="ID Categoría" className="border p-2 rounded" />
-          <input name="precio_costo" type="number" step="0.01" value={form.precio_costo} onChange={handleChange} placeholder="Precio Costo" className="border p-2 rounded" />
-          <input name="precio_venta" type="number" step="0.01" value={form.precio_venta} onChange={handleChange} placeholder="Precio Venta" className="border p-2 rounded" required />
+          <input name="precio_costo" type="number" step="0.01" value={form.precio_costo} onChange={handleChange} placeholder="Precio Costo (S/)" className="border p-2 rounded" />
+          <input name="precio_venta" type="number" step="0.01" value={form.precio_venta} onChange={handleChange} placeholder="Precio Venta (S/)" className="border p-2 rounded" required />
           <input name="stock_minimo" type="number" value={form.stock_minimo} onChange={handleChange} placeholder="Stock Mínimo" className="border p-2 rounded" />
           <div className="md:col-span-4">
             <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded flex items-center gap-2">
@@ -153,12 +153,12 @@ export default function Productos({ usuario }) {
           <tbody className="divide-y divide-slate-100 text-sm">
             {productos.map(p => (
               <tr key={p.id_producto} className="hover:bg-slate-50">
-                <td className="p-4">{p.sku}</td>
-                <td className="p-4">{p.nombre}</td>
-                <td className="p-4">${p.precio_costo}</td>
-                <td className="p-4">${p.precio_venta}</td>
-                <td className="p-4">${p.margen}</td>
-                <td className="p-4">{p.stock_minimo}</td>
+                <td className="p-4 font-mono text-xs">{p.sku}</td>
+                <td className="p-4 font-medium">{p.nombre}</td>
+                <td className="p-4 font-mono">S/ {p.precio_costo}</td>
+                <td className="p-4 font-mono font-bold text-slate-900">S/ {p.precio_venta}</td>
+                <td className="p-4 font-mono text-emerald-600 font-semibold">S/ {p.margen}</td>
+                <td className="p-4 text-center">{p.stock_minimo}</td>
                 <td className="p-4 flex gap-2">
                   <button onClick={() => handleEdit(p)} className="text-blue-500"><Edit size={16} /></button>
                   <button onClick={() => handleDelete(p.id_producto)} className="text-red-500"><Trash size={16} /></button>

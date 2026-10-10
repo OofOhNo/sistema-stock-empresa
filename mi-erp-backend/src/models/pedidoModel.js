@@ -4,7 +4,7 @@ const { registrarAuditoria } = require('../utils/auditoria');
 const Pedido = {
 
     // Crear un pedido con PRECIOS VALIDADOS DESDE EL SERVIDOR (Seguridad Etapa 3)
-    crearPedido: async (id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, items, solicitado_por = null) => {
+    crearPedido: async (id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, items, solicitado_por = null, etiquetado = false, sellado_vacio = false) => {
         const client = await pool.connect();
         
         try {
@@ -45,7 +45,7 @@ const Pedido = {
                 );
 
                 if (resStock.rows.length === 0) {
-                    throw new Error(`No hay registro de stock para "${prodDB.nombre}" en esta ubicación.`);
+                    throw new Error(`No hay registro de stock para "${prodDB.nombre}" en la ubicación seleccionada.`);
                 }
                 const inv = resStock.rows[0];
                 const disponible = inv.cantidad_fisica - inv.cantidad_reservada;
@@ -63,12 +63,12 @@ const Pedido = {
 
             // Insertar cabecera del pedido
             const queryPedido = `
-                INSERT INTO pedidos (id_cliente, id_usuario, id_ubicacion, estado_pedido, fecha_limite_despacho, monto_total, solicitado_por)
-                VALUES ($1, $2, $3, 'PENDIENTE', $4, $5, $6)
+                INSERT INTO pedidos (id_cliente, id_usuario, id_ubicacion, estado_pedido, fecha_limite_despacho, monto_total, solicitado_por, etiquetado, sellado_vacio)
+                VALUES ($1, $2, $3, 'PENDIENTE', $4, $5, $6, $7, $8)
                 RETURNING *;
             `;
             const resultadoPedido = await client.query(queryPedido, [
-                id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, monto_total.toFixed(2), solicitado_por
+                id_cliente, id_usuario, id_ubicacion, fecha_limite_despacho, monto_total.toFixed(2), solicitado_por, Boolean(etiquetado), Boolean(sellado_vacio)
             ]);
             const nuevoPedido = resultadoPedido.rows[0];
 
@@ -112,25 +112,33 @@ const Pedido = {
         }
     },
 
-    // Obtener los pedidos para el calendario de logística
+    // Obtener los pedidos para el calendario de logística y despachos
     obtenerParaCalendario: async (id_ubicacion, rol) => {
         try {
             let query = `
                 SELECT 
                     p.id_pedido, 
+                    p.id_cliente,
                     p.estado_pedido, 
                     p.fecha_limite_despacho, 
                     p.monto_total, 
+                    p.etiquetado,
+                    p.sellado_vacio,
                     p.solicitado_por,
                     p.id_ubicacion,
+                    c.numero_documento AS ruc_cliente,
                     c.razon_social_o_nombre AS cliente, 
+                    c.nombre_comercial,
+                    c.contacto,
+                    c.cargo,
+                    c.celular,
                     s.nombre AS ubicacion,
                     u.nombre_completo AS creador
                 FROM pedidos p
                 JOIN clientes c ON p.id_cliente = c.id_cliente
                 LEFT JOIN ubicaciones s ON p.id_ubicacion = s.id_ubicacion
                 LEFT JOIN usuarios u ON p.id_usuario = u.id_usuario
-                WHERE p.fecha_limite_despacho >= date_trunc('week', now()) - interval '4 weeks'
+                WHERE p.fecha_limite_despacho >= date_trunc('week', now()) - interval '8 weeks'
             `;
 
             const params = [];
@@ -145,6 +153,72 @@ const Pedido = {
             return resultado.rows;
         } catch (error) {
             throw error;
+        }
+    },
+
+    marcarListoDespacho: async (id_pedido, usuario) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const resPedido = await client.query('SELECT * FROM pedidos WHERE id_pedido = $1 FOR UPDATE', [id_pedido]);
+            if (resPedido.rows.length === 0) throw new Error('Pedido no encontrado.');
+            
+            const anterior = resPedido.rows[0];
+            const resUpdate = await client.query(
+                "UPDATE pedidos SET estado_pedido = 'LISTO_DESPACHO' WHERE id_pedido = $1 RETURNING *",
+                [id_pedido]
+            );
+
+            await registrarAuditoria(
+                client,
+                usuario.id_usuario,
+                'LISTO_DESPACHO_PEDIDO',
+                'pedidos',
+                id_pedido,
+                anterior,
+                resUpdate.rows[0]
+            );
+
+            await client.query('COMMIT');
+            return resUpdate.rows[0];
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    marcarDespachado: async (id_pedido, usuario) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const resPedido = await client.query('SELECT * FROM pedidos WHERE id_pedido = $1 FOR UPDATE', [id_pedido]);
+            if (resPedido.rows.length === 0) throw new Error('Pedido no encontrado.');
+            
+            const anterior = resPedido.rows[0];
+            const resUpdate = await client.query(
+                "UPDATE pedidos SET estado_pedido = 'DESPACHADO' WHERE id_pedido = $1 RETURNING *",
+                [id_pedido]
+            );
+
+            await registrarAuditoria(
+                client,
+                usuario.id_usuario,
+                'DESPACHAR_PEDIDO',
+                'pedidos',
+                id_pedido,
+                anterior,
+                resUpdate.rows[0]
+            );
+
+            await client.query('COMMIT');
+            return resUpdate.rows[0];
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
         }
     },
 

@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const usuarioController = require('../controllers/usuarioController');
 
@@ -10,6 +10,7 @@ const requierePermiso = require('../middlewares/requierePermiso');
 router.get('/', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarUsuarios);
 
 router.put('/:id_usuario/rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarRol);
+router.put('/:id_usuario/configuracion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarConfiguracion);
 
 router.get('/permisos', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.obtenerPermisos);
 router.put('/permisos', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarPermisos);

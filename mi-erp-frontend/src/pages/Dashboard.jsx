@@ -75,7 +75,7 @@ export default function Dashboard({ usuario }) {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Ventas Confirmadas</p>
-              <h3 className="text-3xl font-bold text-blue-950 mt-2">${resumen.montoTotalVentas.toFixed(2)}</h3>
+              <h3 className="text-3xl font-bold text-blue-950 mt-2">S/ {resumen.montoTotalVentas.toFixed(2)}</h3>
             </div>
             <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl">
               <DollarSign size={24} />

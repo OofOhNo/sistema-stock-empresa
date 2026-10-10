@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
     password_hash VARCHAR(255) NOT NULL,
     rol_id INTEGER NOT NULL REFERENCES roles(id_rol) ON DELETE RESTRICT,
     id_ubicacion INTEGER NOT NULL REFERENCES ubicaciones(id_ubicacion) ON DELETE RESTRICT,
+    puede_ver_celulares BOOLEAN NOT NULL DEFAULT false,
+    area VARCHAR(50) NOT NULL DEFAULT 'ADMINISTRACION',
     activo BOOLEAN DEFAULT true,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -99,6 +101,10 @@ CREATE TABLE IF NOT EXISTS clientes (
     tipo_documento VARCHAR(2) NOT NULL CHECK (tipo_documento IN ('1', '6', '4')),
     numero_documento VARCHAR(15) NOT NULL UNIQUE,
     razon_social_o_nombre VARCHAR(255) NOT NULL,
+    nombre_comercial VARCHAR(255),
+    contacto VARCHAR(150),
+    cargo VARCHAR(100),
+    celular VARCHAR(50),
     direccion VARCHAR(255),
     email VARCHAR(150),
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -109,9 +115,11 @@ CREATE TABLE IF NOT EXISTS pedidos (
     id_cliente INTEGER NOT NULL REFERENCES clientes(id_cliente) ON DELETE RESTRICT,
     id_usuario INTEGER NOT NULL REFERENCES usuarios(id_usuario) ON DELETE RESTRICT,
     id_ubicacion INTEGER NOT NULL REFERENCES ubicaciones(id_ubicacion) ON DELETE RESTRICT,
-    estado_pedido VARCHAR(50) DEFAULT 'PENDIENTE' CHECK (estado_pedido IN ('PENDIENTE', 'FACTURADO', 'DESPACHADO', 'CANCELADO')),
+    estado_pedido VARCHAR(50) DEFAULT 'PENDIENTE' CHECK (estado_pedido IN ('PENDIENTE', 'LISTO_DESPACHO', 'FACTURADO', 'DESPACHADO', 'CANCELADO')),
     fecha_limite_despacho TIMESTAMP,
     monto_total NUMERIC(10,2) NOT NULL,
+    etiquetado BOOLEAN NOT NULL DEFAULT false,
+    sellado_vacio BOOLEAN NOT NULL DEFAULT false,
     usuario_creador VARCHAR(100) DEFAULT 'Sistema',
     solicitado_por VARCHAR(100),
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
