@@ -20,6 +20,7 @@ const authController = {
 
             console.log("2. Usuario encontrado:", usuario.email);
 
+            //comparamos la contraseña encriptada
             const passwordCorrecto = await bcrypt.compare(password, usuario.password_hash);
             if (!passwordCorrecto) {
                 return res.status(401).json({ exito: false, mensaje: 'Email o contraseña incorrectos.' });
