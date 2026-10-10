@@ -22,6 +22,7 @@ const Usuario = {
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
                 LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                WHERE COALESCE(u.activo, true) = true
                 ORDER BY u.id_usuario ASC;
             `;
             const resultado = await pool.query(query);
@@ -74,6 +75,7 @@ const Usuario = {
                 SELECT 
                     u.*, 
                     r.nombre AS nombre_rol,
+                    COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
                     ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
@@ -94,15 +96,28 @@ const Usuario = {
                     r.id_rol, 
                     r.nombre, 
                     r.descripcion, 
+                    COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
                     r.creado_en,
                     COUNT(u.id_usuario)::int AS total_usuarios
                 FROM roles r
                 LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND u.activo = true
-                GROUP BY r.id_rol, r.nombre, r.descripcion, r.creado_en
+                GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.creado_en
                 ORDER BY r.id_rol ASC;
             `;
             const res = await pool.query(query);
             return res.rows;
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    actualizarPermisoOtrasUbicaciones: async (rol_id, puede_ver_otras_ubicaciones) => {
+        try {
+            const res = await pool.query(
+                'UPDATE roles SET puede_ver_otras_ubicaciones = $1 WHERE id_rol = $2 RETURNING *',
+                [Boolean(puede_ver_otras_ubicaciones), rol_id]
+            );
+            return res.rows[0];
         } catch (error) {
             throw error;
         }
@@ -156,6 +171,40 @@ const Usuario = {
                 puede_ver_celulares === true
             ]);
             return res.rows[0];
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    eliminarUsuario: async (id_usuario) => {
+        try {
+            // Eliminar referencias secundarias de permisos
+            await pool.query('DELETE FROM permisos_celulares_clientes WHERE id_usuario = $1', [id_usuario]);
+
+            // Intentar eliminación física
+            try {
+                const resDelete = await pool.query('DELETE FROM usuarios WHERE id_usuario = $1 RETURNING *', [id_usuario]);
+                if (resDelete.rows.length > 0) {
+                    return { eliminado: true, softDelete: false, usuario: resDelete.rows[0] };
+                }
+            } catch (fkError) {
+                // Si existe historial relacionado con clave foránea (pedidos, facturas, kardex, etc.)
+                // aplicamos borrado lógico (soft-delete) y liberamos el email para reuso futuro
+                const timestamp = Date.now();
+                const resSoft = await pool.query(`
+                    UPDATE usuarios 
+                    SET activo = false, 
+                        email = email || '.desactivado.' || $2
+                    WHERE id_usuario = $1 
+                    RETURNING *
+                `, [id_usuario, timestamp]);
+                
+                if (resSoft.rows.length > 0) {
+                    return { eliminado: true, softDelete: true, usuario: resSoft.rows[0] };
+                }
+            }
+
+            return { eliminado: false };
         } catch (error) {
             throw error;
         }

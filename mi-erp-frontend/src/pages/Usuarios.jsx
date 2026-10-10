@@ -3,7 +3,8 @@ import api from '../api';
 import { 
   Users, Shield, ShieldAlert, UserCheck, Briefcase, Lock, 
   FileText, ShieldCheck, History, Eye, RefreshCw, Filter, X, 
-  UserPlus, ShieldPlus, CheckCircle, Phone, Search, Loader2 
+  UserPlus, ShieldPlus, CheckCircle, Phone, Search, Loader2,
+  Trash2, AlertTriangle, Layers
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PermisosGrid from '../components/PermisosGrid';
@@ -18,6 +19,13 @@ export default function Usuarios({ usuarioLogueado }) {
   const [cargandoAuditoria, setCargandoAuditoria] = useState(false);
   const [error, setError] = useState('');
   const [actualizando, setActualizando] = useState(null);
+
+  // Filtro de rol y eliminación de empleados
+  const [filtroRolPersonal, setFiltroRolPersonal] = useState('todos');
+  const [usuarioAEliminar, setUsuarioAEliminar] = useState(null);
+  const [eliminandoUsuario, setEliminandoUsuario] = useState(false);
+
+  const esAdminCentral = usuarioLogueado?.rol === 'Admin Central' || usuarioLogueado?.nombre_rol === 'Admin Central';
 
   // Modales
   const [modalNuevoUsuario, setModalNuevoUsuario] = useState(false);
@@ -215,6 +223,29 @@ export default function Usuarios({ usuarioLogueado }) {
     }
   };
 
+  // Confirmar y Ejecutar Eliminación de Usuario
+  const confirmarEliminarUsuario = (user) => {
+    if (user.id_usuario === usuarioLogueado?.id_usuario) {
+      return toast.error('No puedes eliminar tu propia cuenta de Admin Central.');
+    }
+    setUsuarioAEliminar(user);
+  };
+
+  const ejecutarEliminacionUsuario = async () => {
+    if (!usuarioAEliminar) return;
+    setEliminandoUsuario(true);
+    try {
+      const res = await api.delete(`/usuarios/${usuarioAEliminar.id_usuario}`);
+      toast.success(res.data.mensaje || 'Empleado eliminado correctamente');
+      setUsuarioAEliminar(null);
+      cargarDatos();
+    } catch (err) {
+      toast.error('Error al eliminar empleado: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setEliminandoUsuario(false);
+    }
+  };
+
   // Guardar Nuevo Usuario
   const handleCrearUsuario = async (e) => {
     e.preventDefault();
@@ -260,6 +291,19 @@ export default function Usuarios({ usuarioLogueado }) {
       toast.error(err.response?.data?.mensaje || 'Error al crear rol');
     } finally {
       setGuardando(false);
+    }
+  };
+
+  // Actualizar permiso de multi-ubicación en Rol
+  const handleTogglePermisoOtrasUbicaciones = async (rolId, valorActual) => {
+    try {
+      await api.put(`/usuarios/roles/${rolId}/ubicaciones-permiso`, {
+        puede_ver_otras_ubicaciones: !valorActual
+      });
+      toast.success('Permiso multi-sede de rol actualizado');
+      cargarDatos();
+    } catch (err) {
+      toast.error('Error al actualizar permiso multi-sede: ' + (err.response?.data?.mensaje || err.message));
     }
   };
 
@@ -369,108 +413,211 @@ export default function Usuarios({ usuarioLogueado }) {
       {/* TAB 1: PERSONAL Y ROLES */}
       {tabActual === 'personal' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                  <th className="p-4 font-semibold">Nombre del Empleado</th>
-                  <th className="p-4 font-semibold">Email (Usuario)</th>
-                  <th className="p-4 font-semibold">Sede / Ubicación</th>
-                  <th className="p-4 font-semibold">Rol Actual</th>
-                  <th className="p-4 font-semibold text-center">Asignar Rol</th>
-                  <th className="p-4 font-semibold text-center">Área (Horario)</th>
-                  <th className="p-4 font-semibold text-center">📱 Teléfonos por Cliente</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-sm">
-                {usuarios.map((user) => {
-                  const estilo = estiloRolMap[user.rol_id] || { 
-                    icono: <Shield size={16} className="text-purple-500" />, 
-                    color: 'bg-purple-100 text-purple-700 border-purple-200' 
-                  };
-                  const esYoMismo = user.id_usuario === usuarioLogueado.id_usuario;
 
-                  return (
-                    <tr key={user.id_usuario} className={`hover:bg-slate-50 transition-colors ${esYoMismo ? 'bg-indigo-50/20' : ''}`}>
-                      <td className="p-4">
-                        <div className="font-bold text-slate-900 flex items-center space-x-2">
-                          <span>{user.nombre_completo}</span>
-                          {esYoMismo && <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">Tú</span>}
-                        </div>
-                      </td>
-                      <td className="p-4 text-slate-500">{user.email}</td>
-                      <td className="p-4 text-slate-600 font-medium">
-                        {user.nombre_ubicacion || 'Sede Central'}
-                      </td>
-                      <td className="p-4">
+          {/* BARRA DE FILTRO / PESTAÑAS DE ROLES */}
+          <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider mr-2">
+              <Layers size={14} className="text-indigo-600" />
+              <span>Ver por Rol:</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFiltroRolPersonal('todos')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                filtroRolPersonal === 'todos'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              Todos los Roles ({usuarios.length})
+            </button>
+            {rolesDinamicos.map(rol => {
+              const cant = usuarios.filter(u => u.rol_id === rol.id_rol).length;
+              const activo = filtroRolPersonal === rol.id_rol;
+              return (
+                <button
+                  key={rol.id_rol}
+                  type="button"
+                  onClick={() => setFiltroRolPersonal(rol.id_rol)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                    activo
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>{rol.nombre}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    activo ? 'bg-indigo-500 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                  }`}>
+                    {cant}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* LISTA DE EMPLEADOS SEPARADA POR ROLES */}
+          <div className="space-y-6">
+            {(filtroRolPersonal === 'todos' 
+              ? rolesDinamicos 
+              : rolesDinamicos.filter(r => r.id_rol === filtroRolPersonal)
+            ).map(rol => {
+              const empleadosDelRol = usuarios.filter(u => u.rol_id === rol.id_rol);
+              const estilo = estiloRolMap[rol.id_rol] || {
+                icono: <Shield size={16} className="text-purple-500" />,
+                color: 'bg-purple-100 text-purple-700 border-purple-200'
+              };
+
+              return (
+                <div key={rol.id_rol} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                  {/* Encabezado del Rol */}
+                  <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                        {estilo.icono}
+                      </div>
+                      <div>
                         <div className="flex items-center space-x-2">
-                          {estilo.icono}
-                          <span className={`px-2 py-1 rounded-md text-xs font-bold border ${estilo.color}`}>
-                            {user.nombre_rol}
+                          <h3 className="font-bold text-slate-900 text-base">{rol.nombre}</h3>
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${estilo.color}`}>
+                            {empleadosDelRol.length} {empleadosDelRol.length === 1 ? 'empleado' : 'empleados'}
                           </span>
                         </div>
-                      </td>
-                      
-                      {/* Asignar Rol */}
-                      <td className="p-4 text-center">
-                        <div className="flex justify-center">
-                          <select
-                            disabled={actualizando === user.id_usuario || esYoMismo}
-                            value={user.rol_id}
-                            onChange={(e) => cambiarRol(user.id_usuario, Number(e.target.value))}
-                            className="bg-white border border-slate-300 rounded-lg text-sm px-3 py-1.5 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-100 cursor-pointer"
-                            title={esYoMismo ? "No puedes cambiar tu propio rol por seguridad." : "Selecciona para cambiar permisos"}
-                          >
-                            {rolesDinamicos.map(rol => (
-                              <option key={rol.id_rol} value={rol.id_rol}>{rol.nombre}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </td>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {rol.descripcion || 'Rol con permisos configurables en la matriz de accesos.'}
+                        </p>
+                      </div>
+                    </div>
+                    {rol.puede_ver_otras_ubicaciones && (
+                      <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 w-max">
+                        🏢 Acceso multi-sede autorizado
+                      </span>
+                    )}
+                  </div>
 
-                      {/* Área: Administración vs Producción */}
-                      <td className="p-4 text-center">
-                        <div className="flex justify-center">
-                          <select
-                            disabled={actualizando === user.id_usuario}
-                            value={user.area || 'ADMINISTRACION'}
-                            onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, e.target.value)}
-                            className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 font-semibold cursor-pointer"
-                          >
-                            <option value="ADMINISTRACION">Administración (Hora Real)</option>
-                            <option value="PRODUCCION">Producción (1h Menos)</option>
-                          </select>
-                        </div>
-                      </td>
+                  {/* Tabla de Empleados del Rol */}
+                  {empleadosDelRol.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400 italic">
+                      No hay ningún empleado asignado actualmente a este rol.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                            <th className="p-4 font-semibold">Nombre del Empleado</th>
+                            <th className="p-4 font-semibold">Email (Usuario)</th>
+                            <th className="p-4 font-semibold">Sede / Ubicación</th>
+                            <th className="p-4 font-semibold text-center">Cambiar Rol</th>
+                            <th className="p-4 font-semibold text-center">Área (Horario)</th>
+                            <th className="p-4 font-semibold text-center">📱 Teléfonos por Cliente</th>
+                            {esAdminCentral && (
+                              <th className="p-4 font-semibold text-center">Acciones</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {empleadosDelRol.map((user) => {
+                            const esYoMismo = user.id_usuario === usuarioLogueado?.id_usuario;
 
-                      {/* Permiso Celulares Clientes */}
-                      <td className="p-4 text-center">
-                        {user.nombre_rol === 'Admin Central' ? (
-                          <span className="inline-flex items-center space-x-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
-                            <ShieldCheck size={14} />
-                            <span>Todos (Admin)</span>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => abrirModalPermisosCelular(user)}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all shadow-2xs hover:shadow-xs cursor-pointer"
-                            title="Asignar de qué clientes puede ver los teléfonos"
-                          >
-                            <Phone size={13} />
-                            <span>
-                              {user.total_clientes_autorizados > 0 
-                                ? `${user.total_clientes_autorizados} cliente(s)` 
-                                : '0 clientes (Asignar)'}
-                            </span>
-                          </button>
-                        )}
-                      </td>
+                            return (
+                              <tr key={user.id_usuario} className={`hover:bg-slate-50 transition-colors ${esYoMismo ? 'bg-indigo-50/20' : ''}`}>
+                                <td className="p-4">
+                                  <div className="font-bold text-slate-900 flex items-center space-x-2">
+                                    <span>{user.nombre_completo}</span>
+                                    {esYoMismo && <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">Tú</span>}
+                                  </div>
+                                </td>
+                                <td className="p-4 text-slate-500 font-mono text-xs">{user.email}</td>
+                                <td className="p-4 text-slate-600 font-medium">
+                                  {user.nombre_ubicacion || 'Sede Central'}
+                                </td>
+                                
+                                {/* Asignar Rol */}
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    <select
+                                      disabled={actualizando === user.id_usuario || esYoMismo}
+                                      value={user.rol_id}
+                                      onChange={(e) => cambiarRol(user.id_usuario, Number(e.target.value))}
+                                      className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 disabled:bg-slate-100 cursor-pointer font-medium"
+                                      title={esYoMismo ? "No puedes cambiar tu propio rol por seguridad." : "Selecciona para cambiar de rol"}
+                                    >
+                                      {rolesDinamicos.map(rOpt => (
+                                        <option key={rOpt.id_rol} value={rOpt.id_rol}>{rOpt.nombre}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </td>
 
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                                {/* Área: Administración vs Producción */}
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    <select
+                                      disabled={actualizando === user.id_usuario}
+                                      value={user.area || 'ADMINISTRACION'}
+                                      onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, e.target.value)}
+                                      className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 font-semibold cursor-pointer"
+                                    >
+                                      <option value="ADMINISTRACION">Administración (Hora Real)</option>
+                                      <option value="PRODUCCION">Producción (1h Menos)</option>
+                                    </select>
+                                  </div>
+                                </td>
+
+                                {/* Permiso Celulares Clientes */}
+                                <td className="p-4 text-center">
+                                  {user.nombre_rol === 'Admin Central' ? (
+                                    <span className="inline-flex items-center space-x-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                                      <ShieldCheck size={14} />
+                                      <span>Todos (Admin)</span>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => abrirModalPermisosCelular(user)}
+                                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all shadow-2xs hover:shadow-xs cursor-pointer"
+                                      title="Asignar de qué clientes puede ver los teléfonos"
+                                    >
+                                      <Phone size={13} />
+                                      <span>
+                                        {user.total_clientes_autorizados > 0 
+                                          ? `${user.total_clientes_autorizados} cliente(s)` 
+                                          : '0 clientes (Asignar)'}
+                                      </span>
+                                    </button>
+                                  )}
+                                </td>
+
+                                {/* Acciones: Eliminar Empleado (Admin Central) */}
+                                {esAdminCentral && (
+                                  <td className="p-4 text-center">
+                                    {esYoMismo ? (
+                                      <span className="text-[11px] text-slate-400 italic px-2 py-1 bg-slate-100 rounded-lg">Tu cuenta</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => confirmarEliminarUsuario(user)}
+                                        className="inline-flex items-center space-x-1 px-2.5 py-1.5 text-red-600 hover:text-white hover:bg-red-600 bg-red-50 border border-red-200 rounded-lg text-xs font-bold transition-all shadow-2xs hover:shadow-xs cursor-pointer"
+                                        title={`Eliminar empleado ${user.nombre_completo}`}
+                                      >
+                                        <Trash2 size={13} />
+                                        <span>Eliminar</span>
+                                      </button>
+                                    )}
+                                  </td>
+                                )}
+
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Diccionario de Roles */}
@@ -505,6 +652,21 @@ export default function Usuarios({ usuarioLogueado }) {
                       <p className="text-slate-500 text-xs mt-1 line-clamp-2">
                         {rol.descripcion || 'Rol personalizado con permisos ajustables en matriz.'}
                       </p>
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-500">🏢 Multi-Sede</span>
+                        <label className="flex items-center space-x-1 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={rol.nombre === 'Admin Central' || Boolean(rol.puede_ver_otras_ubicaciones)}
+                            disabled={rol.nombre === 'Admin Central'}
+                            onChange={() => handleTogglePermisoOtrasUbicaciones(rol.id_rol, rol.puede_ver_otras_ubicaciones)}
+                            className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 disabled:opacity-50 cursor-pointer"
+                          />
+                          <span className="text-[10px] text-slate-600 font-medium">
+                            {rol.nombre === 'Admin Central' || Boolean(rol.puede_ver_otras_ubicaciones) ? 'Permitido' : 'Bloqueado'}
+                          </span>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1052,6 +1214,68 @@ export default function Usuarios({ usuarioLogueado }) {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CARTEL DE CONFIRMACIÓN DE ELIMINAR EMPLEADO */}
+      {usuarioAEliminar && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-red-100 space-y-5">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 bg-red-100 text-red-600 rounded-2xl">
+                <AlertTriangle size={28} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-900">¿Eliminar empleado?</h3>
+                <p className="text-xs text-slate-500">Acción exclusiva de Admin Central</p>
+              </div>
+            </div>
+
+            <div className="bg-red-50/70 border border-red-200 rounded-2xl p-4 space-y-2.5 text-xs text-red-950">
+              <p className="font-semibold text-slate-800">
+                ¿Estás seguro de que deseas eliminar a este empleado del sistema?
+              </p>
+              <div className="bg-white p-3 rounded-xl border border-red-200 space-y-1">
+                <div className="font-bold text-slate-900 text-sm">{usuarioAEliminar.nombre_completo}</div>
+                <div className="text-slate-600 text-xs font-mono">{usuarioAEliminar.email}</div>
+                <div className="text-slate-500 text-[11px]">
+                  Rol: <span className="font-bold text-indigo-700">{usuarioAEliminar.nombre_rol}</span> • Sede: {usuarioAEliminar.nombre_ubicacion || 'Central'}
+                </div>
+              </div>
+              <p className="text-slate-600 text-[11px] leading-relaxed">
+                ⚠️ Si el empleado posee facturas, pedidos o movimientos de kardex registrados a su nombre, su cuenta será desactivada para salvaguardar la trazabilidad de auditoría.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setUsuarioAEliminar(null)}
+                disabled={eliminandoUsuario}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={ejecutarEliminacionUsuario}
+                disabled={eliminandoUsuario}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md shadow-red-600/30 flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {eliminandoUsuario ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Eliminando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Sí, Eliminar Empleado</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -33,7 +33,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
-    limits: { fileSize: 15 * 1024 * 1024 } // Hasta 15MB por foto de celular en alta resolución
+    limits: { fileSize: 30 * 1024 * 1024 } // Hasta 30MB por foto de celular en alta resolución
 });
 
 const fotoPedidoController = {

@@ -79,15 +79,61 @@ export default function Pedidos({ usuario }) {
     }
   };
 
-  const handleSeleccionarArchivo = (e) => {
+  const comprimirImagen = (file) => {
+    return new Promise((resolve) => {
+      if (file.size <= 1024 * 1024) return resolve(file);
+      const img = new window.Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const canvas = document.createElement('canvas');
+        const maxDim = 1920;
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, '.jpg'), {
+                type: 'image/jpeg',
+                lastModified: Date.now()
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          },
+          'image/jpeg',
+          0.82
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = url;
+    });
+  };
+
+  const handleSeleccionarArchivo = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setArchivoSeleccionado(file);
+    const fileProcesado = await comprimirImagen(file);
+    setArchivoSeleccionado(fileProcesado);
     const reader = new FileReader();
     reader.onloadend = () => {
       setPreviewFoto(reader.result);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(fileProcesado);
   };
 
   const handleSubirFoto = async (e) => {
@@ -317,7 +363,7 @@ export default function Pedidos({ usuario }) {
   const colorEstado = (estado) => {
     switch (estado) {
       case 'PENDIENTE': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'LISTO_DESPACHO': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'LISTO_DESPACHO': return 'bg-amber-300 text-amber-950 border-amber-500 font-bold shadow-xs';
       case 'FACTURADO': return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'DESPACHADO': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       case 'CANCELADO': return 'bg-red-100 text-red-800 border-red-200';
@@ -326,8 +372,10 @@ export default function Pedidos({ usuario }) {
   };
 
   const pedidosMostrados = pedidos.filter(pedido => {
+    if (filtro === 'listos') {
+      return pedido.estado_pedido === 'LISTO_DESPACHO';
+    }
     if (filtro === 'todos') return true;
-    if (filtro === 'listos') return pedido.estado_pedido === 'LISTO_DESPACHO';
     
     // Filtro 'semana': pedidos pendientes cuya fecha cae en esta semana
     if (pedido.estado_pedido !== 'PENDIENTE') return false;
@@ -702,33 +750,42 @@ export default function Pedidos({ usuario }) {
           {/* BARRA DE HERRAMIENTAS: FILTROS Y CONMUTADOR CALENDARIO / TABLA */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
             {/* SELECTOR DE FILTROS */}
-            <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1 rounded-xl">
-              <button 
-                onClick={() => setFiltro('todos')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  filtro === 'todos' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Todos ({pedidos.length})
-              </button>
-              <button 
-                onClick={() => setFiltro('semana')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 ${
-                  filtro === 'semana' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Filter size={13} className="mr-0.5" />
-                Pendientes semana
-              </button>
-              <button 
-                onClick={() => setFiltro('listos')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 ${
-                  filtro === 'listos' ? 'bg-white text-amber-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <PackageCheck size={13} className="mr-0.5" />
-                Listos despacho
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-1.5 bg-slate-100 p-1 rounded-xl">
+                <button 
+                  onClick={() => setFiltro('todos')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    filtro === 'todos' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Todos ({pedidos.length})
+                </button>
+                <button 
+                  onClick={() => setFiltro('semana')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 ${
+                    filtro === 'semana' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Filter size={13} className="mr-0.5" />
+                  <span>Pendientes semana</span>
+                </button>
+                <button 
+                  onClick={() => setFiltro('listos')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 ${
+                    filtro === 'listos' ? 'bg-white text-amber-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Truck size={13} className="mr-0.5" />
+                  <span>Listos para despacho ({pedidos.filter(p => p.estado_pedido === 'LISTO_DESPACHO').length})</span>
+                </button>
+              </div>
+
+              {/* Indicador de sede del empleado */}
+              {usuario?.rol !== 'Admin Central' && !usuario?.puede_ver_otras_ubicaciones && (
+                <div className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1.5 rounded-xl flex items-center space-x-1">
+                  <span>📍 Mostrando pedidos de tu ubicación</span>
+                </div>
+              )}
             </div>
 
             {/* CONMUTADOR CALENDARIO SEMANAL VS TABLA */}
@@ -839,16 +896,39 @@ export default function Pedidos({ usuario }) {
                         ) : (
                           pedidosDelDia.map(pedido => {
                             const { horaStr } = formatearFechaYHoraDespacho(pedido.fecha_limite_despacho);
+                            const esRealizado = pedido.estado_pedido === 'DESPACHADO' || pedido.estado_pedido === 'FACTURADO';
+                            const esListoDespacho = pedido.estado_pedido === 'LISTO_DESPACHO';
+
                             return (
                               <div 
                                 key={pedido.id_pedido}
-                                className="bg-white rounded-xl border border-slate-200 p-2.5 shadow-xs space-y-2 hover:border-indigo-300 transition-all text-xs"
+                                className={`rounded-xl p-3 space-y-2.5 transition-all text-xs ${
+                                  esListoDespacho
+                                    ? 'bg-amber-100 border-2 border-amber-500 ring-2 ring-amber-400/40 shadow-md text-amber-950'
+                                    : esRealizado
+                                      ? 'bg-emerald-50/80 border-2 border-emerald-400 ring-2 ring-emerald-500/20 shadow-sm'
+                                      : pedido.estado_pedido === 'CANCELADO'
+                                        ? 'bg-slate-100 border border-slate-200 opacity-60'
+                                        : 'bg-white border border-slate-200 hover:border-indigo-400 shadow-xs'
+                                }`}
                               >
                                 <div className="flex items-start justify-between gap-1">
                                   <span className="font-mono font-bold text-slate-900 text-xs">#{pedido.id_pedido}</span>
-                                  <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold border ${colorEstado(pedido.estado_pedido)}`}>
-                                    {pedido.estado_pedido}
-                                  </span>
+                                  {esListoDespacho ? (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-400 text-amber-950 border border-amber-500 shadow-xs inline-flex items-center space-x-1">
+                                      <Truck size={10} className="mr-0.5" />
+                                      <span>LISTO DESPACHO</span>
+                                    </span>
+                                  ) : esRealizado ? (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-emerald-600 text-white shadow-xs inline-flex items-center space-x-1">
+                                      <CheckCircle size={10} className="mr-0.5" />
+                                      <span>YA SE HIZO</span>
+                                    </span>
+                                  ) : (
+                                    <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold border ${colorEstado(pedido.estado_pedido)}`}>
+                                      {pedido.estado_pedido}
+                                    </span>
+                                  )}
                                 </div>
 
                                 <div>
@@ -858,12 +938,22 @@ export default function Pedidos({ usuario }) {
                                   )}
                                 </div>
 
-                                {horaStr && (
-                                  <div className="flex items-center space-x-1 text-slate-700 font-semibold text-[11px] bg-slate-50 px-2 py-1 rounded-lg">
-                                    <Clock size={12} className="text-slate-500" />
-                                    <span>Hora: <strong className="font-mono text-slate-900">{horaStr}</strong></span>
+                                {/* BADGE DE HORA DE ENTREGA DESTACADO */}
+                                <div className={`flex items-center justify-between p-2 rounded-xl text-xs font-bold border ${
+                                  esListoDespacho
+                                    ? 'bg-amber-200 text-amber-950 border-amber-300 shadow-xs'
+                                    : esRealizado 
+                                      ? 'bg-emerald-100/90 text-emerald-950 border-emerald-300' 
+                                      : 'bg-indigo-50 text-indigo-950 border border-indigo-200 shadow-xs'
+                                }`}>
+                                  <div className="flex items-center space-x-1.5">
+                                    <Clock size={14} className={esListoDespacho ? 'text-amber-800' : esRealizado ? 'text-emerald-700' : 'text-indigo-600'} />
+                                    <span className="text-[10px] uppercase tracking-wider">Hora Entrega:</span>
                                   </div>
-                                )}
+                                  <span className="font-mono text-xs font-black px-2 py-0.5 rounded-md bg-white text-slate-900 shadow-xs">
+                                    {horaStr || 'Por definir'}
+                                  </span>
+                                </div>
 
                                 <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100">
                                   <span className="text-slate-500">Total:</span>
@@ -962,13 +1052,25 @@ export default function Pedidos({ usuario }) {
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                       {pedidosFueraDeSemana.slice(0, 8).map(pedido => {
                         const { fechaStr, horaStr } = formatearFechaYHoraDespacho(pedido.fecha_limite_despacho);
+                        const esListoDespacho = pedido.estado_pedido === 'LISTO_DESPACHO';
                         return (
-                          <div key={pedido.id_pedido} className="bg-white rounded-xl border border-slate-200 p-3 text-xs space-y-2 shadow-xs">
+                          <div key={pedido.id_pedido} className={`rounded-xl border p-3 text-xs space-y-2 shadow-xs transition-all ${
+                            esListoDespacho 
+                              ? 'bg-amber-100 border-2 border-amber-500 ring-2 ring-amber-400/40 text-amber-950'
+                              : 'bg-white border-slate-200'
+                          }`}>
                             <div className="flex justify-between items-center">
                               <span className="font-mono font-bold text-slate-900">#{pedido.id_pedido}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${colorEstado(pedido.estado_pedido)}`}>
-                                {pedido.estado_pedido}
-                              </span>
+                              {esListoDespacho ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-400 text-amber-950 border border-amber-500 shadow-xs inline-flex items-center space-x-1">
+                                  <Truck size={10} className="mr-0.5" />
+                                  <span>LISTO DESPACHO</span>
+                                </span>
+                              ) : (
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${colorEstado(pedido.estado_pedido)}`}>
+                                  {pedido.estado_pedido}
+                                </span>
+                              )}
                             </div>
                             <div className="font-semibold text-slate-800 line-clamp-1">{pedido.cliente}</div>
                             <div className="text-[11px] text-slate-500">📅 {fechaStr} {horaStr ? `• ⏰ ${horaStr}` : ''}</div>
@@ -1012,8 +1114,22 @@ export default function Pedidos({ usuario }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {pedidosMostrados.map((pedido) => (
-                      <tr key={pedido.id_pedido} className="hover:bg-slate-50 transition-colors">
+                    {pedidosMostrados.map((pedido) => {
+                      const esRealizado = pedido.estado_pedido === 'DESPACHADO' || pedido.estado_pedido === 'FACTURADO';
+                      const esListoDespacho = pedido.estado_pedido === 'LISTO_DESPACHO';
+                      return (
+                      <tr 
+                        key={pedido.id_pedido} 
+                        className={`transition-colors ${
+                          esListoDespacho
+                            ? 'bg-amber-100/90 hover:bg-amber-200/90 border-l-4 border-l-amber-500 font-medium'
+                            : esRealizado 
+                              ? 'bg-emerald-50/50 hover:bg-emerald-100/50' 
+                              : pedido.estado_pedido === 'CANCELADO'
+                                ? 'bg-slate-50/50 hover:bg-slate-100/50 opacity-60'
+                                : 'hover:bg-slate-50'
+                        }`}
+                      >
                         
                         {/* ID */}
                         <td className="p-4 font-bold text-slate-900 font-mono">#{pedido.id_pedido}</td>
@@ -1050,8 +1166,10 @@ export default function Pedidos({ usuario }) {
                                   <span>{fechaStr}</span>
                                 </div>
                                 {horaStr ? (
-                                  <div className="flex items-center space-x-1.5 mt-1 font-semibold text-xs text-slate-800">
-                                    <Clock size={12} className="text-slate-400" />
+                                  <div className={`flex items-center space-x-1.5 mt-1 font-bold text-xs px-2 py-0.5 rounded-md w-max ${
+                                    esRealizado ? 'bg-emerald-100 text-emerald-900' : 'bg-slate-100 text-slate-800'
+                                  }`}>
+                                    <Clock size={12} className={esRealizado ? 'text-emerald-700' : 'text-slate-500'} />
                                     <span className="font-mono">{horaStr}</span>
                                   </div>
                                 ) : null}
@@ -1086,9 +1204,21 @@ export default function Pedidos({ usuario }) {
 
                         {/* Estado */}
                         <td className="p-4 text-center">
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${colorEstado(pedido.estado_pedido)}`}>
-                            {pedido.estado_pedido}
-                          </span>
+                          {esListoDespacho ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-black bg-amber-400 text-amber-950 border border-amber-500 shadow-xs inline-flex items-center space-x-1">
+                              <Truck size={12} className="mr-0.5" />
+                              <span>LISTO DESPACHO</span>
+                            </span>
+                          ) : esRealizado ? (
+                            <span className="px-2.5 py-1 rounded-full text-xs font-black bg-emerald-600 text-white shadow-xs inline-flex items-center space-x-1">
+                              <CheckCircle size={11} className="mr-0.5" />
+                              <span>YA SE HIZO ({pedido.estado_pedido})</span>
+                            </span>
+                          ) : (
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${colorEstado(pedido.estado_pedido)}`}>
+                              {pedido.estado_pedido}
+                            </span>
+                          )}
                         </td>
 
                         {/* Columna Fotos desde Celular */}
@@ -1156,7 +1286,8 @@ export default function Pedidos({ usuario }) {
                         </td>
 
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

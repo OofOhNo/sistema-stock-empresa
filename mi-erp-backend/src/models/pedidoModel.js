@@ -113,7 +113,7 @@ const Pedido = {
     },
 
     // Obtener los pedidos para el calendario de logística y despachos
-    obtenerParaCalendario: async (id_ubicacion, rol, id_usuario = null) => {
+    obtenerParaCalendario: async (id_ubicacion, rol, id_usuario = null, puede_ver_otras_ubicaciones = false) => {
         try {
             let query = `
                 SELECT 
@@ -143,9 +143,15 @@ const Pedido = {
             `;
 
             const params = [];
-            if (rol !== 'Admin Central' && id_ubicacion) {
-                query += ` AND p.id_ubicacion = $1`;
-                params.push(id_ubicacion);
+            const puedeVerTodasUbicaciones = rol === 'Admin Central' || puede_ver_otras_ubicaciones === true;
+
+            if (!puedeVerTodasUbicaciones) {
+                if (id_ubicacion) {
+                    query += ` AND p.id_ubicacion = $1`;
+                    params.push(id_ubicacion);
+                } else {
+                    query += ` AND 1 = 0`;
+                }
             }
 
             query += ` ORDER BY p.fecha_limite_despacho ASC;`;

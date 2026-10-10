@@ -35,7 +35,7 @@ const Stock = {
         }
     },
 
-    // Ver el stock global consolidado de toda la empresa (para Jefe / Admin)
+    // Ver el stock global consolidado de toda la empresa (total en primera vista)
     obtenerStockGlobal: async () => {
         try {
             const query = `
@@ -57,6 +57,39 @@ const Stock = {
                 WHERE p.activo = true
                 GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.unidad_medida, um.nombre, um.simbolo
                 ORDER BY p.nombre ASC;
+            `;
+            const resultado = await pool.query(query);
+            return resultado.rows;
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    // Ver el stock desglosado por todas las ubicaciones
+    obtenerStockPorTodasUbicaciones: async () => {
+        try {
+            const query = `
+                SELECT 
+                    p.id_producto,
+                    p.sku,
+                    p.nombre AS nombre_producto,
+                    p.precio_venta,
+                    p.stock_minimo,
+                    p.id_unidad,
+                    COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
+                    COALESCE(um.simbolo, 'und') AS simbolo_unidad,
+                    s.id_ubicacion,
+                    s.nombre AS nombre_ubicacion,
+                    i.cantidad_fisica,
+                    i.cantidad_reservada,
+                    (i.cantidad_fisica - i.cantidad_reservada) AS cantidad_disponible,
+                    i.ultima_actualizacion
+                FROM inventario i
+                JOIN productos p ON i.id_producto = p.id_producto
+                JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
+                LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                WHERE p.activo = true
+                ORDER BY s.nombre ASC, p.nombre ASC;
             `;
             const resultado = await pool.query(query);
             return resultado.rows;

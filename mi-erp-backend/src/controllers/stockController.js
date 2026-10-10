@@ -4,31 +4,39 @@ const stockController = {
 
     verInventario: async (req, res) => {
         try {
-            const { nombre_rol, id_ubicacion } = req.usuario;
+            const { nombre_rol, id_ubicacion, puede_ver_otras_ubicaciones } = req.usuario;
+            const puedeVerTodo = nombre_rol === 'Admin Central' || puede_ver_otras_ubicaciones === true;
 
-            let inventario;
+            // 1. Stock consolidado por producto (Total en primera vista)
+            const stockTotal = await Stock.obtenerStockGlobal();
 
-            if (nombre_rol === 'Admin Central') {
-                const ubicacionQuery = req.query.ubicacion || req.query.id_ubicacion;
-                if (ubicacionQuery) {
-                    inventario = await Stock.obtenerStockPorUbicacion(ubicacionQuery);
+            // 2. Stock por ubicación
+            let stockPorUbicacion = [];
+            const idUbicacionFiltro = req.query.id_ubicacion || req.query.ubicacion;
+
+            if (puedeVerTodo) {
+                if (idUbicacionFiltro) {
+                    stockPorUbicacion = await Stock.obtenerStockPorUbicacion(idUbicacionFiltro);
                 } else {
-                    inventario = await Stock.obtenerStockGlobal();
+                    stockPorUbicacion = await Stock.obtenerStockPorTodasUbicaciones();
                 }
             } else {
-                if (!id_ubicacion) {
-                    return res.status(403).json({ 
-                        exito: false, 
-                        mensaje: 'No tienes una ubicación asignada para ver el inventario.' 
-                    });
+                // Empleado sin permiso de otras sedes: SOLO su ubicación asignada
+                if (id_ubicacion) {
+                    stockPorUbicacion = await Stock.obtenerStockPorUbicacion(id_ubicacion);
+                } else {
+                    stockPorUbicacion = [];
                 }
-                inventario = await Stock.obtenerStockPorUbicacion(id_ubicacion);
             }
 
             res.status(200).json({
                 exito: true,
-                cantidad: inventario.length,
-                datos: inventario
+                puede_ver_otras_ubicaciones: puedeVerTodo,
+                id_ubicacion_usuario: id_ubicacion,
+                stock_total: stockTotal,
+                stock_por_ubicacion: stockPorUbicacion,
+                cantidad: stockTotal.length,
+                datos: stockTotal
             });
 
         } catch (error) {

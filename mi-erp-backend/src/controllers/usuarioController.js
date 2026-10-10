@@ -307,6 +307,91 @@ const usuarioController = {
             console.error('Error al crear usuario:', error);
             res.status(500).json({ exito: false, mensaje: 'Error interno al crear usuario', error: error.message });
         }
+    },
+
+    actualizarPermisoUbicacionesRol: async (req, res) => {
+        const { id_rol } = req.params;
+        const { puede_ver_otras_ubicaciones } = req.body;
+        const adminSolicitante = req.usuario;
+
+        if (adminSolicitante.nombre_rol !== 'Admin Central') {
+            return res.status(403).json({ 
+                exito: false, 
+                mensaje: "Acceso denegado. Solo un Admin Central puede configurar los permisos de acceso entre ubicaciones." 
+            });
+        }
+
+        try {
+            const rolActualizado = await Usuario.actualizarPermisoOtrasUbicaciones(id_rol, puede_ver_otras_ubicaciones);
+            await registrarAuditoria(
+                pool,
+                adminSolicitante.id_usuario,
+                'ACTUALIZAR_PERMISO_UBICACIONES_ROL',
+                'roles',
+                Number(id_rol),
+                null,
+                { puede_ver_otras_ubicaciones }
+            );
+
+            res.status(200).json({
+                exito: true,
+                mensaje: `Permiso de sedes para el rol "${rolActualizado.nombre}" actualizado correctamente.`,
+                rol: rolActualizado
+            });
+        } catch (error) {
+            console.error('Error al actualizar permiso de sedes de rol:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al actualizar permiso de rol', error: error.message });
+        }
+    },
+
+    eliminarUsuario: async (req, res) => {
+        const { id_usuario } = req.params;
+        const solicitante = req.usuario;
+
+        const esAdminCentral = solicitante.nombre_rol === 'Admin Central' || solicitante.rol === 'Admin Central';
+        if (!esAdminCentral) {
+            return res.status(403).json({
+                exito: false,
+                mensaje: 'Acceso denegado. Solo un Admin Central puede eliminar empleados del sistema.'
+            });
+        }
+
+        if (Number(id_usuario) === Number(solicitante.id_usuario)) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: 'No puedes eliminar tu propia cuenta de Admin Central.'
+            });
+        }
+
+        try {
+            const resultado = await Usuario.eliminarUsuario(id_usuario);
+            if (!resultado.eliminado) {
+                return res.status(404).json({ exito: false, mensaje: 'Empleado no encontrado.' });
+            }
+
+            await registrarAuditoria(
+                pool,
+                solicitante.id_usuario,
+                'ELIMINAR_USUARIO',
+                'usuarios',
+                Number(id_usuario),
+                null,
+                { 
+                    nombre: resultado.usuario?.nombre_completo, 
+                    email: resultado.usuario?.email, 
+                    softDelete: resultado.softDelete 
+                }
+            );
+
+            res.status(200).json({
+                exito: true,
+                mensaje: `Empleado "${resultado.usuario?.nombre_completo || ''}" eliminado exitosamente.`,
+                datos: resultado
+            });
+        } catch (error) {
+            console.error('Error al eliminar usuario:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error interno al eliminar usuario', error: error.message });
+        }
     }
 
 };

@@ -12,9 +12,11 @@ router.post('/', verificarToken, requierePermiso('usuarios', 'editar'), usuarioC
 
 router.get('/roles', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarRoles);
 router.post('/roles', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.crearRol);
+router.put('/roles/:id_rol/ubicaciones-permiso', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarPermisoUbicacionesRol);
 
 router.put('/:id_usuario/rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarRol);
 router.put('/:id_usuario/configuracion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarConfiguracion);
+router.delete('/:id_usuario', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.eliminarUsuario);
 
 router.get('/permisos', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.obtenerPermisos);
 router.put('/permisos', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarPermisos);

@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 import { 
   LayoutDashboard, Package, ShoppingCart, FileText, Calendar, 
   LogOut, Users, MapPin, Building2, Truck, Clock, Search, 
-  ShieldCheck, AlertTriangle, Network, X, Loader2, CheckCircle2, ArrowRight, Bug 
+  ShieldCheck, AlertTriangle, Network, X, Loader2, CheckCircle2, ArrowRight, Bug, MessageSquare 
 } from 'lucide-react';
 import api from '../api';
 
@@ -426,6 +426,20 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
 
           </div>
         </div>
+      )}
+
+      {/* BOTÓN FLOTANTE EN LA ESQUINA PARA MENSAJERÍA (SOLO ADMIN CENTRAL) */}
+      {usuario?.rol === 'Admin Central' && (
+        <button
+          onClick={() => setVistaActual('mensajes')}
+          className="fixed bottom-5 right-20 z-40 bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
+          title="Ver Mensajes y Supervisión de Personal"
+        >
+          <MessageSquare size={20} />
+          <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-xs transition-all duration-300 ease-in-out text-xs font-bold pr-1">
+            Mensajes
+          </span>
+        </button>
       )}
 
       {/* BOTÓN FLOTANTE EN LA ESQUINA PARA REPORTAR ERRORES */}

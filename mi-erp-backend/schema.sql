@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS roles (
     id_rol SERIAL PRIMARY KEY,
     nombre VARCHAR(50) NOT NULL UNIQUE,
     descripcion TEXT,
+    puede_ver_otras_ubicaciones BOOLEAN DEFAULT FALSE,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -248,6 +249,12 @@ CREATE TABLE IF NOT EXISTS certificados_calidad (
     estado VARCHAR(50) NOT NULL DEFAULT 'VIGENTE' CHECK (estado IN ('VIGENTE', 'POR_VENCER', 'VENCIDO', 'SUSPENDIDO')),
     id_ubicacion INTEGER REFERENCES ubicaciones(id_ubicacion) ON DELETE SET NULL,
     id_usuario INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    id_cliente INTEGER REFERENCES clientes(id_cliente) ON DELETE SET NULL,
+    cliente_nombre VARCHAR(255),
+    cliente_ruc VARCHAR(20),
+    senasa_resolucion VARCHAR(200) DEFAULT 'N° 000111-MINAGRI-SENASA-AREQUIPA',
+    ciudad_emision VARCHAR(100) DEFAULT 'Arequipa',
+    items_detalle JSONB DEFAULT '[]'::jsonb,
     archivo_url TEXT,
     observaciones TEXT,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -294,7 +301,16 @@ CREATE TABLE IF NOT EXISTS fotos_pedidos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_pedido ON fotos_pedidos(id_pedido);
-CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_expira ON fotos_pedidos(expira_en);
+CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_expira ON fotos_pedidos(expira_en);-- 14. SISTEMA DE MENSAJERÍA INTERNA ENTRE EMPLEADOS (CON MODO SUPERVISIÓN SILENCIOSA)
+CREATE TABLE IF NOT EXISTS mensajes_internos (
+    id_mensaje SERIAL PRIMARY KEY,
+    id_emisor INTEGER NOT NULL REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    id_receptor INTEGER NOT NULL REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    mensaje TEXT NOT NULL,
+    leido BOOLEAN DEFAULT FALSE,
+    creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
-
-
+CREATE INDEX IF NOT EXISTS idx_mensajes_emisor ON mensajes_internos(id_emisor);
+CREATE INDEX IF NOT EXISTS idx_mensajes_receptor ON mensajes_internos(id_receptor);
+CREATE INDEX IF NOT EXISTS idx_mensajes_creado_en ON mensajes_internos(creado_en);

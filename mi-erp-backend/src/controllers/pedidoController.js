@@ -45,11 +45,18 @@ const pedidoController = {
     //obtener eventos para el calendario de logistica y despachos
     obtenerCalendarioLogistica: async (req, res) => {
         try {
-            const { nombre_rol, id_ubicacion, id_usuario } = req.usuario;
-            const pedidosCalendario = await Pedido.obtenerParaCalendario(id_ubicacion, nombre_rol, id_usuario);
+            const { nombre_rol, id_ubicacion, id_usuario, puede_ver_otras_ubicaciones } = req.usuario;
+            const pedidosCalendario = await Pedido.obtenerParaCalendario(
+                id_ubicacion, 
+                nombre_rol, 
+                id_usuario, 
+                puede_ver_otras_ubicaciones
+            );
 
             res.status(200).json({
                 exito: true,
+                puede_ver_otras_ubicaciones: nombre_rol === 'Admin Central' || puede_ver_otras_ubicaciones === true,
+                id_ubicacion_usuario: id_ubicacion,
                 cantidad: pedidosCalendario.length,
                 eventos: pedidosCalendario
             });

@@ -27,6 +27,7 @@ const authController = {
 
             //si todo esta bien, creamos el Token (la credencial) - guardamos su ID, su email y su rol dentro del token
             const puedeVerCelulares = usuario.puede_ver_celulares === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
+            const puedeVerOtrasUbicaciones = usuario.puede_ver_otras_ubicaciones === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
             const area = usuario.area || 'ADMINISTRACION';
 
             const datosToken = {
@@ -35,6 +36,7 @@ const authController = {
                 nombre_rol: usuario.nombre_rol,
                 id_ubicacion: usuario.id_ubicacion,
                 puede_ver_celulares: puedeVerCelulares,
+                puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
                 area: area
             };
 
@@ -52,6 +54,7 @@ const authController = {
                     rol: usuario.nombre_rol,
                     id_ubicacion: usuario.id_ubicacion,
                     puede_ver_celulares: puedeVerCelulares,
+                    puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
                     area: area
                 }
             });

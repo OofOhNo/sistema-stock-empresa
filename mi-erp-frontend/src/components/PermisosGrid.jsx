@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 
 export default function PermisosGrid() {
   const [permisos, setPermisos] = useState([]);
+  const [rolesList, setRolesList] = useState([]);
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
@@ -13,8 +14,12 @@ export default function PermisosGrid() {
   const cargarPermisos = async () => {
     setCargando(true);
     try {
-      const res = await api.get('/usuarios/permisos');
-      setPermisos(res.data.datos || res.data.permisos || []);
+      const [resPermisos, resRoles] = await Promise.all([
+        api.get('/usuarios/permisos'),
+        api.get('/usuarios/roles')
+      ]);
+      setPermisos(resPermisos.data.datos || resPermisos.data.permisos || []);
+      setRolesList(resRoles.data.datos || []);
     } catch (err) {
       toast.error('Error al cargar permisos.');
     } finally {
@@ -36,6 +41,18 @@ export default function PermisosGrid() {
     }
   };
 
+  const toggleOtrasUbicaciones = async (rolId, valorActual) => {
+    try {
+      await api.put(`/usuarios/roles/${rolId}/ubicaciones-permiso`, {
+        puede_ver_otras_ubicaciones: !valorActual
+      });
+      toast.success('Permiso de multi-sede actualizado.');
+      cargarPermisos();
+    } catch (err) {
+      toast.error('Error al actualizar permiso de multi-sede: ' + (err.response?.data?.mensaje || err.message));
+    }
+  };
+
   if (cargando) return <div className="p-4 text-slate-500">Cargando permisos...</div>;
 
   // Agrupar por rol
@@ -45,8 +62,48 @@ export default function PermisosGrid() {
   if (modulos.length === 0) return <div className="p-4 text-slate-500">No hay permisos configurados en la DB.</div>;
 
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-8 overflow-x-auto">
-      <h3 className="text-lg font-bold text-slate-800 mb-4">Matriz de Permisos por Rol</h3>
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-8 overflow-x-auto space-y-6">
+      {/* SECCIÓN ESPECIAL: ACCESO MULTI-SEDES POR ROL */}
+      <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+          <div>
+            <h4 className="text-sm font-bold text-indigo-950 flex items-center space-x-2">
+              <span>🏢 Acceso Multi-Sedes por Rol (Inventario y Pedidos)</span>
+            </h4>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Si está desactivado, los usuarios de este rol <b>solo pueden ver su sede asignada</b>. Si está activado, pueden ver el stock y pedidos de otras sedes.
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+          {rolesList.map(r => {
+            const esAdmin = r.nombre === 'Admin Central';
+            const tieneAcceso = esAdmin || Boolean(r.puede_ver_otras_ubicaciones);
+            return (
+              <div key={r.id_rol} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between shadow-xs">
+                <div>
+                  <p className="text-xs font-bold text-slate-800">{r.nombre}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {tieneAcceso ? '🟢 Ver todas las sedes' : '🔒 Solo sede asignada'}
+                  </p>
+                </div>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={tieneAcceso}
+                    disabled={esAdmin}
+                    onChange={() => toggleOtrasUbicaciones(r.id_rol, r.puede_ver_otras_ubicaciones)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
+                  />
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-lg font-bold text-slate-800 mb-4">Matriz de Permisos por Rol</h3>
       <table className="w-full text-left border-collapse min-w-[600px]">
         <thead>
           <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
@@ -95,6 +152,8 @@ export default function PermisosGrid() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
+

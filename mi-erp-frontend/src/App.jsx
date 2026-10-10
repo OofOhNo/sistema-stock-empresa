@@ -14,6 +14,7 @@ import Despacho from './pages/Despacho';
 import Calidad from './pages/Calidad';
 import Errores from './pages/Errores';
 import Organizacion from './pages/Organizacion';
+import Mensajes from './pages/Mensajes';
 import api from './api';
 import { Toaster } from 'react-hot-toast';
 
@@ -82,6 +83,8 @@ export default function App() {
         return <Usuarios usuarioLogueado={usuario} />;
       case 'ubicaciones':
         return <Ubicaciones usuario={usuario} />;
+      case 'mensajes':
+        return <Mensajes usuario={usuario} />;
       default:
         return <div className="text-slate-500">Módulo en construcción...</div>;
     }

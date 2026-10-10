@@ -87,6 +87,10 @@ app.use('/api/organizacion', organizacionRoutes);
 const busquedaRoutes = require('./src/routes/busquedaRoutes.js');
 app.use('/api/busqueda', busquedaRoutes);
 
+//rutas mensajeria interna
+const mensajeRoutes = require('./src/routes/mensajeRoutes.js');
+app.use('/api/mensajes', mensajeRoutes);
+
 //configurar el puerto y encender el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

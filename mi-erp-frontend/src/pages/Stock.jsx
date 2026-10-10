@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
-import { Package, History, Plus, ArrowLeft, RotateCcw, CheckCircle, AlertCircle, Clock, ShieldAlert, Filter, XCircle, AlertTriangle, Check, X } from 'lucide-react';
+import { 
+  Package, History, Plus, ArrowLeft, RotateCcw, CheckCircle, AlertCircle, Clock, 
+  ShieldAlert, Filter, XCircle, AlertTriangle, Check, X, Globe, Building, Lock 
+} from 'lucide-react';
 
 export default function Stock({ usuario }) {
   const [inventario, setInventario] = useState([]);
+  const [stockTotal, setStockTotal] = useState([]);
+  const [stockPorUbicacion, setStockPorUbicacion] = useState([]);
+  const [puedeVerOtrasUbicaciones, setPuedeVerOtrasUbicaciones] = useState(false);
+  const [ubicacionesLista, setUbicacionesLista] = useState([]);
+  const [subVistaInventario, setSubVistaInventario] = useState('total'); // 'total' (primera vista por defecto), 'ubicacion'
+  const [filtroSede, setFiltroSede] = useState('todas');
+
   const [historial, setHistorial] = useState([]);
   const [alertas, setAlertas] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -44,11 +54,25 @@ export default function Stock({ usuario }) {
   const cargarStock = async () => {
     setCargando(true);
     try {
-      const res = await api.get('/stock');
-      const datos = res.data.datos || [];
-      setInventario(datos);
-      if (datos.length > 0 && !form.id_producto) {
-        setForm(f => ({ ...f, id_producto: datos[0].id_producto }));
+      const [resStock, resUbic] = await Promise.all([
+        api.get('/stock'),
+        api.get('/ubicaciones')
+      ]);
+
+      const stTotal = resStock.data.stock_total || resStock.data.datos || [];
+      const stUbic = resStock.data.stock_por_ubicacion || [];
+      const puedeVerOtras = resStock.data.puede_ver_otras_ubicaciones === true || usuario?.rol === 'Admin Central';
+
+      setStockTotal(stTotal);
+      setStockPorUbicacion(stUbic);
+      setInventario(stTotal);
+      setPuedeVerOtrasUbicaciones(puedeVerOtras);
+
+      const ubs = resUbic.data.ubicaciones || resUbic.data.datos || [];
+      setUbicacionesLista(ubs);
+
+      if (stTotal.length > 0 && !form.id_producto) {
+        setForm(f => ({ ...f, id_producto: stTotal[0].id_producto }));
       }
     } catch (err) {
       setError('Error al cargar inventario.');
@@ -251,55 +275,203 @@ export default function Stock({ usuario }) {
         </div>
       )}
 
-      {/* VISTA 1: STOCK ACTUAL */}
+      {/* VISTA 1: STOCK ACTUAL (TOTAL EN PRIMERA VISTA & POR UBICACIÓN) */}
       {vista === 'inventario' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
-                <th className="p-4 font-semibold">SKU</th>
-                <th className="p-4 font-semibold">Producto</th>
-                <th className="p-4 font-semibold text-center">Unidad</th>
-                <th className="p-4 font-semibold text-center">Físico</th>
-                <th className="p-4 font-semibold text-center">Reservado</th>
-                <th className="p-4 font-semibold text-center text-indigo-600">Disponible</th>
-                <th className="p-4 font-semibold text-center">Stock Mínimo</th>
-                <th className="p-4 font-semibold text-center">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-sm">
-              {inventario.map((item, index) => {
-                const disponible = item.cantidad_disponible ?? item.total_disponible ?? 0;
-                const minimo = item.stock_minimo ?? 5;
-                const esBajo = disponible <= minimo;
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200">
+            {/* Sub-tabs: Total (Primera vista) vs Por Ubicación */}
+            <div className="flex space-x-2 bg-slate-100 p-1 rounded-xl">
+              <button 
+                onClick={() => setSubVistaInventario('total')} 
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 ${
+                  subVistaInventario === 'total' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Globe size={15} />
+                <span>Stock Total Consolidado</span>
+              </button>
+              <button 
+                onClick={() => setSubVistaInventario('ubicacion')} 
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 ${
+                  subVistaInventario === 'ubicacion' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Building size={15} />
+                <span>Stock por Ubicación / Sede</span>
+              </button>
+            </div>
 
-                return (
-                  <tr key={index} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4 font-bold text-slate-900">{item.sku}</td>
-                    <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
-                    <td className="p-4 text-center">
-                      <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
-                        {item.simbolo_unidad || item.unidad_medida || 'und'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? item.total_fisico ?? 0}</td>
-                    <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? item.total_reservado ?? 0}</td>
-                    <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
-                    <td className="p-4 text-center text-slate-500">{minimo}</td>
-                    <td className="p-4 text-center">
-                      {disponible <= 0 ? (
-                        <span className="px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 border border-red-200">Agotado</span>
-                      ) : esBajo ? (
-                        <span className="px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">Bajo Stock</span>
-                      ) : (
-                        <span className="px-2 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Óptimo</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+            {/* Si estamos en sub-vista Ubicación */}
+            {subVistaInventario === 'ubicacion' && (
+              <div className="flex items-center space-x-2">
+                {puedeVerOtrasUbicaciones ? (
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-medium text-slate-500">Filtrar Sede:</span>
+                    <select
+                      value={filtroSede}
+                      onChange={(e) => setFiltroSede(e.target.value)}
+                      className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="todas">🏢 Todas las sedes ({stockPorUbicacion.length})</option>
+                      {ubicacionesLista.map(u => (
+                        <option key={u.id_ubicacion} value={u.id_ubicacion}>
+                          📍 {u.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-1.5 px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-lg text-xs font-medium">
+                    <Lock size={13} className="text-amber-600" />
+                    <span>Sede asignada: <b>{usuario?.nombre_ubicacion || 'Mi Sede'}</b> (Acceso a otras sedes restringido)</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* TABLA SUBVISTA 1: TOTAL */}
+          {subVistaInventario === 'total' && (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-blue-950">Stock Total de la Empresa (Primera Vista)</h3>
+                  <p className="text-xs text-slate-500">Suma consolidada de todas las sedes y almacenes</p>
+                </div>
+                <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">
+                  {stockTotal.length} productos registrados
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                      <th className="p-4 font-semibold">SKU</th>
+                      <th className="p-4 font-semibold">Producto</th>
+                      <th className="p-4 font-semibold text-center">Unidad</th>
+                      <th className="p-4 font-semibold text-center">Físico Total</th>
+                      <th className="p-4 font-semibold text-center">Reservado Total</th>
+                      <th className="p-4 font-semibold text-center text-indigo-600">Disponible Total</th>
+                      <th className="p-4 font-semibold text-center">Stock Mínimo</th>
+                      <th className="p-4 font-semibold text-center">Estado Global</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {stockTotal.map((item, index) => {
+                      const disponible = item.total_disponible ?? (item.cantidad_disponible ?? 0);
+                      const minimo = item.stock_minimo ?? 5;
+                      const esBajo = disponible <= minimo;
+
+                      return (
+                        <tr key={index} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 font-bold text-slate-900">{item.sku}</td>
+                          <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
+                          <td className="p-4 text-center">
+                            <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
+                              {item.simbolo_unidad || item.unidad_medida || 'und'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-center text-slate-900 font-semibold">{item.total_fisico ?? item.cantidad_fisica ?? 0}</td>
+                          <td className="p-4 text-center text-orange-600 font-medium">{item.total_reservado ?? item.cantidad_reservada ?? 0}</td>
+                          <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
+                          <td className="p-4 text-center text-slate-500">{minimo}</td>
+                          <td className="p-4 text-center">
+                            {disponible <= 0 ? (
+                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 border border-red-200">Agotado</span>
+                            ) : esBajo ? (
+                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">Bajo Stock</span>
+                            ) : (
+                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Óptimo</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TABLA SUBVISTA 2: POR UBICACIÓN */}
+          {subVistaInventario === 'ubicacion' && (
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                  <h3 className="text-sm font-bold text-blue-950">Desglose de Stock por Sede / Almacén</h3>
+                  <p className="text-xs text-slate-500">
+                    {puedeVerOtrasUbicaciones 
+                      ? 'Visualizando stock detallado por sede física' 
+                      : `Visualizando únicamente el inventario de tu sede (${usuario?.nombre_ubicacion || 'asignada'})`}
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                      <th className="p-4 font-semibold">Sede / Ubicación</th>
+                      <th className="p-4 font-semibold">SKU</th>
+                      <th className="p-4 font-semibold">Producto</th>
+                      <th className="p-4 font-semibold text-center">Unidad</th>
+                      <th className="p-4 font-semibold text-center">Físico</th>
+                      <th className="p-4 font-semibold text-center">Reservado</th>
+                      <th className="p-4 font-semibold text-center text-indigo-600">Disponible</th>
+                      <th className="p-4 font-semibold text-center">Stock Mín.</th>
+                      <th className="p-4 font-semibold text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {stockPorUbicacion
+                      .filter(item => {
+                        if (!puedeVerOtrasUbicaciones && usuario?.id_ubicacion) {
+                          return item.id_ubicacion == usuario.id_ubicacion;
+                        }
+                        if (filtroSede !== 'todas') {
+                          return item.id_ubicacion == filtroSede;
+                        }
+                        return true;
+                      })
+                      .map((item, index) => {
+                        const disponible = item.cantidad_disponible ?? 0;
+                        const minimo = item.stock_minimo ?? 5;
+                        const esBajo = disponible <= minimo;
+
+                        return (
+                          <tr key={index} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-4 font-medium text-slate-800">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
+                                📍 {item.nombre_ubicacion || 'Sede'}
+                              </span>
+                            </td>
+                            <td className="p-4 font-bold text-slate-900">{item.sku}</td>
+                            <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
+                            <td className="p-4 text-center">
+                              <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
+                                {item.simbolo_unidad || item.unidad_medida || 'und'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? 0}</td>
+                            <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? 0}</td>
+                            <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
+                            <td className="p-4 text-center text-slate-500">{minimo}</td>
+                            <td className="p-4 text-center">
+                              {disponible <= 0 ? (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 border border-red-200">Agotado</span>
+                              ) : esBajo ? (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">Bajo Stock</span>
+                              ) : (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Óptimo</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

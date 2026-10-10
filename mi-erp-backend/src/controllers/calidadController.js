@@ -27,18 +27,31 @@ const calidadController = {
             fecha_vencimiento,
             estado,
             id_ubicacion,
+            id_cliente,
+            cliente_nombre,
+            cliente_ruc,
+            senasa_resolucion,
+            ciudad_emision,
+            items_detalle,
             archivo_url,
             observaciones
         } = req.body;
 
         const id_usuario = req.usuario.id_usuario;
 
-        if (!tipo_certificado || !entidad_emisora || !fecha_emision || !fecha_vencimiento) {
-            return res.status(400).json({
-                exito: false,
-                mensaje: 'Los campos tipo_certificado, entidad_emisora, fecha_emision y fecha_vencimiento son obligatorios.'
-            });
+        // Si viene con items_detalle, calcular fecha_vencimiento y lote_o_producto si faltan
+        let fechaVencFinal = fecha_vencimiento;
+        if (!fechaVencFinal && Array.isArray(items_detalle) && items_detalle.length > 0) {
+            fechaVencFinal = items_detalle[0].fecha_vencimiento;
         }
+        if (!fechaVencFinal) {
+            // Default 1 año
+            const fv = new Date();
+            fv.setFullYear(fv.getFullYear() + 1);
+            fechaVencFinal = fv.toISOString().split('T')[0];
+        }
+
+        const fechaEmisionFinal = fecha_emision || new Date().toISOString().split('T')[0];
 
         // Generar código único si no se envió
         const codigoFinal = codigo_certificado && codigo_certificado.trim() !== '' 
@@ -54,14 +67,20 @@ const calidadController = {
 
             const nuevo = await Calidad.crear({
                 codigo_certificado: codigoFinal,
-                tipo_certificado,
-                lote_o_producto,
-                entidad_emisora,
-                fecha_emision,
-                fecha_vencimiento,
-                estado,
+                tipo_certificado: tipo_certificado || 'Certificado de Calidad SENASA',
+                lote_o_producto: lote_o_producto || (Array.isArray(items_detalle) ? items_detalle.map(i => `${i.producto} (${i.lote})`).join(', ') : null),
+                entidad_emisora: entidad_emisora || 'PROCESOS CÁRNICOS S.A.C.',
+                fecha_emision: fechaEmisionFinal,
+                fecha_vencimiento: fechaVencFinal,
+                estado: estado || 'VIGENTE',
                 id_ubicacion: id_ubicacion ? Number(id_ubicacion) : null,
                 id_usuario,
+                id_cliente: id_cliente ? Number(id_cliente) : null,
+                cliente_nombre: cliente_nombre || null,
+                cliente_ruc: cliente_ruc || null,
+                senasa_resolucion: senasa_resolucion || 'N° 000111-MINAGRI-SENASA-AREQUIPA',
+                ciudad_emision: ciudad_emision || 'Arequipa',
+                items_detalle: Array.isArray(items_detalle) ? items_detalle : [],
                 archivo_url,
                 observaciones
             });
