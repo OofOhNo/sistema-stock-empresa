@@ -80,7 +80,7 @@ const Usuario = {
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
                 LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
-                WHERE u.email = $1;
+                WHERE LOWER(TRIM(u.email)) = LOWER(TRIM($1)) AND COALESCE(u.activo, true) = true;
             `;
             const resultado = await pool.query(query, [email]);
             return resultado.rows[0]; 

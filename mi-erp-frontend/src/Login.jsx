@@ -15,7 +15,10 @@ export default function Login({ onLoginExitoso }) {
 
     try {
       //llamamos al backend de Node.js
-      const respuesta = await api.post('/auth/login', { email, password });
+      const respuesta = await api.post('/auth/login', { 
+        email: email.trim().toLowerCase(), 
+        password: password.trim() 
+      });
       
       if (respuesta.data.exito) {
         //guardamos el token en el almacenamiento local del navegador

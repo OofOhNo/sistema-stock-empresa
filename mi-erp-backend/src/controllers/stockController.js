@@ -7,8 +7,12 @@ const stockController = {
             const { nombre_rol, id_ubicacion, puede_ver_otras_ubicaciones } = req.usuario;
             const puedeVerTodo = nombre_rol === 'Admin Central' || puede_ver_otras_ubicaciones === true;
 
-            // 1. Stock consolidado por producto (Total en primera vista)
-            const stockTotal = await Stock.obtenerStockGlobal();
+            // 1. Stock consolidado por producto:
+            // Si tiene acceso global (Admin o rol con multi-sede), ve el consolidado de toda la empresa.
+            // Si es un empleado sin multi-sede, ve únicamente el stock de su ubicación asignada.
+            const stockTotal = puedeVerTodo 
+                ? await Stock.obtenerStockGlobal() 
+                : (id_ubicacion ? await Stock.obtenerStockPorUbicacion(id_ubicacion) : []);
 
             // 2. Stock por ubicación
             let stockPorUbicacion = [];
@@ -29,10 +33,13 @@ const stockController = {
                 }
             }
 
+            const nombreUbicacionUsuario = req.usuario.nombre_ubicacion || stockPorUbicacion[0]?.nombre_ubicacion || 'Mi Sede';
+
             res.status(200).json({
                 exito: true,
                 puede_ver_otras_ubicaciones: puedeVerTodo,
                 id_ubicacion_usuario: id_ubicacion,
+                nombre_ubicacion_usuario: nombreUbicacionUsuario,
                 stock_total: stockTotal,
                 stock_por_ubicacion: stockPorUbicacion,
                 cantidad: stockTotal.length,

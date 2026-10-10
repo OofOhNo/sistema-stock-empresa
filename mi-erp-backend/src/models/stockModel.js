@@ -15,17 +15,19 @@ const Stock = {
                     p.id_unidad,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
-                    s.id_ubicacion,
-                    s.nombre AS nombre_ubicacion,
-                    i.cantidad_fisica,
-                    i.cantidad_reservada,
-                    (i.cantidad_fisica - i.cantidad_reservada) AS cantidad_disponible,
+                    $1::int AS id_ubicacion,
+                    (SELECT nombre FROM ubicaciones WHERE id_ubicacion = $1::int) AS nombre_ubicacion,
+                    COALESCE(i.cantidad_fisica, 0) AS cantidad_fisica,
+                    COALESCE(i.cantidad_reservada, 0) AS cantidad_reservada,
+                    COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS cantidad_disponible,
+                    COALESCE(i.cantidad_fisica, 0) AS total_fisico,
+                    COALESCE(i.cantidad_reservada, 0) AS total_reservado,
+                    COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS total_disponible,
                     i.ultima_actualizacion
-                FROM inventario i
-                JOIN productos p ON i.id_producto = p.id_producto
-                JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
+                FROM productos p
+                LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.id_ubicacion = $1::int
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
-                WHERE i.id_ubicacion = $1 AND p.activo = true
+                WHERE p.activo = true
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query, [idUbicacion]);
@@ -83,6 +85,9 @@ const Stock = {
                     i.cantidad_fisica,
                     i.cantidad_reservada,
                     (i.cantidad_fisica - i.cantidad_reservada) AS cantidad_disponible,
+                    i.cantidad_fisica AS total_fisico,
+                    i.cantidad_reservada AS total_reservado,
+                    (i.cantidad_fisica - i.cantidad_reservada) AS total_disponible,
                     i.ultima_actualizacion
                 FROM inventario i
                 JOIN productos p ON i.id_producto = p.id_producto

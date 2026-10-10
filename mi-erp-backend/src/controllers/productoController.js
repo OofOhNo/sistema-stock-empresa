@@ -6,7 +6,28 @@ const getAllProductos = async (req, res) => {
     try {
         const incluirInactivos = req.query.todos === 'true';
         const productos = await ProductoModel.getAll(incluirInactivos);
-        res.status(200).json(productos);
+
+        let puedeEditar = false;
+        if (req.usuario?.nombre_rol === 'Admin Central') {
+            puedeEditar = true;
+        } else if (req.usuario?.nombre_rol) {
+            const resPerm = await pool.query(`
+                SELECT rp.puede_editar
+                FROM roles_permisos rp
+                JOIN roles r ON rp.rol_id = r.id_rol
+                JOIN permisos p ON rp.permiso_id = p.id
+                WHERE r.nombre = $1 AND p.modulo = 'productos';
+            `, [req.usuario.nombre_rol]);
+            puedeEditar = resPerm.rows[0]?.puede_editar === true;
+        }
+
+        res.setHeader('X-Puede-Editar', puedeEditar ? 'true' : 'false');
+        res.status(200).json({
+            exito: true,
+            datos: productos,
+            puede_editar: puedeEditar,
+            productos: productos
+        });
     } catch (error) {
         console.error('Error fetching productos:', error);
         res.status(500).json({ message: 'Error fetching productos', error: error.message });

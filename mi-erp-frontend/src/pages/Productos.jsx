@@ -7,6 +7,9 @@ export default function Productos({ usuario }) {
   const [productos, setProductos] = useState([]);
   const [unidades, setUnidades] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [puedeEditar, setPuedeEditar] = useState(
+    usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true
+  );
 
   const [form, setForm] = useState({
     sku: '',
@@ -40,7 +43,17 @@ export default function Productos({ usuario }) {
         api.get('/productos'),
         api.get('/productos/unidades')
       ]);
-      setProductos(resProd.data || []);
+      const listaProds = Array.isArray(resProd.data) 
+        ? resProd.data 
+        : (resProd.data?.datos || resProd.data?.productos || []);
+      setProductos(listaProds);
+
+      if (resProd.data?.puede_editar !== undefined) {
+        setPuedeEditar(Boolean(resProd.data.puede_editar));
+      } else if (usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true) {
+        setPuedeEditar(true);
+      }
+
       const listaUnidades = resUni.data?.unidades || [];
       setUnidades(listaUnidades);
       if (listaUnidades.length > 0 && !form.id_unidad) {
@@ -56,7 +69,13 @@ export default function Productos({ usuario }) {
   const cargarProductos = async () => {
     try {
       const res = await api.get('/productos');
-      setProductos(res.data || []);
+      const listaProds = Array.isArray(res.data) 
+        ? res.data 
+        : (res.data?.datos || res.data?.productos || []);
+      setProductos(listaProds);
+      if (res.data?.puede_editar !== undefined) {
+        setPuedeEditar(Boolean(res.data.puede_editar));
+      }
     } catch (err) {
       toast.error('Error recargando productos');
     }
@@ -249,176 +268,192 @@ export default function Productos({ usuario }) {
           </div>
         </div>
 
-        <button
-          onClick={() => setModalUnidad(true)}
-          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-2 transition-colors self-start sm:self-auto"
-        >
-          <Ruler size={16} />
-          <span>+ Crear Formato de Medida</span>
-        </button>
+        {puedeEditar && (
+          <button
+            onClick={() => setModalUnidad(true)}
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-2 transition-colors self-start sm:self-auto cursor-pointer"
+          >
+            <Ruler size={16} />
+            <span>+ Crear Formato de Medida</span>
+          </button>
+        )}
       </div>
 
-      {/* FORMULARIO DE PRODUCTO */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold text-blue-950 mb-4 flex items-center space-x-2">
-          <span>{editando ? 'Editar Producto' : 'Nuevo Producto'}</span>
-        </h2>
-        
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            
-            {/* SKU */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">SKU *</label>
-              <input 
-                name="sku" 
-                value={form.sku} 
-                onChange={handleChange} 
-                placeholder="Ej: PRD-001" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
-                required 
-              />
-            </div>
-
-            {/* Nombre */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Nombre del Producto *</label>
-              <input 
-                name="nombre" 
-                value={form.nombre} 
-                onChange={handleChange} 
-                placeholder="Nombre comercial" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
-                required 
-              />
-            </div>
-
-            {/* Unidad de Medida (Elegir y crear formato) */}
-            <div className="md:col-span-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Unidad de Medida (Formato) *
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setModalUnidad(true)}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1"
-                >
-                  <Plus size={13} />
-                  <span>Nuevo Formato</span>
-                </button>
+      {/* FORMULARIO DE PRODUCTO (SOLO SI TIENE PERMISO DE EDICIÓN) */}
+      {puedeEditar ? (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+          <h2 className="text-lg font-bold text-blue-950 mb-4 flex items-center space-x-2">
+            <span>{editando ? 'Editar Producto' : 'Nuevo Producto'}</span>
+          </h2>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              
+              {/* SKU */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">SKU *</label>
+                <input 
+                  name="sku" 
+                  value={form.sku} 
+                  onChange={handleChange} 
+                  placeholder="Ej: PRD-001" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
+                  required 
+                />
               </div>
-              <select
-                name="id_unidad"
-                value={form.id_unidad}
-                onChange={handleChange}
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white font-medium"
-                required
-              >
-                {unidades.map(u => (
-                  <option key={u.id_unidad} value={u.id_unidad}>
-                    {u.nombre.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+
+              {/* Nombre */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Nombre del Producto *</label>
+                <input 
+                  name="nombre" 
+                  value={form.nombre} 
+                  onChange={handleChange} 
+                  placeholder="Nombre comercial" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
+                  required 
+                />
+              </div>
+
+              {/* Unidad de Medida (Elegir y crear formato) */}
+              <div className="md:col-span-2">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Unidad de Medida (Formato) *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setModalUnidad(true)}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1 cursor-pointer"
+                  >
+                    <Plus size={13} />
+                    <span>Nuevo Formato</span>
+                  </button>
+                </div>
+                <select
+                  name="id_unidad"
+                  value={form.id_unidad}
+                  onChange={handleChange}
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white font-medium"
+                  required
+                >
+                  {unidades.map(u => (
+                    <option key={u.id_unidad} value={u.id_unidad}>
+                      {u.nombre.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Descripción */}
+              <div className="md:col-span-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Descripción</label>
+                <input 
+                  name="descripcion" 
+                  value={form.descripcion} 
+                  onChange={handleChange} 
+                  placeholder="Detalle técnico u observaciones del producto" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
+                />
+              </div>
+
+              {/* Precio Costo */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Precio Costo (S/)</label>
+                <input 
+                  name="precio_costo" 
+                  type="number" 
+                  step="0.01" 
+                  value={form.precio_costo} 
+                  onChange={handleChange} 
+                  placeholder="0.00" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm font-mono focus:outline-none focus:border-indigo-500" 
+                />
+              </div>
+
+              {/* Precio Venta */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Precio Venta (S/) *</label>
+                <input 
+                  name="precio_venta" 
+                  type="number" 
+                  step="0.01" 
+                  value={form.precio_venta} 
+                  onChange={handleChange} 
+                  placeholder="0.00" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-indigo-500" 
+                  required 
+                />
+              </div>
+
+              {/* Stock Mínimo */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Stock Mínimo (Alerta)</label>
+                <input 
+                  name="stock_minimo" 
+                  type="number" 
+                  value={form.stock_minimo} 
+                  onChange={handleChange} 
+                  placeholder="5" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
+                />
+              </div>
+
+              {/* Categoría ID */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">ID Categoría (Opcional)</label>
+                <input 
+                  name="id_categoria" 
+                  type="number" 
+                  value={form.id_categoria} 
+                  onChange={handleChange} 
+                  placeholder="1" 
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
+                />
+              </div>
+
             </div>
 
-            {/* Descripción */}
-            <div className="md:col-span-2">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Descripción</label>
-              <input 
-                name="descripcion" 
-                value={form.descripcion} 
-                onChange={handleChange} 
-                placeholder="Detalle técnico u observaciones del producto" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
-              />
-            </div>
-
-            {/* Precio Costo */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Precio Costo (S/)</label>
-              <input 
-                name="precio_costo" 
-                type="number" 
-                step="0.01" 
-                value={form.precio_costo} 
-                onChange={handleChange} 
-                placeholder="0.00" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm font-mono focus:outline-none focus:border-indigo-500" 
-              />
-            </div>
-
-            {/* Precio Venta */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Precio Venta (S/) *</label>
-              <input 
-                name="precio_venta" 
-                type="number" 
-                step="0.01" 
-                value={form.precio_venta} 
-                onChange={handleChange} 
-                placeholder="0.00" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm font-mono font-bold text-slate-900 focus:outline-none focus:border-indigo-500" 
-                required 
-              />
-            </div>
-
-            {/* Stock Mínimo */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Stock Mínimo (Alerta)</label>
-              <input 
-                name="stock_minimo" 
-                type="number" 
-                value={form.stock_minimo} 
-                onChange={handleChange} 
-                placeholder="5" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
-              />
-            </div>
-
-            {/* Categoría ID */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">ID Categoría (Opcional)</label>
-              <input 
-                name="id_categoria" 
-                type="number" 
-                value={form.id_categoria} 
-                onChange={handleChange} 
-                placeholder="1" 
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500" 
-              />
-            </div>
-
-          </div>
-
-          <div className="flex items-center space-x-3 pt-2">
-            <button 
-              type="submit" 
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center space-x-2 shadow-xs transition-colors"
-            >
-              <Plus size={16} /> 
-              <span>{editando ? 'Actualizar Producto' : 'Guardar Producto'}</span>
-            </button>
-            {editando && (
+            <div className="flex items-center space-x-3 pt-2">
               <button 
-                type="button" 
-                onClick={() => { 
-                  setEditando(null); 
-                  setForm({ 
-                    sku: '', nombre: '', descripcion: '', id_categoria: '', 
-                    precio_venta: '', precio_costo: '', stock_minimo: '',
-                    id_unidad: unidades[0]?.id_unidad || '' 
-                  }); 
-                }} 
-                className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                type="submit" 
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center space-x-2 shadow-xs transition-colors cursor-pointer"
               >
-                Cancelar
+                <Plus size={16} /> 
+                <span>{editando ? 'Actualizar Producto' : 'Guardar Producto'}</span>
               </button>
-            )}
+              {editando && (
+                <button 
+                  type="button" 
+                  onClick={() => { 
+                    setEditando(null); 
+                    setForm({ 
+                      sku: '', nombre: '', descripcion: '', id_categoria: '', 
+                      precio_venta: '', precio_costo: '', stock_minimo: '',
+                      id_unidad: unidades[0]?.id_unidad || '' 
+                    }); 
+                  }} 
+                  className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      ) : (
+        <div className="bg-blue-50/60 border border-blue-200 text-blue-900 px-5 py-4 rounded-2xl text-xs flex items-center justify-between">
+          <div className="flex items-center space-x-2.5">
+            <Package size={18} className="text-blue-700" />
+            <span>
+              <strong>Modo de Consulta de Catálogo:</strong> Tu perfil (<em>{usuario?.rol || 'Empleado'}</em>) tiene acceso de consulta a los productos, formatos de medida y precios de venta. La creación o edición de productos está restringida según tus permisos de rol.
+            </span>
           </div>
-        </form>
-      </div>
+          <span className="font-semibold text-blue-800 bg-white px-3 py-1 rounded-lg border border-blue-200 shadow-2xs">
+            Solo Consulta
+          </span>
+        </div>
+      )}
 
       {/* TABLA DE PRODUCTOS */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -438,7 +473,7 @@ export default function Productos({ usuario }) {
                 <th className="p-4 text-right">Venta</th>
                 <th className="p-4 text-right">Margen</th>
                 <th className="p-4 text-center">Stock Mín.</th>
-                <th className="p-4 text-right">Acciones</th>
+                {puedeEditar && <th className="p-4 text-right">Acciones</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
@@ -469,24 +504,26 @@ export default function Productos({ usuario }) {
                   <td className="p-4 text-center font-mono text-xs text-slate-600">
                     {p.stock_minimo} {p.simbolo_unidad || 'und'}
                   </td>
-                  <td className="p-4 text-right">
-                    <div className="flex items-center justify-end space-x-2">
-                      <button 
-                        onClick={() => handleEdit(p)} 
-                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="Editar producto"
-                      >
-                        <Edit size={16} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(p.id_producto)} 
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Dar de baja producto"
-                      >
-                        <Trash size={16} />
-                      </button>
-                    </div>
-                  </td>
+                  {puedeEditar && (
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end space-x-2">
+                        <button 
+                          onClick={() => handleEdit(p)} 
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Editar producto"
+                        >
+                          <Edit size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(p.id_producto)} 
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="Dar de baja producto"
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

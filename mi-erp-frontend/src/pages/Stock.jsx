@@ -278,26 +278,37 @@ export default function Stock({ usuario }) {
       {/* VISTA 1: STOCK ACTUAL (TOTAL EN PRIMERA VISTA & POR UBICACIÓN) */}
       {vista === 'inventario' && (
         <div className="space-y-4">
+          {!puedeVerOtrasUbicaciones && (
+            <div className="bg-blue-50/80 border border-blue-200 text-blue-900 px-4 py-3 rounded-2xl text-xs flex items-center justify-between shadow-2xs">
+              <div className="flex items-center space-x-2.5">
+                <Building size={16} className="text-blue-700 shrink-0" />
+                <span>
+                  📍 Inventario de tu Sede: <strong>{usuario?.nombre_ubicacion || 'Depósito Norte'}</strong>. Visualizando exclusivamente las existencias físicas de tu sede asignada.
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200">
             {/* Sub-tabs: Total (Primera vista) vs Por Ubicación */}
             <div className="flex space-x-2 bg-slate-100 p-1 rounded-xl">
               <button 
                 onClick={() => setSubVistaInventario('total')} 
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 ${
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
                   subVistaInventario === 'total' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Globe size={15} />
-                <span>Stock Total Consolidado</span>
+                <span>{puedeVerOtrasUbicaciones ? 'Stock Total Consolidado' : `Mi Sede (${usuario?.nombre_ubicacion || 'Asignada'})`}</span>
               </button>
               <button 
                 onClick={() => setSubVistaInventario('ubicacion')} 
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 ${
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
                   subVistaInventario === 'ubicacion' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Building size={15} />
-                <span>Stock por Ubicación / Sede</span>
+                <span>{puedeVerOtrasUbicaciones ? 'Stock por Ubicación / Sede' : 'Detalle de Ubicación'}</span>
               </button>
             </div>
 
@@ -335,8 +346,12 @@ export default function Stock({ usuario }) {
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div>
-                  <h3 className="text-sm font-bold text-blue-950">Stock Total de la Empresa (Primera Vista)</h3>
-                  <p className="text-xs text-slate-500">Suma consolidada de todas las sedes y almacenes</p>
+                  <h3 className="text-sm font-bold text-blue-950">
+                    {puedeVerOtrasUbicaciones ? 'Stock Total de la Empresa (Primera Vista)' : `Inventario Asignado: ${usuario?.nombre_ubicacion || 'Mi Sede'}`}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {puedeVerOtrasUbicaciones ? 'Suma consolidada de todas las sedes y almacenes' : 'Existencias en tiempo real de los productos en tu sede'}
+                  </p>
                 </div>
                 <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">
                   {stockTotal.length} productos registrados
@@ -357,36 +372,44 @@ export default function Stock({ usuario }) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {stockTotal.map((item, index) => {
-                      const disponible = item.total_disponible ?? (item.cantidad_disponible ?? 0);
-                      const minimo = item.stock_minimo ?? 5;
-                      const esBajo = disponible <= minimo;
+                    {stockTotal.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="p-8 text-center text-slate-500 text-xs">
+                          No hay productos registrados en el inventario.
+                        </td>
+                      </tr>
+                    ) : (
+                      stockTotal.map((item, index) => {
+                        const disponible = item.total_disponible ?? (item.cantidad_disponible ?? 0);
+                        const minimo = item.stock_minimo ?? 5;
+                        const esBajo = disponible <= minimo;
 
-                      return (
-                        <tr key={index} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-bold text-slate-900">{item.sku}</td>
-                          <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
-                          <td className="p-4 text-center">
-                            <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
-                              {item.simbolo_unidad || item.unidad_medida || 'und'}
-                            </span>
-                          </td>
-                          <td className="p-4 text-center text-slate-900 font-semibold">{item.total_fisico ?? item.cantidad_fisica ?? 0}</td>
-                          <td className="p-4 text-center text-orange-600 font-medium">{item.total_reservado ?? item.cantidad_reservada ?? 0}</td>
-                          <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
-                          <td className="p-4 text-center text-slate-500">{minimo}</td>
-                          <td className="p-4 text-center">
-                            {disponible <= 0 ? (
-                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 border border-red-200">Agotado</span>
-                            ) : esBajo ? (
-                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">Bajo Stock</span>
-                            ) : (
-                              <span className="px-2 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Óptimo</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        return (
+                          <tr key={index} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-4 font-bold text-slate-900">{item.sku}</td>
+                            <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
+                            <td className="p-4 text-center">
+                              <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
+                                {item.simbolo_unidad || item.unidad_medida || 'und'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-center text-slate-900 font-semibold">{item.total_fisico ?? item.cantidad_fisica ?? 0}</td>
+                            <td className="p-4 text-center text-orange-600 font-medium">{item.total_reservado ?? item.cantidad_reservada ?? 0}</td>
+                            <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
+                            <td className="p-4 text-center text-slate-500">{minimo}</td>
+                            <td className="p-4 text-center">
+                              {disponible <= 0 ? (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-red-100 text-red-700 border border-red-200">Agotado</span>
+                              ) : esBajo ? (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200">Bajo Stock</span>
+                              ) : (
+                                <span className="px-2 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">Óptimo</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -424,8 +447,8 @@ export default function Stock({ usuario }) {
                   <tbody className="divide-y divide-slate-100 text-sm">
                     {stockPorUbicacion
                       .filter(item => {
-                        if (!puedeVerOtrasUbicaciones && usuario?.id_ubicacion) {
-                          return item.id_ubicacion == usuario.id_ubicacion;
+                        if (!puedeVerOtrasUbicaciones) {
+                          return true;
                         }
                         if (filtroSede !== 'todas') {
                           return item.id_ubicacion == filtroSede;
@@ -433,7 +456,7 @@ export default function Stock({ usuario }) {
                         return true;
                       })
                       .map((item, index) => {
-                        const disponible = item.cantidad_disponible ?? 0;
+                        const disponible = item.cantidad_disponible ?? (item.total_disponible ?? 0);
                         const minimo = item.stock_minimo ?? 5;
                         const esBajo = disponible <= minimo;
 
@@ -441,7 +464,7 @@ export default function Stock({ usuario }) {
                           <tr key={index} className="hover:bg-slate-50 transition-colors">
                             <td className="p-4 font-medium text-slate-800">
                               <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-200">
-                                📍 {item.nombre_ubicacion || 'Sede'}
+                                📍 {item.nombre_ubicacion || usuario?.nombre_ubicacion || 'Sede'}
                               </span>
                             </td>
                             <td className="p-4 font-bold text-slate-900">{item.sku}</td>
@@ -451,8 +474,8 @@ export default function Stock({ usuario }) {
                                 {item.simbolo_unidad || item.unidad_medida || 'und'}
                               </span>
                             </td>
-                            <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? 0}</td>
-                            <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? 0}</td>
+                            <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? (item.total_fisico ?? 0)}</td>
+                            <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? (item.total_reservado ?? 0)}</td>
                             <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
                             <td className="p-4 text-center text-slate-500">{minimo}</td>
                             <td className="p-4 text-center">
