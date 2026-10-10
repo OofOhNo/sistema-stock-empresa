@@ -198,7 +198,7 @@ export default function Pedidos({ usuario }) { // <--- AHORA RECIBE EL USUARIO
             <ShoppingCart size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="text-2xl font-bold text-blue-950">
               {vista === 'lista' ? 'Calendario de Pedidos' : 'Crear Nuevo Pedido'}
             </h1>
             <p className="text-slate-500 text-sm">

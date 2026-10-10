@@ -146,7 +146,7 @@ export default function Ubicaciones({ usuario }) {
               <MapPin size={24} />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-slate-900">Gestión de Ubicaciones</h2>
+              <h2 className="text-2xl font-bold text-blue-950">Gestión de Ubicaciones</h2>
               <p className="text-sm text-slate-500">
                 Administra almacenes, sucursales y sedes corporativas con sus divisiones asociadas.
               </p>

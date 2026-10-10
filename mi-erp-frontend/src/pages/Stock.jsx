@@ -193,7 +193,7 @@ export default function Stock({ usuario }) {
             <Package size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Control de Inventario</h1>
+            <h1 className="text-2xl font-bold text-blue-950">Control de Inventario</h1>
             <p className="text-slate-500 text-sm">Auditoría estricta de stock, kardex y alertas de reposición</p>
           </div>
         </div>

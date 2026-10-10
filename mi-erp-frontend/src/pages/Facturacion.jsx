@@ -158,7 +158,7 @@ export default function Facturacion({ usuario }) {
             <Receipt size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Facturación Electrónica SUNAT</h1>
+            <h1 className="text-2xl font-bold text-blue-950">Facturación Electrónica SUNAT</h1>
             <p className="text-sm text-slate-500">
               Emisión de Facturas (01), Boletas (03) y Notas de Crédito (07) integradas con OSE/SUNAT
             </p>

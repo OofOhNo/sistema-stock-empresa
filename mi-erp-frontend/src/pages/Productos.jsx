@@ -109,13 +109,13 @@ export default function Productos({ usuario }) {
           <Package size={24} />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Catálogo de Productos</h1>
+          <h1 className="text-2xl font-bold text-blue-950">Catálogo de Productos</h1>
           <p className="text-slate-500 text-sm">Gestiona productos, costos y stock mínimo</p>
         </div>
       </div>
 
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold mb-4">{editando ? 'Editar Producto' : 'Nuevo Producto'}</h2>
+        <h2 className="text-lg font-bold text-blue-950 mb-4">{editando ? 'Editar Producto' : 'Nuevo Producto'}</h2>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <input name="sku" value={form.sku} onChange={handleChange} placeholder="SKU" className="border p-2 rounded" required />
           <input name="nombre" value={form.nombre} onChange={handleChange} placeholder="Nombre" className="border p-2 rounded" required />

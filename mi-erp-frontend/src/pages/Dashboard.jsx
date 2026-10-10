@@ -55,7 +55,7 @@ export default function Dashboard({ usuario }) {
       {/* mensaje de bienvenida */}
       <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center bg-gradient-to-r from-indigo-50 to-white">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">¡Hola de nuevo, {usuario.nombre}! 👋</h2>
+          <h2 className="text-2xl font-bold text-blue-950">¡Hola de nuevo, {usuario.nombre}! 👋</h2>
           <p className="text-slate-500 mt-2">Aquí tienes el resumen operativo de hoy. Tienes <span className="font-bold text-indigo-600">{resumen.pedidosPendientes} pedidos</span> esperando para ser facturados.</p>
         </div>
         <div className="hidden md:block">
@@ -75,7 +75,7 @@ export default function Dashboard({ usuario }) {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Ventas Confirmadas</p>
-              <h3 className="text-3xl font-bold text-slate-900 mt-2">${resumen.montoTotalVentas.toFixed(2)}</h3>
+              <h3 className="text-3xl font-bold text-blue-950 mt-2">${resumen.montoTotalVentas.toFixed(2)}</h3>
             </div>
             <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl">
               <DollarSign size={24} />
@@ -92,7 +92,7 @@ export default function Dashboard({ usuario }) {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Pendientes de Facturar</p>
-              <h3 className="text-3xl font-bold text-slate-900 mt-2">{resumen.pedidosPendientes}</h3>
+              <h3 className="text-3xl font-bold text-blue-950 mt-2">{resumen.pedidosPendientes}</h3>
             </div>
             <div className="p-3 bg-yellow-100 text-yellow-600 rounded-xl">
               <Clock size={24} />
@@ -108,7 +108,7 @@ export default function Dashboard({ usuario }) {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Alertas de Stock</p>
-              <h3 className="text-3xl font-bold text-slate-900 mt-2">{resumen.productosBajoStock}</h3>
+              <h3 className="text-3xl font-bold text-blue-950 mt-2">{resumen.productosBajoStock}</h3>
             </div>
             <div className="p-3 bg-red-100 text-red-600 rounded-xl">
               <Package size={24} />

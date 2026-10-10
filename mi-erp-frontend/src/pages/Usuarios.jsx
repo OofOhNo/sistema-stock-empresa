@@ -149,7 +149,7 @@ export default function Usuarios({ usuarioLogueado }) {
             <Users size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Personal, Permisos y Auditoría</h1>
+            <h1 className="text-2xl font-bold text-blue-950">Personal, Permisos y Auditoría</h1>
             <p className="text-slate-500 text-sm">Control jerárquico de roles, matriz de permisos y trazabilidad de quién hizo qué</p>
           </div>
         </div>

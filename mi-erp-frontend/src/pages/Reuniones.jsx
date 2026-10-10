@@ -99,7 +99,7 @@ export default function Reuniones({ usuario }) {
             <Calendar size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="text-2xl font-bold text-blue-950">
               {vista === 'lista' ? 'Calendario de Reuniones y Fechas Imprevistas' : 'Programar Evento o Fecha Imprevista'}
             </h1>
             <p className="text-slate-500 text-sm">
