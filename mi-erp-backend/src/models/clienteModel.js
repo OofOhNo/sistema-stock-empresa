@@ -3,7 +3,7 @@ const { registrarAuditoria } = require('../utils/auditoria');
 
 const Cliente = {
 
-    obtenerTodos: async (puedeVerCelulares = false) => {
+    obtenerTodos: async (idUsuario = null, esAdminCentral = false) => {
         try {
             const query = `
                 SELECT 
@@ -23,14 +23,25 @@ const Cliente = {
             `;
             const { rows } = await pool.query(query);
 
-            return rows.map(c => ({
-                ...c,
-                // Si no tiene permiso de ver celulares, enmascarar u ocultar
-                celular: puedeVerCelulares 
-                    ? c.celular 
-                    : (c.celular ? '***-***-*** (Oculto)' : null),
-                celular_visible: puedeVerCelulares
-            }));
+            let permitidosSet = new Set();
+            if (!esAdminCentral && idUsuario) {
+                const resPermisos = await pool.query(
+                    'SELECT id_cliente FROM permisos_celulares_clientes WHERE id_usuario = $1',
+                    [idUsuario]
+                );
+                permitidosSet = new Set(resPermisos.rows.map(r => r.id_cliente));
+            }
+
+            return rows.map(c => {
+                const puedeVer = esAdminCentral || permitidosSet.has(c.id_cliente);
+                return {
+                    ...c,
+                    celular: puedeVer 
+                        ? c.celular 
+                        : (c.celular ? '***-***-*** (Oculto)' : null),
+                    celular_visible: puedeVer
+                };
+            });
         } catch (error) {
             throw error;
         }
@@ -155,6 +166,58 @@ const Cliente = {
 
             await client.query('COMMIT');
             return actualizado;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    obtenerPermisosCelularUsuario: async (idUsuario) => {
+        const query = `
+            SELECT id_cliente 
+            FROM permisos_celulares_clientes 
+            WHERE id_usuario = $1
+            ORDER BY id_cliente ASC;
+        `;
+        const { rows } = await pool.query(query, [idUsuario]);
+        return rows.map(r => r.id_cliente);
+    },
+
+    actualizarPermisosCelularUsuario: async (idUsuario, clientesIds = [], idAdmin = null) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Limpiar permisos actuales del usuario
+            await client.query(
+                'DELETE FROM permisos_celulares_clientes WHERE id_usuario = $1',
+                [idUsuario]
+            );
+
+            // Insertar los nuevos permisos seleccionados
+            if (Array.isArray(clientesIds) && clientesIds.length > 0) {
+                for (const idCliente of clientesIds) {
+                    await client.query(
+                        'INSERT INTO permisos_celulares_clientes (id_usuario, id_cliente) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                        [idUsuario, idCliente]
+                    );
+                }
+            }
+
+            await registrarAuditoria(
+                client,
+                idAdmin,
+                'ACTUALIZAR_PERMISOS_CELULAR_CLIENTES',
+                'permisos_celulares_clientes',
+                idUsuario,
+                null,
+                { id_usuario: idUsuario, clientes_permitidos: clientesIds }
+            );
+
+            await client.query('COMMIT');
+            return { exito: true, total: clientesIds.length };
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;

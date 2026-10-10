@@ -153,23 +153,28 @@ export default function Productos({ usuario }) {
     }
   };
 
-  // Guardar nuevo formato de unidad de medida
+  // Guardar nuevo formato de unidad de medida (sin requerir códigos SUNAT al usuario)
   const handleCrearUnidad = async (e) => {
     e.preventDefault();
-    if (!formUnidad.codigo || !formUnidad.nombre || !formUnidad.simbolo) {
-      toast.error('Por favor completa todos los campos del formato.');
+    if (!formUnidad.nombre.trim()) {
+      toast.error('Por favor escribe el nombre de la unidad.');
       return;
     }
 
     setGuardandoUnidad(true);
     try {
+      const nombreLimpio = formUnidad.nombre.trim().toUpperCase();
+      const simboloLimpio = (formUnidad.simbolo || nombreLimpio.slice(0, 3)).trim().toLowerCase();
+      // Generar código interno único automáticamente
+      const codigoAuto = (nombreLimpio.replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'UNI') + Math.floor(Math.random() * 90 + 10);
+
       const res = await api.post('/productos/unidades', {
-        codigo: formUnidad.codigo.trim().toUpperCase(),
-        nombre: formUnidad.nombre.trim(),
-        simbolo: formUnidad.simbolo.trim().toLowerCase()
+        codigo: codigoAuto,
+        nombre: nombreLimpio,
+        simbolo: simboloLimpio
       });
 
-      toast.success('¡Nuevo formato de unidad creado con éxito!');
+      toast.success('¡Formato de unidad creado con éxito!');
       const nueva = res.data.unidad;
       
       // Actualizar listado de unidades y seleccionar la recién creada
@@ -271,12 +276,12 @@ export default function Productos({ usuario }) {
                 name="id_unidad"
                 value={form.id_unidad}
                 onChange={handleChange}
-                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white"
+                className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white font-medium"
                 required
               >
                 {unidades.map(u => (
                   <option key={u.id_unidad} value={u.id_unidad}>
-                    {u.nombre} ({u.simbolo}) — Código SUNAT: {u.codigo}
+                    {u.nombre.toUpperCase()}
                   </option>
                 ))}
               </select>
@@ -411,11 +416,8 @@ export default function Productos({ usuario }) {
                   
                   {/* Unidad de Medida */}
                   <td className="p-4 text-center">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                      {p.unidad_medida_nombre || p.unidad_medida || 'Unidad'}
-                      <span className="ml-1 text-indigo-600 font-mono text-[11px]">
-                        ({p.simbolo_unidad || p.codigo_unidad || 'und'})
-                      </span>
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200 uppercase tracking-wide">
+                      {(p.unidad_medida_nombre || p.unidad_medida || 'UNIDAD').toUpperCase()}
                     </span>
                   </td>
 
@@ -477,54 +479,38 @@ export default function Productos({ usuario }) {
 
             <form onSubmit={handleCrearUnidad} className="p-6 space-y-4">
               <p className="text-xs text-slate-500">
-                Registra un nuevo formato de unidad de medida (ej. Saco, Paquete, Caja, Kilogramo). Estará disponible inmediatamente para asignar a cualquier producto.
+                Registra un nuevo formato de unidad de medida (ej. KILOGRAMO, UNIDAD, GRAMO, LITRO, SACO, CAJA). Estará disponible inmediatamente para asignar a cualquier producto.
               </p>
 
-              {/* Código */}
+              {/* Nombre descriptivo de la unidad */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Código (SUNAT o Interno) *
+                  Nombre de la Unidad *
                 </label>
                 <input 
                   type="text"
                   required
-                  placeholder="Ej: SAC, CJ, PK, MTR, KGM"
-                  value={formUnidad.codigo}
-                  onChange={(e) => setFormUnidad({ ...formUnidad, codigo: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-mono uppercase focus:outline-none focus:border-indigo-500"
-                />
-                <span className="text-[11px] text-slate-400 mt-1 block">Acrónimo estándar de facturación</span>
-              </div>
-
-              {/* Nombre descriptivo */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Nombre Completo *
-                </label>
-                <input 
-                  type="text"
-                  required
-                  placeholder="Ej: Saco 50kg, Caja x 24, Paquete, Metro"
+                  placeholder="Ej: KILOGRAMO, GRAMO, LITRO, SACO, CAJA, PAQUETE"
                   value={formUnidad.nombre}
                   onChange={(e) => setFormUnidad({ ...formUnidad, nombre: e.target.value })}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold uppercase focus:outline-none focus:border-indigo-500"
                 />
+                <span className="text-[11px] text-slate-400 mt-1 block">Aparecerá en el catálogo y selección de productos</span>
               </div>
 
-              {/* Símbolo */}
+              {/* Símbolo o abreviatura */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Símbolo Corto *
+                  Abreviatura o Símbolo Corto (Opcional)
                 </label>
                 <input 
                   type="text"
-                  required
-                  placeholder="Ej: sac, cja, paq, m, kg"
+                  placeholder="Ej: kg, g, l, sac, cja, paq, und"
                   value={formUnidad.simbolo}
                   onChange={(e) => setFormUnidad({ ...formUnidad, simbolo: e.target.value })}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:border-indigo-500"
                 />
-                <span className="text-[11px] text-slate-400 mt-1 block">Aparecerá en los listados y etiquetas</span>
+                <span className="text-[11px] text-slate-400 mt-1 block">Símbolo para cantidades y etiquetas de empaque</span>
               </div>
 
               {/* Footer */}

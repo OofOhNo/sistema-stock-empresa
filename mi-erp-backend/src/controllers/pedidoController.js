@@ -45,8 +45,8 @@ const pedidoController = {
     //obtener eventos para el calendario de logistica y despachos
     obtenerCalendarioLogistica: async (req, res) => {
         try {
-            const { nombre_rol, id_ubicacion } = req.usuario;
-            const pedidosCalendario = await Pedido.obtenerParaCalendario(id_ubicacion, nombre_rol);
+            const { nombre_rol, id_ubicacion, id_usuario } = req.usuario;
+            const pedidosCalendario = await Pedido.obtenerParaCalendario(id_ubicacion, nombre_rol, id_usuario);
 
             res.status(200).json({
                 exito: true,

@@ -17,7 +17,8 @@ const Usuario = {
                     u.puede_ver_celulares,
                     u.area,
                     u.activo,
-                    u.creado_en
+                    u.creado_en,
+                    (SELECT COUNT(*) FROM permisos_celulares_clientes pcc WHERE pcc.id_usuario = u.id_usuario)::int AS total_clientes_autorizados
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
                 LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion

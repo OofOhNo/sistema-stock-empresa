@@ -295,14 +295,9 @@ export default function Despacho({ usuario }) {
                               <span>{fechaStr}</span>
                             </div>
                             {horaStr ? (
-                              <div className="flex items-center space-x-1.5 mt-1 font-semibold">
-                                <Clock size={13} className={prod ? "text-amber-600" : "text-blue-600"} />
-                                <span className={prod ? "text-amber-700 font-mono" : "text-blue-700 font-mono"}>{horaStr}</span>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                                  prod ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-100 text-blue-800 border border-blue-200"
-                                }`}>
-                                  {prod ? "Planta (-1h)" : "Hora Real"}
-                                </span>
+                              <div className="flex items-center space-x-1.5 mt-1 font-semibold text-slate-800">
+                                <Clock size={13} className="text-slate-400" />
+                                <span className="font-mono">{horaStr}</span>
                               </div>
                             ) : null}
                             <div className="text-[11px] text-slate-400 mt-0.5">Ubicación: {pedido.ubicacion || 'Central'}</div>

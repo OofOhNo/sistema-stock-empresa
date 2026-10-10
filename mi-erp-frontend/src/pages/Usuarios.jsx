@@ -3,7 +3,7 @@ import api from '../api';
 import { 
   Users, Shield, ShieldAlert, UserCheck, Briefcase, Lock, 
   FileText, ShieldCheck, History, Eye, RefreshCw, Filter, X, 
-  UserPlus, ShieldPlus, CheckCircle 
+  UserPlus, ShieldPlus, CheckCircle, Phone, Search, Loader2 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PermisosGrid from '../components/PermisosGrid';
@@ -23,6 +23,14 @@ export default function Usuarios({ usuarioLogueado }) {
   const [modalNuevoUsuario, setModalNuevoUsuario] = useState(false);
   const [modalNuevoRol, setModalNuevoRol] = useState(false);
   const [guardando, setGuardando] = useState(false);
+
+  // Modal de Asignación de Teléfonos por Cliente
+  const [modalCelularesUsuario, setModalCelularesUsuario] = useState(null);
+  const [todosClientes, setTodosClientes] = useState([]);
+  const [clientesSeleccionados, setClientesSeleccionados] = useState([]);
+  const [filtroClienteBusqueda, setFiltroClienteBusqueda] = useState('');
+  const [cargandoPermisosCel, setCargandoPermisosCel] = useState(false);
+  const [guardandoPermisosCel, setGuardandoPermisosCel] = useState(false);
 
   // Form Nuevo Usuario
   const [formUsuario, setFormUsuario] = useState({
@@ -152,6 +160,58 @@ export default function Usuarios({ usuarioLogueado }) {
       toast.error('Error: ' + (err.response?.data?.mensaje || err.message));
     } finally {
       setActualizando(null);
+    }
+  };
+
+  // Abrir Modal de Permisos de Celular por Cliente
+  const abrirModalPermisosCelular = async (user) => {
+    setModalCelularesUsuario(user);
+    setCargandoPermisosCel(true);
+    setFiltroClienteBusqueda('');
+    try {
+      const [resClientes, resPermisos] = await Promise.all([
+        api.get('/clientes'),
+        api.get(`/clientes/permisos-usuario/${user.id_usuario}`)
+      ]);
+      setTodosClientes(resClientes.data.datos || resClientes.data || []);
+      setClientesSeleccionados(resPermisos.data.clientes_permitidos || []);
+    } catch (err) {
+      toast.error('Error al cargar clientes y permisos: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setCargandoPermisosCel(false);
+    }
+  };
+
+  const toggleClientePermiso = (idCliente) => {
+    setClientesSeleccionados(prev => 
+      prev.includes(idCliente)
+        ? prev.filter(id => id !== idCliente)
+        : [...prev, idCliente]
+    );
+  };
+
+  const seleccionarTodosClientes = () => {
+    if (clientesSeleccionados.length === todosClientes.length) {
+      setClientesSeleccionados([]);
+    } else {
+      setClientesSeleccionados(todosClientes.map(c => c.id_cliente));
+    }
+  };
+
+  const guardarPermisosCelular = async () => {
+    if (!modalCelularesUsuario) return;
+    setGuardandoPermisosCel(true);
+    try {
+      await api.put(`/clientes/permisos-usuario/${modalCelularesUsuario.id_usuario}`, {
+        clientes_ids: clientesSeleccionados
+      });
+      toast.success(`Teléfonos autorizados guardados para ${modalCelularesUsuario.nombre_completo}`);
+      setModalCelularesUsuario(null);
+      cargarDatos();
+    } catch (err) {
+      toast.error('Error al guardar permisos: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setGuardandoPermisosCel(false);
     }
   };
 
@@ -319,7 +379,7 @@ export default function Usuarios({ usuarioLogueado }) {
                   <th className="p-4 font-semibold">Rol Actual</th>
                   <th className="p-4 font-semibold text-center">Asignar Rol</th>
                   <th className="p-4 font-semibold text-center">Área (Horario)</th>
-                  <th className="p-4 font-semibold text-center">Ver Celulares Clientes</th>
+                  <th className="p-4 font-semibold text-center">📱 Teléfonos por Cliente</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -385,22 +445,25 @@ export default function Usuarios({ usuarioLogueado }) {
 
                       {/* Permiso Celulares Clientes */}
                       <td className="p-4 text-center">
-                        <label className="inline-flex items-center space-x-2 cursor-pointer">
-                          <input 
-                            type="checkbox"
-                            disabled={actualizando === user.id_usuario}
-                            checked={Boolean(user.puede_ver_celulares)}
-                            onChange={(e) => actualizarConfiguracion(user.id_usuario, e.target.checked, user.area || 'ADMINISTRACION')}
-                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
-                          />
-                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
-                            user.puede_ver_celulares 
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                              : 'bg-slate-100 text-slate-500 border-slate-200'
-                          }`}>
-                            {user.puede_ver_celulares ? 'Permitido' : 'Oculto'}
+                        {user.nombre_rol === 'Admin Central' ? (
+                          <span className="inline-flex items-center space-x-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+                            <ShieldCheck size={14} />
+                            <span>Todos (Admin)</span>
                           </span>
-                        </label>
+                        ) : (
+                          <button
+                            onClick={() => abrirModalPermisosCelular(user)}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all shadow-2xs hover:shadow-xs cursor-pointer"
+                            title="Asignar de qué clientes puede ver los teléfonos"
+                          >
+                            <Phone size={13} />
+                            <span>
+                              {user.total_clientes_autorizados > 0 
+                                ? `${user.total_clientes_autorizados} cliente(s)` 
+                                : '0 clientes (Asignar)'}
+                            </span>
+                          </button>
+                        )}
                       </td>
 
                     </tr>
@@ -834,6 +897,165 @@ export default function Usuarios({ usuarioLogueado }) {
           </div>
         </div>
       )}
+
+      {/* Modal Asignar Permisos de Teléfonos por Cliente */}
+      {modalCelularesUsuario && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
+            
+            {/* Header del modal */}
+            <div className="p-5 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs">
+                  <Phone size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-blue-950">
+                    Visibilidad de Teléfonos de Clientes
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Usuario: <strong className="text-slate-800">{modalCelularesUsuario.nombre_completo}</strong> ({modalCelularesUsuario.nombre_rol})
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setModalCelularesUsuario(null)} 
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200/50"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Sub-header con buscador y botones rápidos */}
+            <div className="p-4 border-b border-slate-100 bg-white space-y-3">
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Selecciona específicamente qué clientes podrá ver el celular este usuario. Para los clientes no seleccionados, el teléfono se mostrará protegido como <em>(Oculto por permisos)</em>.
+              </p>
+
+              <div className="flex items-center space-x-2">
+                <div className="relative flex-1">
+                  <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Filtrar por nombre comercial, razón social o RUC..."
+                    value={filtroClienteBusqueda}
+                    onChange={(e) => setFiltroClienteBusqueda(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                  />
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={seleccionarTodosClientes}
+                  className="px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl whitespace-nowrap transition-colors"
+                >
+                  {clientesSeleccionados.length === todosClientes.length ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                <span>
+                  Autorizados: <strong className="text-indigo-600 font-bold">{clientesSeleccionados.length}</strong> de {todosClientes.length} clientes
+                </span>
+                {filtroClienteBusqueda && (
+                  <span className="text-[11px] text-slate-400">Filtrando por "{filtroClienteBusqueda}"</span>
+                )}
+              </div>
+            </div>
+
+            {/* Lista con checkboxes */}
+            <div className="flex-1 overflow-y-auto p-4 divide-y divide-slate-100">
+              {cargandoPermisosCel ? (
+                <div className="py-12 flex flex-col items-center justify-center text-slate-400 space-y-2">
+                  <Loader2 size={24} className="animate-spin text-indigo-600" />
+                  <span className="text-xs">Cargando directorio de clientes...</span>
+                </div>
+              ) : todosClientes.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  No hay clientes registrados en el sistema.
+                </div>
+              ) : (
+                todosClientes
+                  .filter((c) => {
+                    if (!filtroClienteBusqueda.trim()) return true;
+                    const b = filtroClienteBusqueda.toLowerCase();
+                    return (
+                      (c.razon_social_o_nombre && c.razon_social_o_nombre.toLowerCase().includes(b)) ||
+                      (c.nombre_comercial && c.nombre_comercial.toLowerCase().includes(b)) ||
+                      (c.numero_documento && c.numero_documento.includes(b))
+                    );
+                  })
+                  .map((c) => {
+                    const seleccionado = clientesSeleccionados.includes(c.id_cliente);
+                    return (
+                      <label 
+                        key={c.id_cliente}
+                        className={`flex items-center justify-between py-2.5 px-3 rounded-xl cursor-pointer transition-colors ${
+                          seleccionado ? 'bg-indigo-50/50 hover:bg-indigo-50' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3 min-w-0 pr-3">
+                          <input 
+                            type="checkbox"
+                            checked={seleccionado}
+                            onChange={() => toggleClientePermiso(c.id_cliente)}
+                            className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-blue-950 truncate">
+                              {c.nombre_comercial || c.razon_social_o_nombre}
+                            </p>
+                            <p className="text-[11px] text-slate-500 truncate">
+                              RUC: {c.numero_documento || '-'} {c.contacto ? `· Contacto: ${c.contacto}` : ''}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
+                            seleccionado 
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold' 
+                              : 'bg-slate-100 text-slate-400 border-slate-200'
+                          }`}>
+                            {c.celular || 'Sin cel.'}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })
+              )}
+            </div>
+
+            {/* Footer con botones de acción */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end space-x-2">
+              <button
+                type="button"
+                onClick={() => setModalCelularesUsuario(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={guardandoPermisosCel || cargandoPermisosCel}
+                onClick={guardarPermisosCelular}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 flex items-center space-x-1.5 disabled:opacity-50"
+              >
+                {guardandoPermisosCel ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Guardando...</span>
+                  </>
+                ) : (
+                  <span>Guardar Permisos</span>
+                )}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -303,7 +303,7 @@ export default function Dashboard({ usuario }) {
                 {/* 1. Facturación Semanal */}
                 <GraficoBarras 
                   titulo="Facturación Semanal"
-                  subtitulo="Días de la Semana"
+                  subtitulo="Días en esta semana (Lunes a Domingo)"
                   datos={datosGraficos.graficos.semanal}
                   keyEtiqueta="etiqueta"
                   keyTotal="total"
@@ -313,9 +313,9 @@ export default function Dashboard({ usuario }) {
                 {/* 2. Facturación Mensual */}
                 <GraficoBarras 
                   titulo="Facturación Mensual"
-                  subtitulo="Progreso del Año (12 Meses)"
+                  subtitulo="Semanas en este mes"
                   datos={datosGraficos.graficos.mensual}
-                  keyEtiqueta="mes"
+                  keyEtiqueta="semana"
                   keyTotal="total"
                   colorPrimario="emerald"
                 />
@@ -323,7 +323,7 @@ export default function Dashboard({ usuario }) {
                 {/* 3. Facturación Trimestral */}
                 <GraficoBarras 
                   titulo="Facturación Trimestral"
-                  subtitulo="Cuatrimestres / Q1 a Q4"
+                  subtitulo="Trimestres del Año (T1 a T4)"
                   datos={datosGraficos.graficos.trimestral}
                   keyEtiqueta="trimestre"
                   keyTotal="total"
@@ -333,7 +333,7 @@ export default function Dashboard({ usuario }) {
                 {/* 4. Facturación Anual */}
                 <GraficoBarras 
                   titulo="Facturación Anual"
-                  subtitulo="Comparativa Interanual"
+                  subtitulo="Evolución Interanual"
                   datos={datosGraficos.graficos.anual}
                   keyEtiqueta="anio"
                   keyTotal="total"

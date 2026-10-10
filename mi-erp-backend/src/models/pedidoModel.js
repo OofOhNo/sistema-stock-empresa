@@ -113,7 +113,7 @@ const Pedido = {
     },
 
     // Obtener los pedidos para el calendario de logística y despachos
-    obtenerParaCalendario: async (id_ubicacion, rol) => {
+    obtenerParaCalendario: async (id_ubicacion, rol, id_usuario = null) => {
         try {
             let query = `
                 SELECT 
@@ -150,7 +150,23 @@ const Pedido = {
             query += ` ORDER BY p.fecha_limite_despacho ASC;`;
 
             const resultado = await pool.query(query, params);
-            return resultado.rows;
+
+            let permitidosSet = new Set();
+            if (rol !== 'Admin Central' && id_usuario) {
+                const resPermisos = await pool.query(
+                    'SELECT id_cliente FROM permisos_celulares_clientes WHERE id_usuario = $1',
+                    [id_usuario]
+                );
+                permitidosSet = new Set(resPermisos.rows.map(r => r.id_cliente));
+            }
+
+            return resultado.rows.map(row => {
+                const puedeVer = rol === 'Admin Central' || permitidosSet.has(row.id_cliente);
+                return {
+                    ...row,
+                    celular: puedeVer ? row.celular : null
+                };
+            });
         } catch (error) {
             throw error;
         }

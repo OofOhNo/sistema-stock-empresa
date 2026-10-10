@@ -4,15 +4,12 @@ const clienteController = {
 
     listarClientes: async (req, res) => {
         try {
-            // Verificar si el usuario tiene permiso para ver celulares
-            // Admin Central siempre puede verlos, o si tiene asignado el flag granular puede_ver_celulares
-            const puedeVerCelulares = req.usuario.nombre_rol === 'Admin Central' || req.usuario.puede_ver_celulares === true;
-
-            const clientes = await Cliente.obtenerTodos(puedeVerCelulares);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            const clientes = await Cliente.obtenerTodos(req.usuario.id_usuario, esAdminCentral);
             res.status(200).json({
                 exito: true,
                 cantidad: clientes.length,
-                puede_ver_celulares: puedeVerCelulares,
+                es_admin: esAdminCentral,
                 datos: clientes
             });
         } catch (error) {
@@ -58,9 +55,50 @@ const clienteController = {
                 mensaje: error.message || 'Error al actualizar el cliente'
             });
         }
+    },
+
+    obtenerPermisosCelularUsuario: async (req, res) => {
+        try {
+            const { id_usuario } = req.params;
+            const clientesPermitidos = await Cliente.obtenerPermisosCelularUsuario(Number(id_usuario));
+            res.status(200).json({
+                exito: true,
+                id_usuario: Number(id_usuario),
+                clientes_permitidos: clientesPermitidos
+            });
+        } catch (error) {
+            console.error('Error al obtener permisos de celular del usuario:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'Error al obtener permisos de celulares',
+                error: error.message
+            });
+        }
+    },
+
+    actualizarPermisosCelularUsuario: async (req, res) => {
+        try {
+            const { id_usuario } = req.params;
+            const { clientes_ids } = req.body;
+            await Cliente.actualizarPermisosCelularUsuario(
+                Number(id_usuario),
+                clientes_ids || [],
+                req.usuario.id_usuario
+            );
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Permisos de visualización de celulares actualizados correctamente.'
+            });
+        } catch (error) {
+            console.error('Error al actualizar permisos de celular del usuario:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'Error al actualizar permisos',
+                error: error.message
+            });
+        }
     }
 
 };
 
 module.exports = clienteController;
-

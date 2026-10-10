@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
-import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X } from 'lucide-react';
+import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X, Network } from 'lucide-react';
+import Organizacion from './Organizacion';
 
 export default function Ubicaciones({ usuario }) {
+  const [subTab, setSubTab] = useState('sedes'); // 'sedes' | 'almacenes'
   const [ubicaciones, setUbicaciones] = useState([]);
   const [divisiones, setDivisiones] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -138,8 +140,40 @@ export default function Ubicaciones({ usuario }) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      
+      {/* SELECTOR DE SUB-PESTAÑAS EN UBICACIONES */}
+      <div className="flex space-x-2 bg-slate-100 p-1 rounded-xl w-max">
+        <button
+          onClick={() => setSubTab('sedes')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            subTab === 'sedes' 
+              ? 'bg-white text-indigo-600 shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Building2 size={15} />
+          <span>Organización y Sedes</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('almacenes')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            subTab === 'almacenes' 
+              ? 'bg-white text-indigo-600 shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <MapPin size={15} />
+          <span>Gestión de Ubicaciones / Almacenes</span>
+        </button>
+      </div>
+
+      {subTab === 'sedes' ? (
+        <Organizacion usuario={usuario} />
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <div className="flex items-center space-x-3">
             <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl">
@@ -322,6 +356,8 @@ export default function Ubicaciones({ usuario }) {
             </form>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

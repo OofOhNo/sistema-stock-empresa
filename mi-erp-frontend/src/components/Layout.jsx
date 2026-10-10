@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import toast from 'react-hot-toast';
 import { 
   LayoutDashboard, Package, ShoppingCart, FileText, Calendar, 
   LogOut, Users, MapPin, Building2, Truck, Clock, Search, 
-  ShieldCheck, AlertTriangle, Network, X, Loader2, CheckCircle2, ArrowRight 
+  ShieldCheck, AlertTriangle, Network, X, Loader2, CheckCircle2, ArrowRight, Bug 
 } from 'lucide-react';
 import api from '../api';
 
@@ -16,6 +17,15 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const [mostrarModalBusqueda, setMostrarModalBusqueda] = useState(false);
   const [tabResultados, setTabResultados] = useState('facturas');
   const buscadorTimeout = useRef(null);
+
+  // Estado del Modal Rápido de Reporte de Errores (Símbolo en la esquina)
+  const [modalBug, setModalBug] = useState(false);
+  const [formBug, setFormBug] = useState({
+    modulo: 'General',
+    queHacia: '',
+    descripcion: ''
+  });
+  const [enviandoBug, setEnviandoBug] = useState(false);
 
   // Reloj digital en tiempo real que se actualiza cada segundo
   useEffect(() => {
@@ -76,22 +86,43 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     }, 350);
   };
 
+  const handleEnviarBug = async (e) => {
+    e.preventDefault();
+    if (!formBug.descripcion.trim()) {
+      toast.error('Por favor cuéntanos qué problema o error ocurrió.');
+      return;
+    }
+    setEnviandoBug(true);
+    try {
+      await api.post('/errores', {
+        titulo: `Incidencia en ${formBug.modulo}: ${formBug.descripcion.slice(0, 40)}`,
+        descripcion: `¿Qué estaba intentando hacer?: ${formBug.queHacia || 'No especificado'}\n¿Qué ocurrió?: ${formBug.descripcion}`,
+        area_modulo: formBug.modulo,
+        severidad: 'MEDIA'
+      });
+      toast.success('¡Gracias por avisar! Tu reporte de error fue registrado.');
+      setModalBug(false);
+      setFormBug({ modulo: 'General', queHacia: '', descripcion: '' });
+    } catch (err) {
+      toast.error('Error al enviar reporte: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setEnviandoBug(false);
+    }
+  };
+
   const menu = [
     { id: 'dashboard', nombre: 'Inicio', icono: <LayoutDashboard size={20} /> },
     { id: 'stock', nombre: 'Inventario', icono: <Package size={20} /> },
     { id: 'productos', nombre: 'Productos', icono: <Package size={20} /> },
     { id: 'clientes', nombre: 'Clientes', icono: <Building2 size={20} /> },
     { id: 'pedidos', nombre: 'Pedidos', icono: <ShoppingCart size={20} /> },
-    { id: 'despacho', nombre: 'Listos para Despacho', icono: <Truck size={20} /> },
     { id: 'facturacion', nombre: 'Facturación', icono: <FileText size={20} /> },
     { id: 'calidad', nombre: 'Calidad y Sanidad', icono: <ShieldCheck size={20} /> },
-    { id: 'errores', nombre: 'Reporte de Errores', icono: <AlertTriangle size={20} /> },
-    { id: 'organizacion', nombre: 'Organización y Sedes', icono: <Network size={20} /> },
+    { id: 'ubicaciones', nombre: 'Ubicaciones y Sedes', icono: <MapPin size={20} /> },
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} /> },
     ...(usuario.rol === 'Administrador' || usuario.rol === 'Admin Central' 
       ? [
-          { id: 'usuarios', nombre: 'Personal y Roles', icono: <Users size={20} /> },
-          { id: 'ubicaciones', nombre: 'Ubicaciones', icono: <MapPin size={20} /> }
+          { id: 'usuarios', nombre: 'Personal y Roles', icono: <Users size={20} /> }
         ] 
       : []
     )
@@ -393,6 +424,116 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* BOTÓN FLOTANTE EN LA ESQUINA PARA REPORTAR ERRORES */}
+      <button
+        onClick={() => setModalBug(true)}
+        className="fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-700 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
+        title="Reportar un problema o error"
+      >
+        <Bug size={20} />
+        <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-xs transition-all duration-300 ease-in-out text-xs font-bold pr-1">
+          Reportar problema
+        </span>
+      </button>
+
+      {/* MODAL SIMPLE DE REPORTE DE ERRORES */}
+      {modalBug && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Bug size={18} className="text-red-400" />
+                <h3 className="text-base font-bold text-white">¿Encontraste un problema?</h3>
+              </div>
+              <button 
+                onClick={() => setModalBug(false)} 
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEnviarBug} className="p-5 space-y-4">
+              <p className="text-xs text-slate-500">
+                Cuéntanos qué falló en palabras sencillas para que podamos solucionarlo rápidamente.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  ¿En qué parte del sistema ocurrió?
+                </label>
+                <select
+                  value={formBug.modulo}
+                  onChange={(e) => setFormBug({ ...formBug, modulo: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:ring-2 focus:ring-red-500 focus:outline-hidden"
+                >
+                  <option value="General">General / No estoy seguro</option>
+                  <option value="Inventario">Inventario / Stock</option>
+                  <option value="Productos">Productos</option>
+                  <option value="Pedidos">Pedidos</option>
+                  <option value="Facturación">Facturación / Boletas</option>
+                  <option value="Clientes">Clientes</option>
+                  <option value="Ubicaciones">Ubicaciones y Sedes</option>
+                  <option value="Calidad">Calidad y Sanidad</option>
+                  <option value="Reuniones">Reuniones</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  ¿Qué estabas intentando hacer? <span className="text-slate-400 font-normal">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Quise guardar un pedido nuevo o cambiar un precio"
+                  value={formBug.queHacia}
+                  onChange={(e) => setFormBug({ ...formBug, queHacia: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:ring-2 focus:ring-red-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  ¿Qué problema o error pasó? <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="Ej: Salió un mensaje de error, o el botón no hizo nada al presionarlo..."
+                  value={formBug.descripcion}
+                  onChange={(e) => setFormBug({ ...formBug, descripcion: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:ring-2 focus:ring-red-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalBug(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={enviandoBug}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 shadow-md shadow-red-600/20 disabled:opacity-50 cursor-pointer"
+                >
+                  {enviandoBug ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <span>Enviar reporte</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

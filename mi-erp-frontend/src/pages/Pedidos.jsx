@@ -3,8 +3,9 @@ import toast from 'react-hot-toast';
 import api from '../api';
 import { 
   ShoppingCart, Calendar, CheckCircle, FileText, Plus, ArrowLeft, 
-  Trash2, XCircle, User, Filter, Tag, ShieldCheck, PackageCheck, Truck, Clock 
+  Trash2, XCircle, User, Filter, Tag, ShieldCheck, PackageCheck, Truck, Clock, Info 
 } from 'lucide-react';
+import Despacho from './Despacho';
 
 export default function Pedidos({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -14,13 +15,15 @@ export default function Pedidos({ usuario }) {
   const [cancelando, setCancelando] = useState(null);
   const [procesandoDespacho, setProcesandoDespacho] = useState(null);
 
+  const [pestanaModulo, setPestanaModulo] = useState('pedidos'); // 'pedidos', 'despacho'
   const [vista, setVista] = useState('lista');
   const [filtro, setFiltro] = useState('todos'); // 'todos', 'semana', 'listos'
   
   const [productosDisponibles, setProductosDisponibles] = useState([]);
   const [clientesDisponibles, setClientesDisponibles] = useState([]);
   const [clienteSeleccionado, setClienteSeleccionado] = useState('');
-  const [fechaLimite, setFechaLimite] = useState('');
+  const [fechaDespacho, setFechaDespacho] = useState('');
+  const [horaDespacho, setHoraDespacho] = useState('10:00');
   const [items, setItems] = useState([]);
   const [productoSeleccionado, setProductoSeleccionado] = useState('');
   const [cantidad, setCantidad] = useState(1);
@@ -103,11 +106,13 @@ export default function Pedidos({ usuario }) {
 
     setGuardandoPedido(true);
     try {
+      const fechaLimiteCompleta = fechaDespacho ? `${fechaDespacho}T${horaDespacho || '10:00'}:00` : null;
+
       await api.post('/pedidos', {
         id_cliente: Number(clienteSeleccionado),
         id_ubicacion: usuario?.id_ubicacion || 1, 
         id_usuario: usuario?.id_usuario, 
-        fecha_limite_despacho: fechaLimite,
+        fecha_limite_despacho: fechaLimiteCompleta,
         items: items,
         solicitado_por: solicitadoPor || null,
         etiquetado: Boolean(etiquetado),
@@ -115,7 +120,8 @@ export default function Pedidos({ usuario }) {
       });
       toast.success('¡Pedido creado y stock reservado con éxito!');
       setItems([]);
-      setFechaLimite('');
+      setFechaDespacho('');
+      setHoraDespacho('10:00');
       setSolicitadoPor('');
       setEtiquetado(false);
       setSelladoVacio(false);
@@ -259,8 +265,39 @@ export default function Pedidos({ usuario }) {
   return (
     <div className="space-y-6">
       
-      {/* CABECERA */}
-      <div className="flex items-center justify-between">
+      {/* SELECTOR DE SUB-PESTAÑAS DENTRO DE PEDIDOS */}
+      <div className="flex space-x-2 bg-slate-100 p-1 rounded-xl w-max">
+        <button
+          onClick={() => setPestanaModulo('pedidos')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            pestanaModulo === 'pedidos' 
+              ? 'bg-white text-indigo-600 shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <ShoppingCart size={15} />
+          <span>Gestión de Pedidos</span>
+        </button>
+
+        <button
+          onClick={() => setPestanaModulo('despacho')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            pestanaModulo === 'despacho' 
+              ? 'bg-white text-amber-600 shadow-xs' 
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Truck size={15} />
+          <span>Listos para Despacho</span>
+        </button>
+      </div>
+
+      {pestanaModulo === 'despacho' ? (
+        <Despacho usuario={usuario} />
+      ) : (
+        <>
+          {/* CABECERA */}
+          <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl">
             <ShoppingCart size={24} />
@@ -317,21 +354,46 @@ export default function Pedidos({ usuario }) {
               </select>
             </div>
 
-            {/* Fecha y Hora límite de despacho */}
+            {/* Fecha de Entrega */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                Fecha y Hora de Despacho *
+                Fecha de Entrega al Cliente *
               </label>
               <input 
-                type="datetime-local" 
+                type="date" 
                 required 
-                value={fechaLimite}
-                onChange={(e) => setFechaLimite(e.target.value)}
-                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500 font-mono" 
+                value={fechaDespacho}
+                onChange={(e) => setFechaDespacho(e.target.value)}
+                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500 font-medium" 
               />
-              <span className="text-[11px] text-slate-400 mt-1 block">
-                Hora de entrega pactada (Producción ve 1h previa).
-              </span>
+            </div>
+
+            {/* Hora de Entrega */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                Hora de Entrega al Cliente *
+              </label>
+              <input 
+                type="time" 
+                required 
+                value={horaDespacho}
+                onChange={(e) => setHoraDespacho(e.target.value)}
+                className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500 font-mono font-bold" 
+              />
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {['08:00', '09:00', '10:00', '11:00', '12:00', '14:00', '16:00', '18:00'].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => setHoraDespacho(h)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                      horaDespacho === h ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Solicitado por */}
@@ -344,6 +406,14 @@ export default function Pedidos({ usuario }) {
                 onChange={(e) => setSolicitadoPor(e.target.value)}
                 className="w-full p-3 bg-white border border-slate-300 rounded-xl text-slate-700 text-sm focus:outline-none focus:border-indigo-500" 
               />
+            </div>
+
+            {/* Banner aclaratorio de la hora */}
+            <div className="md:col-span-3 bg-blue-50/70 border border-blue-200 p-3.5 rounded-xl flex items-start space-x-2 text-xs text-blue-900">
+              <Info size={16} className="text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Coordinación de horario:</span> Al pactar la entrega a las <b className="font-mono">{horaDespacho || '10:00'}</b> con el cliente, el personal de producción lo visualizará automáticamente programado para las <b className="font-mono">{(() => { const [h, m] = (horaDespacho || '10:00').split(':').map(Number); const hPlanta = (h - 1 + 24) % 24; return `${String(hPlanta).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}`; })()}</b> para contar con 1 hora de margen de preparación en planta.
+              </div>
             </div>
 
           </div>
@@ -583,14 +653,9 @@ export default function Pedidos({ usuario }) {
                               <span>{fechaStr}</span>
                             </div>
                             {horaStr ? (
-                              <div className="flex items-center space-x-1.5 mt-1 font-semibold text-xs">
-                                <Clock size={12} className={prod ? "text-amber-600" : "text-blue-600"} />
-                                <span className={prod ? "text-amber-700 font-mono" : "text-blue-700 font-mono"}>{horaStr}</span>
-                                <span className={`text-[9px] px-1.5 py-0.2 rounded font-medium ${
-                                  prod ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-100 text-blue-800 border border-blue-200"
-                                }`}>
-                                  {prod ? "Planta (-1h)" : "Hora Real"}
-                                </span>
+                              <div className="flex items-center space-x-1.5 mt-1 font-semibold text-xs text-slate-800">
+                                <Clock size={12} className="text-slate-400" />
+                                <span className="font-mono">{horaStr}</span>
                               </div>
                             ) : null}
                           </div>
@@ -694,6 +759,8 @@ export default function Pedidos({ usuario }) {
             )}
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

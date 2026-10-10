@@ -378,30 +378,42 @@ const facturaController = {
 
     obtenerGraficosFacturacion: async (req, res) => {
         try {
-            const [queryDias, queryMeses, queryTrimestres, queryAnios] = await Promise.all([
+            const anioActual = new Date().getFullYear();
+
+            const [querySemanaActual, queryMesActual, queryTrimestres, queryAnios] = await Promise.all([
+                // 1. SEMANAL: Los 7 días de ESTA semana (Lunes a Domingo)
                 pool.query(`
                     SELECT 
                         to_char(c.fecha_emision, 'YYYY-MM-DD') AS fecha,
-                        to_char(c.fecha_emision, 'Dy') AS dia_semana,
+                        EXTRACT(ISODOW FROM c.fecha_emision)::int AS dia_iso,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
                     WHERE c.estado_sunat != 'ANULADO'
-                    GROUP BY fecha, dia_semana
-                    ORDER BY fecha DESC
-                    LIMIT 7;
+                      AND c.fecha_emision >= date_trunc('week', CURRENT_DATE)
+                      AND c.fecha_emision < date_trunc('week', CURRENT_DATE) + INTERVAL '7 days'
+                    GROUP BY fecha, dia_iso;
                 `),
+                // 2. MENSUAL: Las semanas de ESTE mes actual (Semana 1 a Semana 5)
                 pool.query(`
                     SELECT 
-                        EXTRACT(MONTH FROM c.fecha_emision)::int AS mes_num,
-                        EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
+                        CASE 
+                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 1 AND 7 THEN 1
+                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 8 AND 14 THEN 2
+                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 15 AND 21 THEN 3
+                            WHEN EXTRACT(DAY FROM c.fecha_emision) BETWEEN 22 AND 28 THEN 4
+                            ELSE 5
+                        END AS num_semana,
                         COALESCE(SUM(c.monto_total), 0) AS total,
                         COUNT(c.id_comprobante)::int AS cantidad
                     FROM comprobantes c
                     WHERE c.estado_sunat != 'ANULADO'
-                    GROUP BY mes_num, anio
-                    ORDER BY anio ASC, mes_num ASC;
+                      AND c.fecha_emision >= date_trunc('month', CURRENT_DATE)
+                      AND c.fecha_emision < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+                    GROUP BY num_semana
+                    ORDER BY num_semana ASC;
                 `),
+                // 3. TRIMESTRAL: Trimestres del año
                 pool.query(`
                     SELECT 
                         EXTRACT(QUARTER FROM c.fecha_emision)::int AS q_num,
@@ -413,6 +425,7 @@ const facturaController = {
                     GROUP BY q_num, anio
                     ORDER BY anio ASC, q_num ASC;
                 `),
+                // 4. ANUAL: Por años
                 pool.query(`
                     SELECT 
                         EXTRACT(YEAR FROM c.fecha_emision)::int AS anio,
@@ -425,33 +438,44 @@ const facturaController = {
                 `)
             ]);
 
-            const diasNombres = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-            let semanal = diasNombres.map((dia) => {
-                const match = queryDias.rows.find(r => r.dia_semana && r.dia_semana.toLowerCase().startsWith(dia.toLowerCase().slice(0, 2)));
+            // Generar los 7 días de ESTA semana (Lunes a Domingo)
+            const hoy = new Date();
+            const diaSemanaHoy = hoy.getDay() === 0 ? 7 : hoy.getDay(); // 1=Lun, 7=Dom
+            const lunesSemana = new Date(hoy);
+            lunesSemana.setDate(hoy.getDate() - diaSemanaHoy + 1);
+
+            const nombresDias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+            const semanal = nombresDias.map((nombreDia, idx) => {
+                const diaIso = idx + 1;
+                const d = new Date(lunesSemana);
+                d.setDate(lunesSemana.getDate() + idx);
+                const diaNum = String(d.getDate()).padStart(2, '0');
+                const mesNum = String(d.getMonth() + 1).padStart(2, '0');
+                const fechaCorta = `${diaNum}/${mesNum}`;
+
+                const match = querySemanaActual.rows.find(r => r.dia_iso === diaIso);
                 return {
-                    etiqueta: dia,
+                    etiqueta: `${nombreDia.slice(0, 3)} ${diaNum}`,
+                    nombreCompleto: `${nombreDia} ${fechaCorta}`,
                     total: match ? parseFloat(match.total) : 0,
                     cantidad: match ? match.cantidad : 0
                 };
             });
 
-            if (semanal.every(s => s.total === 0) && queryDias.rows.length > 0) {
-                semanal = queryDias.rows.map(r => ({
-                    etiqueta: r.fecha.slice(5),
-                    total: parseFloat(r.total),
-                    cantidad: r.cantidad
-                }));
-            }
+            // Generar semanas de ESTE mes
+            const semanasDef = [
+                { num: 1, label: 'Semana 1 (Días 1-7)' },
+                { num: 2, label: 'Semana 2 (Días 8-14)' },
+                { num: 3, label: 'Semana 3 (Días 15-21)' },
+                { num: 4, label: 'Semana 4 (Días 22-28)' },
+                { num: 5, label: 'Semana 5 (Días 29-Fin)' }
+            ];
 
-            const mesesNombres = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Set', 'Oct', 'Nov', 'Dic'];
-            const anioActual = new Date().getFullYear();
-            const mensual = mesesNombres.map((nombre, idx) => {
-                const mesNum = idx + 1;
-                const match = queryMeses.rows.find(r => r.mes_num === mesNum && r.anio === anioActual) 
-                           || queryMeses.rows.find(r => r.mes_num === mesNum);
+            const mensual = semanasDef.map(sem => {
+                const match = queryMesActual.rows.find(r => r.num_semana === sem.num);
                 return {
-                    mes: nombre,
-                    mesNum,
+                    semana: sem.label,
+                    numSemana: sem.num,
                     total: match ? parseFloat(match.total) : 0,
                     cantidad: match ? match.cantidad : 0
                 };
