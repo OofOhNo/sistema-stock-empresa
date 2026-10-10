@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 /**
  * Runner de migraciones SQL numeradas (carpeta /migrations).
+ * Compatible con Supabase, Docker, PostgreSQL local y proveedores Cloud.
  *
  * Uso:
  *   npm run migrate                      -> aplica las migraciones pendientes usando DATABASE_URL
  *   npm run migrate -- --status          -> muestra qué migraciones están aplicadas / pendientes
  *   npm run migrate -- --dry-run         -> ejecuta las pendientes dentro de UNA transacción y hace ROLLBACK
- *   npm run migrate -- --url "<conexion>" -> usa otra base (por ejemplo una rama de Neon para probar)
- *
- * Cada archivo se aplica en su propia transacción y queda registrado en schema_migrations
- * con un checksum. Si alguien edita una migración ya aplicada, el runner se niega a seguir.
+ *   npm run migrate -- --repair          -> sincroniza checksums si cambiaron saltos de línea entre sistemas
+ *   npm run migrate -- --url "<conexion>" -> usa otra base (por ejemplo Supabase staging o rama de prueba)
  */
 const fs = require('fs');
 const path = require('path');
@@ -28,13 +27,20 @@ const DIR = path.join(__dirname, '..', 'migrations');
 const url = valor('--url') || process.env.DATABASE_URL;
 const soloEstado = flag('--status');
 const dryRun = flag('--dry-run');
+const repairChecksums = flag('--repair') || flag('--repair-checksums');
 
 if (!url) {
     console.error('Falta la cadena de conexión: definí DATABASE_URL en .env o pasá --url "<conexion>".');
     process.exit(1);
 }
 
-const LOCK_ID = 727274; // número arbitrario para pg_advisory_lock (evita dos runners a la vez)
+const LOCK_ID = 727274;
+
+function calcularChecksum(sql) {
+    // Normalizar saltos de línea (CRLF a LF) y trim para que sea idéntico en Windows, Linux y Docker
+    const normalizado = sql.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    return crypto.createHash('sha256').update(normalizado).digest('hex');
+}
 
 function leerMigraciones() {
     if (!fs.existsSync(DIR)) {
@@ -49,7 +55,7 @@ function leerMigraciones() {
                 version: archivo.slice(0, 3),
                 archivo,
                 sql,
-                checksum: crypto.createHash('sha256').update(sql).digest('hex'),
+                checksum: calcularChecksum(sql),
             };
         });
 }
@@ -63,13 +69,34 @@ function destino(u) {
     }
 }
 
+function getSslConfig(connectionUrl) {
+    if (!connectionUrl) return false;
+    const lower = connectionUrl.toLowerCase();
+    if (lower.includes('sslmode=disable') || lower.includes('localhost') || lower.includes('127.0.0.1')) {
+        return false;
+    }
+    return {
+        rejectUnauthorized: process.env.DATABASE_SSL_STRICT === 'true'
+    };
+}
+
 (async () => {
-    const client = new Client({ connectionString: url, ssl: { rejectUnauthorized: true } });
+    const client = new Client({
+        connectionString: url,
+        ssl: getSslConfig(url)
+    });
     await client.connect();
     console.log(`Base de datos: ${destino(url)}${dryRun ? '  [DRY-RUN: no se guarda nada]' : ''}`);
 
+    let lockAdquirido = false;
     try {
-        await client.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
+        try {
+            await client.query('SELECT pg_advisory_lock($1)', [LOCK_ID]);
+            lockAdquirido = true;
+        } catch {
+            console.log('ℹ Conexión sin soporte de pg_advisory_lock (modo pooler). Ejecutando con transacciones individuales.');
+        }
+
         await client.query(`
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version     VARCHAR(3) PRIMARY KEY,
@@ -82,11 +109,16 @@ function destino(u) {
         const aplicadas = new Map(rows.map((r) => [r.version, r]));
         const migraciones = leerMigraciones();
 
-        // Integridad: una migración aplicada no puede cambiar
+        // Integridad: verificar que el checksum coincida
         for (const m of migraciones) {
             const a = aplicadas.get(m.version);
             if (a && a.checksum !== m.checksum) {
-                throw new Error(`La migración ${m.archivo} ya fue aplicada y su contenido cambió. Creá una migración nueva en vez de editarla.`);
+                if (repairChecksums) {
+                    await client.query('UPDATE schema_migrations SET checksum = $1 WHERE version = $2', [m.checksum, m.version]);
+                    console.log(`✔ Checksum sincronizado para ${m.archivo}`);
+                } else {
+                    throw new Error(`La migración ${m.archivo} ya fue aplicada y su checksum difiere. Ejecutá con --repair si se debió a cambios de saltos de línea (CRLF/LF).`);
+                }
             }
         }
 
@@ -115,8 +147,8 @@ function destino(u) {
                 }
             } finally {
                 await client.query('ROLLBACK');
+                console.log('DRY-RUN finalizado: se ejecutó ROLLBACK. Base intacta.');
             }
-            console.log('DRY-RUN completo: todas las migraciones corrieron sin error y se revirtieron.');
             return;
         }
 
@@ -139,11 +171,12 @@ function destino(u) {
         }
         console.log(`Listo: ${pendientes.length} migración(es) aplicada(s).`);
     } finally {
-        await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
+        if (lockAdquirido) {
+            await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
+        }
         await client.end();
     }
 })().catch((err) => {
     console.error('Fallo en migraciones:', err.message);
     process.exit(1);
 });
-

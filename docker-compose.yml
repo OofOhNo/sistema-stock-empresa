@@ -1,0 +1,79 @@
+# ==============================================================================
+# DOCKER COMPOSE - SISTEMA ERP STOCK & GESTIÓN
+# ==============================================================================
+# Uso estándar (Conectado a Supabase):
+#   1. Configurá tu DATABASE_URL de Supabase en mi-erp-backend/.env
+#   2. Ejecutá: docker compose up --build
+#
+# Uso offline opcional (con PostgreSQL local en Docker):
+#   docker compose --profile local-db up --build
+# ==============================================================================
+
+services:
+  # Servidor Backend (Node.js + Express + Migraciones automáticas)
+  backend:
+    build:
+      context: ./mi-erp-backend
+      dockerfile: Dockerfile
+    container_name: erp-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./mi-erp-backend/.env
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    networks:
+      - erp-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Servidor Frontend (React Vite compilado + Nginx con proxy inverso)
+  frontend:
+    build:
+      context: ./mi-erp-frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+    container_name: erp-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"       # http://localhost
+      - "5173:80"     # http://localhost:5173 (puerto habitual de desarrollo Vite)
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - erp-network
+
+  # (Opcional) Base de datos PostgreSQL local para pruebas offline
+  # Solo se levanta si ejecutas: docker compose --profile local-db up
+  postgres-local:
+    image: postgres:16-alpine
+    container_name: erp-postgres-local
+    profiles:
+      - local-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sistema_stock
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - erp-network
+
+networks:
+  erp-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+

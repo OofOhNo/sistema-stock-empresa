@@ -51,6 +51,10 @@ app.use('/api/productos', productoRoutes);
 const ubicacionRoutes = require('./src/routes/ubicacionRoutes.js');
 app.use('/api/ubicaciones', ubicacionRoutes);
 
+//rutas auditoria
+const auditoriaRoutes = require('./src/routes/auditoriaRoutes.js');
+app.use('/api/auditoria', auditoriaRoutes);
+
 //configurar el puerto y encender el servidor
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
