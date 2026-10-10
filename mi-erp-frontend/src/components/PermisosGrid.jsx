@@ -14,7 +14,7 @@ export default function PermisosGrid() {
     setCargando(true);
     try {
       const res = await api.get('/usuarios/permisos');
-      setPermisos(res.data.datos || []);
+      setPermisos(res.data.datos || res.data.permisos || []);
     } catch (err) {
       toast.error('Error al cargar permisos.');
     } finally {
@@ -22,10 +22,11 @@ export default function PermisosGrid() {
     }
   };
 
-  const togglePermiso = async (idRolPermiso, campo, valorActual) => {
+  const togglePermiso = async (rolId, modulo, campo, valorActual) => {
     try {
       await api.put('/usuarios/permisos', {
-        id: idRolPermiso,
+        rol_id: rolId,
+        modulo: modulo,
         [campo]: !valorActual
       });
       toast.success('Permiso actualizado.');
@@ -62,15 +63,28 @@ export default function PermisosGrid() {
               {roles.map(rol => {
                 const p = permisos.find(x => x.nombre_rol === rol && x.modulo === modulo);
                 if (!p) return <td key={rol} className="p-3 text-center text-slate-300">-</td>;
+                const esAdmin = rol === 'Admin Central';
                 return (
                   <td key={rol} className="p-3 text-center">
                     <div className="flex flex-col items-center space-y-2">
-                      <label className="flex items-center space-x-2 text-xs">
-                        <input type="checkbox" checked={p.puede_ver} onChange={() => togglePermiso(p.id_rol_permiso, 'puede_ver', p.puede_ver)} disabled={rol==='Admin Central'} />
+                      <label className="flex items-center space-x-2 text-xs cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={p.puede_ver} 
+                          onChange={() => togglePermiso(p.rol_id, p.modulo, 'puede_ver', p.puede_ver)} 
+                          disabled={esAdmin} 
+                          className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                        />
                         <span>Ver</span>
                       </label>
-                      <label className="flex items-center space-x-2 text-xs">
-                        <input type="checkbox" checked={p.puede_editar} onChange={() => togglePermiso(p.id_rol_permiso, 'puede_editar', p.puede_editar)} disabled={rol==='Admin Central'} />
+                      <label className="flex items-center space-x-2 text-xs cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={p.puede_editar} 
+                          onChange={() => togglePermiso(p.rol_id, p.modulo, 'puede_editar', p.puede_editar)} 
+                          disabled={esAdmin} 
+                          className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                        />
                         <span>Editar</span>
                       </label>
                     </div>
@@ -84,4 +98,3 @@ export default function PermisosGrid() {
     </div>
   );
 }
-

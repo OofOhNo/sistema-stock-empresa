@@ -37,7 +37,7 @@ const facturaController = {
             //obtener los datos completos del pedido y sus items
             const queryPedido = `
                 SELECT 
-                    p.id_pedido, p.monto_total, p.id_ubicacion,
+                    p.id_pedido, p.id_usuario, p.monto_total, p.id_ubicacion,
                     c.tipo_documento, c.numero_documento, c.razon_social_o_nombre, c.direccion, c.email
                 FROM pedidos p
                 JOIN clientes c ON p.id_cliente = c.id_cliente
@@ -48,7 +48,7 @@ const facturaController = {
 
             const queryDetalle = `
                 SELECT 
-                    pr.sku, pr.nombre AS descripcion, dp.cantidad, dp.precio_unitario, dp.subtotal
+                    dp.id_producto, pr.sku, pr.nombre AS descripcion, dp.cantidad, dp.precio_unitario, dp.subtotal
                 FROM detalle_pedidos dp
                 JOIN productos pr ON dp.id_producto = pr.id_producto
                 WHERE dp.id_pedido = $1;
@@ -155,16 +155,49 @@ const facturaController = {
                 respuestaSunat.mensaje_cdr
             ]);
 
-            //CAMBIAR EL ESTADO DEL PEDIDO A FACTURADO PERMANENTEMENTE
+            // CAMBIAR EL ESTADO DEL PEDIDO A FACTURADO PERMANENTEMENTE
             await client.query(`
                 UPDATE pedidos 
                 SET estado_pedido = 'FACTURADO' 
                 WHERE id_pedido = $1;
             `, [id_pedido]);
 
-            await registrarAuditoria(client, req.usuario?.id_usuario || null, 'EMITIR_COMPROBANTE', 'comprobantes', resComprobante.rows[0].id_comprobante, null, resComprobante.rows[0]);
+            // REGLA DE NEGOCIO ETAPA 4: Facturar genera salida física en Kardex y libera la reserva de inventario
+            for (const item of items) {
+                // 1. Huella en Kardex como SALIDA
+                const queryKardex = `
+                    INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                    VALUES ($1, $2, $3, 'SALIDA', $4, $5);
+                `;
+                await client.query(queryKardex, [
+                    item.id_producto,
+                    pedido.id_ubicacion,
+                    req.usuario?.id_usuario || pedido.id_usuario,
+                    item.cantidad,
+                    `Venta Facturada: ${serie}-${correlativo} (Pedido #${id_pedido})`
+                ]);
 
-            await client.query('COMMIT'); //todo ok, guardamos cambios
+                // 2. Descontar stock físico y liberar stock reservado
+                await client.query(`
+                    UPDATE inventario 
+                    SET cantidad_fisica = cantidad_fisica - $1,
+                        cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
+                        ultima_actualizacion = CURRENT_TIMESTAMP
+                    WHERE id_producto = $2 AND id_ubicacion = $3;
+                `, [item.cantidad, item.id_producto, pedido.id_ubicacion]);
+            }
+
+            await registrarAuditoria(
+                client, 
+                req.usuario?.id_usuario || null, 
+                'EMITIR_COMPROBANTE', 
+                'comprobantes', 
+                resComprobante.rows[0].id_comprobante, 
+                null, 
+                resComprobante.rows[0]
+            );
+
+            await client.query('COMMIT');
 
             res.status(201).json({
                 exito: true,
@@ -295,6 +328,28 @@ const facturaController = {
             res.status(500).json({ exito: false, mensaje: 'Error al anular comprobante', error: error.message });
         } finally {
             client.release();
+        }
+    },
+
+    listarComprobantes: async (req, res) => {
+        try {
+            const query = `
+                SELECT 
+                    c.*, 
+                    p.id_ubicacion, 
+                    u.nombre AS nombre_ubicacion, 
+                    cl.razon_social_o_nombre AS nombre_cliente
+                FROM comprobantes c
+                LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
+                LEFT JOIN ubicaciones u ON p.id_ubicacion = u.id_ubicacion
+                LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                ORDER BY c.id_comprobante DESC;
+            `;
+            const { rows } = await pool.query(query);
+            res.json({ exito: true, comprobantes: rows });
+        } catch (error) {
+            console.error('Error al listar comprobantes:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al listar comprobantes', error: error.message });
         }
     }
 

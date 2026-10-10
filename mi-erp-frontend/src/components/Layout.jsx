@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Package, ShoppingCart, FileText, Calendar, LogOut, Users } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, FileText, Calendar, LogOut, Users, MapPin } from 'lucide-react';
 
 export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaActual, children }) {
   
@@ -11,7 +11,10 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} /> },
     { id: 'facturacion', nombre: 'Facturación', icono: <FileText size={20} /> },
     ...(usuario.rol === 'Administrador' || usuario.rol === 'Admin Central' 
-      ? [{ id: 'usuarios', nombre: 'Personal', icono: <Users size={20} /> }] 
+      ? [
+          { id: 'usuarios', nombre: 'Personal', icono: <Users size={20} /> },
+          { id: 'ubicaciones', nombre: 'Ubicaciones', icono: <MapPin size={20} /> }
+        ] 
       : []
   )
   ];

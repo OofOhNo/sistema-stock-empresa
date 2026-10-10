@@ -4,27 +4,22 @@ const stockController = {
 
     verInventario: async (req, res) => {
         try {
-            //el middleware de autenticacion guardo los datos del usuario en req.usuario
             const { nombre_rol, id_ubicacion } = req.usuario;
 
             let inventario;
 
-            //si es Admin Central, puede ver el consolidado global o filtrar
             if (nombre_rol === 'Admin Central') {
-                //si el jefe pasa un ?ubicacion=X en la URL, filtramos por esa ubicacion, sino global
-                const ubicacionQuery = req.query.ubicacion;
-                
+                const ubicacionQuery = req.query.ubicacion || req.query.id_ubicacion;
                 if (ubicacionQuery) {
                     inventario = await Stock.obtenerStockPorUbicacion(ubicacionQuery);
                 } else {
                     inventario = await Stock.obtenerStockGlobal();
                 }
             } else {
-                //si es un empleado o jefe de division, SOLO puede ver el stock de su propia ubicacion asignada
                 if (!id_ubicacion) {
                     return res.status(403).json({ 
                         exito: false, 
-                        mensaje: 'No tienes una ubicacion asignada para ver el inventario.' 
+                        mensaje: 'No tienes una ubicación asignada para ver el inventario.' 
                     });
                 }
                 inventario = await Stock.obtenerStockPorUbicacion(id_ubicacion);
@@ -41,6 +36,31 @@ const stockController = {
             res.status(500).json({
                 exito: false,
                 mensaje: 'Error al obtener el inventario',
+                error: error.message
+            });
+        }
+    },
+
+    // REGLA DE NEGOCIO ETAPA 4: Endpoint de alertas de stock mínimo
+    obtenerAlertas: async (req, res) => {
+        try {
+            const { nombre_rol, id_ubicacion } = req.usuario;
+            const ubicacionFiltro = (nombre_rol === 'Admin Central') 
+                ? (req.query.id_ubicacion || null) 
+                : id_ubicacion;
+
+            const alertas = await Stock.obtenerAlertasStockMinimo(ubicacionFiltro);
+
+            res.status(200).json({
+                exito: true,
+                cantidad: alertas.length,
+                alertas: alertas
+            });
+        } catch (error) {
+            console.error('Error en obtenerAlertas:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'Error al obtener alertas de stock mínimo',
                 error: error.message
             });
         }

@@ -1,42 +1,24 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const kardexController = require('../controllers/kardexController');
 const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
-const pool = require('../config/db');
 
 // --- RUTAS DEL KARDEX ---
 
-// 1. obtener todo el historial de movimientos (Kardex)
-// usamos directamente pool.query aqui para hacerlo rapido (es un GET)
-router.get('/', verificarToken, requierePermiso('stock', 'ver'), async (req, res) => {
-    try {
-        const query = `
-            SELECT 
-                k.id_movimiento, k.tipo_movimiento, k.cantidad, k.motivo, k.fecha_movimiento, k.estado,
-                p.nombre AS nombre_producto, 
-                u.nombre AS usuario_creador,
-                ua.nombre AS usuario_anulador
-            FROM movimientos_kardex k
-            JOIN productos p ON k.id_producto = p.id_producto
-            JOIN usuarios u ON k.id_usuario = u.id_usuario
-            LEFT JOIN usuarios ua ON k.id_usuario_anulador = ua.id_usuario
-            ORDER BY k.fecha_movimiento DESC;
-        `;
-        const { rows } = await pool.query(query);
-        
-        res.status(200).json({ exito: true, movimientos: rows });
-    } catch (error) {
-        console.error("Error al obtener Kardex:", error);
-        res.status(500).json({ exito: false, mensaje: "Error al obtener el historial del Kardex." });
-    }
-});
+// 1. Obtener historial del Kardex (filtrado por ubicación para roles operativos)
+router.get('/', verificarToken, requierePermiso('stock', 'ver'), kardexController.listarMovimientos);
 
-// 2. registrar un nuevo movimiento manual (Ingreso o Salida)
+// 2. Registrar movimiento manual (Ingreso o Salida)
 router.post('/movimiento', verificarToken, requierePermiso('stock', 'editar'), kardexController.registrarMovimiento);
 
-// 3. anular un movimiento existente (pasa por la regla de los 10 minutos)
+// 3. Anular movimiento (directo <= 10 min o pasa a solicitud)
 router.put('/:id_movimiento/anular', verificarToken, requierePermiso('stock', 'editar'), kardexController.anularMovimiento);
 
+// 4. Etapa 4: Aprobar solicitud de anulación (Admin / Gerente)
+router.put('/:id_movimiento/aprobar', verificarToken, requierePermiso('stock', 'editar'), kardexController.aprobarAnulacion);
+
+// 5. Etapa 4: Rechazar solicitud de anulación (Admin / Gerente)
+router.put('/:id_movimiento/rechazar', verificarToken, requierePermiso('stock', 'editar'), kardexController.rechazarAnulacion);
 
 module.exports = router;

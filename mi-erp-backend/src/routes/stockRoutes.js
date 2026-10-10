@@ -2,8 +2,12 @@ const express = require('express');
 const router = express.Router();
 const stockController = require('../controllers/stockController');
 const { verificarToken } = require('../middlewares/authMiddleware');
+const requierePermiso = require('../middlewares/requierePermiso');
 
-//cualquier usuario con token valido puede consultar el inventario  (el controlador ya se encarga de filtrar segun su rol/ubicacion)
-router.get('/', verificarToken, stockController.verInventario);
+// Consultar el inventario (filtrado por rol/ubicación)
+router.get('/', verificarToken, requierePermiso('stock', 'ver'), stockController.verInventario);
+
+// Etapa 4: Alertas de stock mínimo
+router.get('/alertas', verificarToken, requierePermiso('stock', 'ver'), stockController.obtenerAlertas);
 
 module.exports = router;

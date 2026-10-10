@@ -16,14 +16,13 @@ export default function Dashboard({ usuario }) {
 
   const cargarResumen = async () => {
     try {
-      //como esto es un resumen, hacemos 2 llamadas rapidas en paralelo
-      const [resPedidos, resStock] = await Promise.all([
+      const [resPedidos, resAlertas] = await Promise.all([
         api.get('/pedidos/calendario'),
-        api.get('/stock')
+        api.get('/stock/alertas')
       ]);
 
-      const pedidos = resPedidos.data.eventos;
-      const stock = resStock.data.datos;
+      const pedidos = resPedidos.data.eventos || [];
+      const alertas = resAlertas.data.alertas || [];
 
       //calculamos las estadisticas
       const pendientes = pedidos.filter(p => p.estado_pedido === 'PENDIENTE').length;
@@ -32,11 +31,8 @@ export default function Dashboard({ usuario }) {
       const ventasExitosas = pedidos.filter(p => p.estado_pedido === 'FACTURADO' || p.estado_pedido === 'DESPACHADO');
       const montoTotal = ventasExitosas.reduce((acc, p) => acc + parseFloat(p.monto_total), 0);
 
-      //calculamos si hay productos con bajo stock disponible (menos de 5 unidades)
-      const bajoStock = stock.filter(item => {
-        const disponible = item.cantidad_disponible ?? item.total_disponible;
-        return disponible < 5; //consideramos "bajo stock" si hay menos de 5 disponibles
-      }).length;
+      // productos bajo el umbral de stock minimo configurado
+      const bajoStock = alertas.length;
 
       setResumen({
         pedidosPendientes: pendientes,
@@ -119,7 +115,7 @@ export default function Dashboard({ usuario }) {
             </div>
           </div>
           <div className="mt-4 text-sm text-slate-500">
-            Productos con menos de 5 disponibles
+            Productos por debajo de su stock mínimo
           </div>
         </div>
 

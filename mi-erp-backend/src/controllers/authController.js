@@ -30,7 +30,7 @@ const authController = {
                 id_usuario: usuario.id_usuario,
                 email: usuario.email,
                 nombre_rol: usuario.nombre_rol,
-                id_ubicacion: usuario.ubicacion_id
+                id_ubicacion: usuario.id_ubicacion
             };
 
             //firmamos el token, expira en 8 horas
@@ -45,7 +45,7 @@ const authController = {
                     id_usuario: usuario.id_usuario,
                     nombre: usuario.nombre_completo,
                     rol: usuario.nombre_rol,
-                    id_ubicacion: usuario.ubicacion_id
+                    id_ubicacion: usuario.id_ubicacion
                 }
             });
 

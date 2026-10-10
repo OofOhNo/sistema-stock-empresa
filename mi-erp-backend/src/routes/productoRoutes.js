@@ -8,13 +8,14 @@ const {
     deleteProducto 
 } = require('../controllers/productoController');
 const { verificarToken } = require('../middlewares/authMiddleware');
+const requierePermiso = require('../middlewares/requierePermiso');
 
 router.use(verificarToken);
 
-router.get('/', getAllProductos);
-router.get('/:id', getProductoById);
-router.post('/', createProducto);
-router.put('/:id', updateProducto);
-router.delete('/:id', deleteProducto);
+router.get('/', requierePermiso('productos', 'ver'), getAllProductos);
+router.get('/:id', requierePermiso('productos', 'ver'), getProductoById);
+router.post('/', requierePermiso('productos', 'editar'), createProducto);
+router.put('/:id', requierePermiso('productos', 'editar'), updateProducto);
+router.delete('/:id', requierePermiso('productos', 'editar'), deleteProducto);
 
 module.exports = router;

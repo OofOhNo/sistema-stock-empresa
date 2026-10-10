@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Usuarios from './pages/Usuarios';
 import Productos from './pages/Productos';
 import Reuniones from './pages/Reuniones';
+import Ubicaciones from './pages/Ubicaciones';
 import { Toaster } from 'react-hot-toast';
 
 export default function App() {
@@ -45,6 +46,8 @@ export default function App() {
         return <Dashboard usuario={usuario} />; 
       case 'usuarios':
         return <Usuarios usuarioLogueado={usuario} />;
+      case 'ubicaciones':
+        return <Ubicaciones usuario={usuario} />;
       case 'reuniones':
         return <Reuniones usuario={usuario} />;
       default:

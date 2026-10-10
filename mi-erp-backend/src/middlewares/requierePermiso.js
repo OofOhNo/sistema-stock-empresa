@@ -9,33 +9,42 @@ const requierePermiso = (modulo, accion) => {
 
             const nombre_rol = req.usuario.nombre_rol;
 
+            // Admin Central siempre tiene acceso absoluto
+            if (nombre_rol === 'Admin Central') {
+                return next();
+            }
+
             const query = `
                 SELECT rp.puede_ver, rp.puede_editar
                 FROM roles_permisos rp
                 JOIN roles r ON rp.rol_id = r.id_rol
                 JOIN permisos p ON rp.permiso_id = p.id
-                WHERE r.nombre = $1 AND p.modulo = $2
+                WHERE r.nombre = $1 AND p.modulo = $2;
             `;
             
             const { rows } = await pool.query(query, [nombre_rol, modulo]);
 
             if (rows.length === 0) {
-                if (nombre_rol === 'Admin Central') {
-                    return next();
-                }
-                return res.status(403).json({ exito: false, mensaje: `No tienes permisos configurados para el mdulo ${modulo}.` });
+                return res.status(403).json({ 
+                    exito: false, 
+                    mensaje: `Acceso restringido: No tienes permisos configurados para el módulo "${modulo}".` 
+                });
             }
 
             const permisos = rows[0];
 
             if (accion === 'ver' && !permisos.puede_ver) {
-                if (nombre_rol === 'Admin Central') return next();
-                return res.status(403).json({ exito: false, mensaje: `No tienes permiso para ver el mdulo ${modulo}.` });
+                return res.status(403).json({ 
+                    exito: false, 
+                    mensaje: `Acceso restringido: No tienes permiso de lectura en el módulo "${modulo}".` 
+                });
             }
 
             if (accion === 'editar' && !permisos.puede_editar) {
-                if (nombre_rol === 'Admin Central') return next();
-                return res.status(403).json({ exito: false, mensaje: `No tienes permiso para editar en el mdulo ${modulo}.` });
+                return res.status(403).json({ 
+                    exito: false, 
+                    mensaje: `Acceso restringido: No tienes permiso de edición/acción en el módulo "${modulo}".` 
+                });
             }
 
             next();
@@ -47,4 +56,3 @@ const requierePermiso = (modulo, accion) => {
 };
 
 module.exports = requierePermiso;
-

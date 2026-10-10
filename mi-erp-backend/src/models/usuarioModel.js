@@ -1,9 +1,8 @@
 const pool = require('../config/db');
 
-//objeto que contendra todas nuestras funciones para usuarios
 const Usuario = {
     
-    //funcion para obtener todos los usuarios (y traer el nombre de su rol usando un JOIN)
+    // Obtener todos los usuarios con su rol y ubicación
     obtenerTodos: async () => {
         try {
             const query = `
@@ -11,29 +10,39 @@ const Usuario = {
                     u.id_usuario, 
                     u.nombre_completo, 
                     u.email, 
-                    u.ubicacion_id,
+                    u.id_ubicacion,
+                    ub.nombre AS nombre_ubicacion,
                     u.rol_id,
-                    r.nombre AS nombre_rol, -- Usamos 'AS' para que en el JSON salga bonito
+                    r.nombre AS nombre_rol,
+                    u.activo,
                     u.creado_en
                 FROM usuarios u
-                LEFT JOIN roles r ON u.rol_id = r.id_rol; -- ¡AQUÍ ESTABA EL ERROR CORREGIDO!
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                ORDER BY u.id_usuario ASC;
             `;
-            //ejecutamos la consulta en la base de datos
             const resultado = await pool.query(query);
-            
-            //retornamos las filas encontradas
             return resultado.rows; 
         } catch (error) {
-            //si la base de datos falla, lanzamos el error hacia arriba (al controlador)
             throw error;
         }
     },
 
     cambiarRol: async (id_usuario, nuevo_rol) => {
         try {
-            const query = "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2";
-            await pool.query(query, [nuevo_rol, id_usuario]);
-            return true;
+            let rolId = Number(nuevo_rol);
+            if (isNaN(rolId)) {
+                const resRol = await pool.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nuevo_rol]);
+                if (resRol.rows.length === 0) throw new Error('El rol especificado no existe.');
+                rolId = resRol.rows[0].id_rol;
+            } else {
+                const resCheck = await pool.query('SELECT id_rol FROM roles WHERE id_rol = $1', [rolId]);
+                if (resCheck.rows.length === 0) throw new Error('El ID de rol no existe.');
+            }
+
+            const query = "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2 RETURNING *";
+            const res = await pool.query(query, [rolId, id_usuario]);
+            return res.rows[0];
         } catch (error) {
             throw error;
         }
@@ -44,15 +53,14 @@ const Usuario = {
             const query = `
                 SELECT 
                     u.*, 
-                    r.nombre AS nombre_rol 
+                    r.nombre AS nombre_rol,
+                    ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
                 WHERE u.email = $1;
             `;
-            //el $1 se reemplaza de forma segura por el email que pasamos
             const resultado = await pool.query(query, [email]);
-            
-            //retornamos el primer usuario que coincida (o undefined si no existe)
             return resultado.rows[0]; 
         } catch (error) {
             throw error;
@@ -62,4 +70,3 @@ const Usuario = {
 };
 
 module.exports = Usuario;
-
