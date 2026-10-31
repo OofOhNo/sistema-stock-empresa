@@ -11,17 +11,26 @@ CREATE TABLE IF NOT EXISTS divisiones (
 CREATE TABLE IF NOT EXISTS ubicaciones (
     id_ubicacion SERIAL PRIMARY KEY,
     id_division INTEGER REFERENCES divisiones(id_division) ON DELETE RESTRICT,
-    nombre VARCHAR(100) NOT NULL
+    nombre VARCHAR(100) NOT NULL,
+    tipo VARCHAR(50) DEFAULT 'Sede',
+    activo BOOLEAN DEFAULT TRUE,
+    id_gerente INTEGER,
+    telefono_contacto VARCHAR(50),
+    direccion_completa TEXT
 );
 
 -- 2. ROLES Y PERMISOS
+CREATE SEQUENCE IF NOT EXISTS roles_id_seq;
+
 CREATE TABLE IF NOT EXISTS roles (
-    id_rol SERIAL PRIMARY KEY,
+    id_rol INTEGER PRIMARY KEY DEFAULT nextval('roles_id_seq'),
     nombre VARCHAR(50) NOT NULL UNIQUE,
     descripcion TEXT,
     puede_ver_otras_ubicaciones BOOLEAN DEFAULT FALSE,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER SEQUENCE roles_id_seq OWNED BY roles.id_rol;
 
 CREATE TABLE IF NOT EXISTS permisos (
     id SERIAL PRIMARY KEY,
@@ -38,7 +47,7 @@ CREATE TABLE IF NOT EXISTS roles_permisos (
     PRIMARY KEY (rol_id, permiso_id)
 );
 
--- 3. USUARIOS
+-- 3. USUARIOS Y RECUPERACIÓN DE CONTRASEÑA
 CREATE TABLE IF NOT EXISTS usuarios (
     id_usuario SERIAL PRIMARY KEY,
     nombre_completo VARCHAR(150) NOT NULL,
@@ -51,6 +60,20 @@ CREATE TABLE IF NOT EXISTS usuarios (
     activo BOOLEAN DEFAULT true,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS solicitudes_recuperacion_password (
+    id_solicitud SERIAL PRIMARY KEY,
+    id_usuario INTEGER REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    identificador_ingresado VARCHAR(255) NOT NULL,
+    mensaje VARCHAR(300),
+    estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE', 'ATENDIDA', 'DESCARTADA')),
+    atendido_por INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    atendido_en TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_sol_recup_estado ON solicitudes_recuperacion_password(estado);
+CREATE INDEX IF NOT EXISTS idx_sol_recup_usuario ON solicitudes_recuperacion_password(id_usuario);
 
 -- 4. CATEGORÍAS Y PRODUCTOS
 CREATE TABLE IF NOT EXISTS categorias (
@@ -132,6 +155,8 @@ CREATE TABLE IF NOT EXISTS pedidos (
     monto_total NUMERIC(10,2) NOT NULL,
     etiquetado BOOLEAN NOT NULL DEFAULT false,
     sellado_vacio BOOLEAN NOT NULL DEFAULT false,
+    stock_descontado BOOLEAN NOT NULL DEFAULT false,
+    despachado_en TIMESTAMP WITH TIME ZONE,
     usuario_creador VARCHAR(100) DEFAULT 'Sistema',
     solicitado_por VARCHAR(100),
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -244,6 +269,8 @@ CREATE TABLE IF NOT EXISTS certificados_calidad (
     tipo_certificado VARCHAR(100) NOT NULL,
     lote_o_producto VARCHAR(150),
     entidad_emisora VARCHAR(150) NOT NULL,
+    empresa_nombre VARCHAR(255) DEFAULT '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]',
+    empresa_ruc VARCHAR(30) DEFAULT '[RUC DE LA EMPRESA]',
     fecha_emision DATE NOT NULL,
     fecha_vencimiento DATE NOT NULL,
     estado VARCHAR(50) NOT NULL DEFAULT 'VIGENTE' CHECK (estado IN ('VIGENTE', 'POR_VENCER', 'VENCIDO', 'SUSPENDIDO')),
@@ -252,8 +279,8 @@ CREATE TABLE IF NOT EXISTS certificados_calidad (
     id_cliente INTEGER REFERENCES clientes(id_cliente) ON DELETE SET NULL,
     cliente_nombre VARCHAR(255),
     cliente_ruc VARCHAR(20),
-    senasa_resolucion VARCHAR(200) DEFAULT 'N° 000111-MINAGRI-SENASA-AREQUIPA',
-    ciudad_emision VARCHAR(100) DEFAULT 'Arequipa',
+    senasa_resolucion VARCHAR(200) DEFAULT 'N° AUTORIZACIÓN SANITARIA / RESOLUCIÓN',
+    ciudad_emision VARCHAR(100) DEFAULT 'Ciudad',
     items_detalle JSONB DEFAULT '[]'::jsonb,
     archivo_url TEXT,
     observaciones TEXT,
@@ -301,7 +328,9 @@ CREATE TABLE IF NOT EXISTS fotos_pedidos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_pedido ON fotos_pedidos(id_pedido);
-CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_expira ON fotos_pedidos(expira_en);-- 14. SISTEMA DE MENSAJERÍA INTERNA ENTRE EMPLEADOS (CON MODO SUPERVISIÓN SILENCIOSA)
+CREATE INDEX IF NOT EXISTS idx_fotos_pedidos_expira ON fotos_pedidos(expira_en);
+
+-- 14. SISTEMA DE MENSAJERÍA INTERNA ENTRE EMPLEADOS (CON MODO SUPERVISIÓN SILENCIOSA)
 CREATE TABLE IF NOT EXISTS mensajes_internos (
     id_mensaje SERIAL PRIMARY KEY,
     id_emisor INTEGER NOT NULL REFERENCES usuarios(id_usuario) ON DELETE CASCADE,

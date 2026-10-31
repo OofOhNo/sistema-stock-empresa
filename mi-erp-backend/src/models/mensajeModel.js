@@ -2,7 +2,6 @@ const pool = require('../config/db');
 
 const Mensaje = {
 
-    // Enviar un mensaje entre empleados
     enviar: async ({ id_emisor, id_receptor, mensaje }) => {
         try {
             const query = `
@@ -13,7 +12,6 @@ const Mensaje = {
             const res = await pool.query(query, [id_emisor, id_receptor, mensaje]);
             const nuevo = res.rows[0];
 
-            // Retornar con datos del emisor
             const qInfo = `
                 SELECT 
                     m.*,
@@ -23,9 +21,9 @@ const Mensaje = {
                     r_rec.nombre AS rol_receptor
                 FROM mensajes_internos m
                 JOIN usuarios u_em ON m.id_emisor = u_em.id_usuario
-                JOIN roles r_em ON u_em.rol_id = r_em.id_rol
+                LEFT JOIN roles r_em ON u_em.rol_id = r_em.id_rol
                 JOIN usuarios u_rec ON m.id_receptor = u_rec.id_usuario
-                JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
+                LEFT JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
                 WHERE m.id_mensaje = $1;
             `;
             const resInfo = await pool.query(qInfo, [nuevo.id_mensaje]);
@@ -35,7 +33,6 @@ const Mensaje = {
         }
     },
 
-    // Obtener historial de chat entre 2 empleados
     obtenerHistorial: async (id_usuario_1, id_usuario_2) => {
         try {
             const query = `
@@ -52,9 +49,9 @@ const Mensaje = {
                     r_rec.nombre AS rol_receptor
                 FROM mensajes_internos m
                 JOIN usuarios u_em ON m.id_emisor = u_em.id_usuario
-                JOIN roles r_em ON u_em.rol_id = r_em.id_rol
+                LEFT JOIN roles r_em ON u_em.rol_id = r_em.id_rol
                 JOIN usuarios u_rec ON m.id_receptor = u_rec.id_usuario
-                JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
+                LEFT JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
                 WHERE (m.id_emisor = $1 AND m.id_receptor = $2)
                    OR (m.id_emisor = $2 AND m.id_receptor = $1)
                 ORDER BY m.creado_en ASC;
@@ -66,22 +63,27 @@ const Mensaje = {
         }
     },
 
-    // Marcar mensajes recibidos como leídos por el empleado
     marcarLeidos: async (id_receptor, id_emisor) => {
         try {
-            const query = `
+            await pool.query(`
                 UPDATE mensajes_internos
                 SET leido = true
                 WHERE id_receptor = $1 AND id_emisor = $2 AND leido = false;
-            `;
-            await pool.query(query, [id_receptor, id_emisor]);
+            `, [id_receptor, id_emisor]);
             return true;
         } catch (error) {
             throw error;
         }
     },
 
-    // Lista de contactos/colegas con último mensaje y no leídos para un usuario
+    contarNoLeidos: async (id_receptor) => {
+        const { rows } = await pool.query(
+            'SELECT COUNT(*)::int AS total FROM mensajes_internos WHERE id_receptor = $1 AND leido = false',
+            [id_receptor]
+        );
+        return rows[0]?.total || 0;
+    },
+
     obtenerContactos: async (id_usuario_actual) => {
         try {
             const query = `
@@ -97,7 +99,7 @@ const Mensaje = {
                     ult.id_emisor AS ultimo_emisor,
                     COALESCE(nl.no_leidos, 0) AS no_leidos
                 FROM usuarios u
-                JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
                 LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
                 LEFT JOIN LATERAL (
                     SELECT m.mensaje, m.creado_en, m.id_emisor
@@ -114,7 +116,7 @@ const Mensaje = {
                       AND m.id_receptor = $1 
                       AND m.leido = false
                 ) nl ON true
-                WHERE u.activo = true 
+                WHERE COALESCE(u.activo, true) = true 
                   AND u.id_usuario != $1
                 ORDER BY 
                     COALESCE(nl.no_leidos, 0) DESC,
@@ -128,12 +130,6 @@ const Mensaje = {
         }
     },
 
-    // =========================================================================
-    // MODO SUPERVISIÓN SILENCIOSA (JEFATURA / ADMIN CENTRAL)
-    // Permite al jefe auditar todas las conversaciones sin que el empleado lo sepa
-    // =========================================================================
-
-    // Listar todos los pares de empleados que han conversado
     supervisarTodasLasConversaciones: async () => {
         try {
             const query = `
@@ -165,10 +161,10 @@ const Mensaje = {
                     ult.id_emisor AS ultimo_emisor_id
                 FROM pares p
                 JOIN usuarios u1 ON p.u1_id = u1.id_usuario
-                JOIN roles r1 ON u1.rol_id = r1.id_rol
+                LEFT JOIN roles r1 ON u1.rol_id = r1.id_rol
                 LEFT JOIN ubicaciones ub1 ON u1.id_ubicacion = ub1.id_ubicacion
                 JOIN usuarios u2 ON p.u2_id = u2.id_usuario
-                JOIN roles r2 ON u2.rol_id = r2.id_rol
+                LEFT JOIN roles r2 ON u2.rol_id = r2.id_rol
                 LEFT JOIN ubicaciones ub2 ON u2.id_ubicacion = ub2.id_ubicacion
                 LEFT JOIN LATERAL (
                     SELECT m.mensaje, m.id_emisor
@@ -187,7 +183,6 @@ const Mensaje = {
         }
     },
 
-    // Obtener transcripción completa de un par auditado sin alterar flags ni fechas
     supervisarChatPar: async (u1_id, u2_id) => {
         try {
             const query = `
@@ -204,9 +199,9 @@ const Mensaje = {
                     r_rec.nombre AS rol_receptor
                 FROM mensajes_internos m
                 JOIN usuarios u_em ON m.id_emisor = u_em.id_usuario
-                JOIN roles r_em ON u_em.rol_id = r_em.id_rol
+                LEFT JOIN roles r_em ON u_em.rol_id = r_em.id_rol
                 JOIN usuarios u_rec ON m.id_receptor = u_rec.id_usuario
-                JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
+                LEFT JOIN roles r_rec ON u_rec.rol_id = r_rec.id_rol
                 WHERE (m.id_emisor = $1 AND m.id_receptor = $2)
                    OR (m.id_emisor = $2 AND m.id_receptor = $1)
                 ORDER BY m.creado_en ASC;
@@ -221,4 +216,3 @@ const Mensaje = {
 };
 
 module.exports = Mensaje;
-

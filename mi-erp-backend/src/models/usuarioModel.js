@@ -16,7 +16,7 @@ const Usuario = {
                     r.nombre AS nombre_rol,
                     u.puede_ver_celulares,
                     u.area,
-                    u.activo,
+                    COALESCE(u.activo, true) AS activo,
                     u.creado_en,
                     (SELECT COUNT(*) FROM permisos_celulares_clientes pcc WHERE pcc.id_usuario = u.id_usuario)::int AS total_clientes_autorizados
                 FROM usuarios u
@@ -60,13 +60,74 @@ const Usuario = {
                     puede_ver_celulares = COALESCE($1, puede_ver_celulares),
                     area = COALESCE($2, area)
                 WHERE id_usuario = $3 
-                RETURNING *;
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares;
             `;
             const res = await pool.query(query, [puede_ver_celulares, area, id_usuario]);
             return res.rows[0];
         } catch (error) {
             throw error;
         }
+    },
+
+    buscarPorId: async (id_usuario) => {
+        try {
+            const query = `
+                SELECT 
+                    u.*, 
+                    r.nombre AS nombre_rol,
+                    COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
+                    ub.nombre AS nombre_ubicacion
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                WHERE u.id_usuario = $1 AND COALESCE(u.activo, true) = true;
+            `;
+            const resultado = await pool.query(query, [id_usuario]);
+            return resultado.rows[0];
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    buscarPorIdentificador: async (identificador) => {
+        if (!identificador || !String(identificador).trim()) return null;
+        const limpio = String(identificador).trim();
+
+        // 1. Coincidencia exacta por correo
+        const porEmail = await pool.query(`
+            SELECT u.id_usuario, u.nombre_completo, u.email, r.nombre AS nombre_rol, ub.nombre AS nombre_ubicacion
+            FROM usuarios u
+            LEFT JOIN roles r ON u.rol_id = r.id_rol
+            LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+            WHERE LOWER(TRIM(u.email)) = LOWER($1) AND COALESCE(u.activo, true) = true
+            LIMIT 1;
+        `, [limpio]);
+        if (porEmail.rows.length > 0) return porEmail.rows[0];
+
+        // 2. Coincidencia exacta por nombre completo
+        const porNombreExacto = await pool.query(`
+            SELECT u.id_usuario, u.nombre_completo, u.email, r.nombre AS nombre_rol, ub.nombre AS nombre_ubicacion
+            FROM usuarios u
+            LEFT JOIN roles r ON u.rol_id = r.id_rol
+            LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+            WHERE LOWER(TRIM(u.nombre_completo)) = LOWER($1) AND COALESCE(u.activo, true) = true;
+        `, [limpio]);
+        if (porNombreExacto.rows.length === 1) return porNombreExacto.rows[0];
+
+        // 3. Coincidencia parcial única por nombre
+        if (limpio.length >= 3) {
+            const porNombreParcial = await pool.query(`
+                SELECT u.id_usuario, u.nombre_completo, u.email, r.nombre AS nombre_rol, ub.nombre AS nombre_ubicacion
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                WHERE u.nombre_completo ILIKE '%' || $1 || '%' AND COALESCE(u.activo, true) = true
+                LIMIT 2;
+            `, [limpio]);
+            if (porNombreParcial.rows.length === 1) return porNombreParcial.rows[0];
+        }
+
+        return null;
     },
 
     buscarPorEmail: async (email) => {
@@ -100,7 +161,7 @@ const Usuario = {
                     r.creado_en,
                     COUNT(u.id_usuario)::int AS total_usuarios
                 FROM roles r
-                LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND u.activo = true
+                LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND COALESCE(u.activo, true) = true
                 GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.creado_en
                 ORDER BY r.id_rol ASC;
             `;
@@ -133,10 +194,10 @@ const Usuario = {
             );
             const nuevoRol = insertRol.rows[0];
 
-            // Inicializar roles_permisos para todos los permisos existentes (por defecto en false)
+            // Inicializar roles_permisos para todos los permisos existentes (mensajes activo por defecto)
             await client.query(`
                 INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
-                SELECT $1, p.id, false, false
+                SELECT $1, p.id, (p.modulo = 'mensajes'), (p.modulo = 'mensajes')
                 FROM permisos p
                 ON CONFLICT (rol_id, permiso_id) DO NOTHING;
             `, [nuevoRol.id_rol]);
@@ -178,18 +239,15 @@ const Usuario = {
 
     eliminarUsuario: async (id_usuario) => {
         try {
-            // Eliminar referencias secundarias de permisos
             await pool.query('DELETE FROM permisos_celulares_clientes WHERE id_usuario = $1', [id_usuario]);
+            await pool.query('DELETE FROM solicitudes_recuperacion_password WHERE id_usuario = $1', [id_usuario]).catch(() => {});
 
-            // Intentar eliminación física
             try {
                 const resDelete = await pool.query('DELETE FROM usuarios WHERE id_usuario = $1 RETURNING *', [id_usuario]);
                 if (resDelete.rows.length > 0) {
                     return { eliminado: true, softDelete: false, usuario: resDelete.rows[0] };
                 }
             } catch (fkError) {
-                // Si existe historial relacionado con clave foránea (pedidos, facturas, kardex, etc.)
-                // aplicamos borrado lógico (soft-delete) y liberamos el email para reuso futuro
                 const timestamp = Date.now();
                 const resSoft = await pool.query(`
                     UPDATE usuarios 

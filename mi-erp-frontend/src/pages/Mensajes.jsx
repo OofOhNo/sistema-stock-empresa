@@ -1,27 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { 
-  MessageSquare, Send, User, Search, Shield, Eye, Lock, 
-  Clock, CheckCheck, Check, Sparkles, Building, Briefcase 
+import {
+  MessageSquare, Send, Search, Eye, Lock,
+  CheckCheck, Check
 } from 'lucide-react';
 
 export default function Mensajes({ usuario }) {
-  // REGLA: Solo el Admin Central tiene acceso al módulo de mensajería y supervisión
-  if (usuario?.rol !== 'Admin Central') {
-    return (
-      <div className="flex flex-col items-center justify-center p-12 text-center h-[calc(100vh-140px)] bg-white rounded-2xl border border-slate-200">
-        <Lock size={56} className="text-amber-500 mb-4 animate-bounce" />
-        <h2 className="text-2xl font-bold text-slate-800">Acceso Exclusivo de Admin Central</h2>
-        <p className="text-slate-500 mt-2 max-w-md text-sm">
-          Por políticas de privacidad y control, solo el Administrador Central tiene autorización para acceder al centro de mensajería y supervisión interna.
-        </p>
-      </div>
-    );
-  }
+  // SOLO Admin Central puede ver la pestaña de supervisión silenciosa.
+  // Todos los demás empleados ven únicamente su chat normal con compañeros.
+  const esAdminCentral = usuario?.rol === 'Admin Central';
 
-  const [tabActual, setTabActual] = useState('supervision'); // 'supervision' | 'chat'
-  
+  const [tabActual, setTabActual] = useState('chat'); // 'chat' | 'supervision'
+
   // Estados para Chat Personal
   const [contactos, setContactos] = useState([]);
   const [contactoActivo, setContactoActivo] = useState(null);
@@ -31,8 +22,7 @@ export default function Mensajes({ usuario }) {
   const [busquedaContacto, setBusquedaContacto] = useState('');
   const [cargandoChat, setCargandoChat] = useState(false);
 
-  // Estados para Supervisión Silenciosa (Admin Central)
-  const esJefe = true;
+  // Estados para Supervisión Silenciosa (exclusivo Admin Central)
   const [paresSupervision, setParesSupervision] = useState([]);
   const [parActivo, setParActivo] = useState(null);
   const [mensajesSupervision, setMensajesSupervision] = useState([]);
@@ -42,46 +32,48 @@ export default function Mensajes({ usuario }) {
   const chatScrollRef = useRef(null);
   const supervisionScrollRef = useRef(null);
 
-  // Cargar contactos iniciales
+  useEffect(() => {
+    if (!esAdminCentral && tabActual !== 'chat') {
+      setTabActual('chat');
+    }
+  }, [esAdminCentral, tabActual]);
+
   useEffect(() => {
     cargarContactos();
     const interval = setInterval(() => {
       cargarContactosSilencioso();
-    }, 4000);
+    }, 4500);
     return () => clearInterval(interval);
   }, []);
 
-  // Cargar chat activo
   useEffect(() => {
     if (contactoActivo && tabActual === 'chat') {
       cargarHistorialChat(contactoActivo.id_usuario);
     }
   }, [contactoActivo, tabActual]);
 
-  // Polling silencioso para nuevos mensajes en chat activo
   useEffect(() => {
     if (!contactoActivo || tabActual !== 'chat') return;
     const interval = setInterval(() => {
       cargarHistorialSilencioso(contactoActivo.id_usuario);
-    }, 3000);
+    }, 3500);
     return () => clearInterval(interval);
   }, [contactoActivo, tabActual]);
 
-  // Si el jefe abre la pestaña de supervisión
   useEffect(() => {
-    if (tabActual === 'supervision' && esJefe) {
+    if (tabActual === 'supervision' && esAdminCentral) {
       cargarParesSupervision();
     }
-  }, [tabActual]);
+  }, [tabActual, esAdminCentral]);
 
-  // Polling silencioso de la supervisión
   useEffect(() => {
-    if (tabActual === 'supervision' && esJefe && parActivo) {
+    if (tabActual !== 'supervision' || !esAdminCentral || !parActivo) return;
+    const interval = setInterval(() => {
       cargarChatSupervisionSilencioso(parActivo.u1_id, parActivo.u2_id);
-    }
-  }, [parActivo, tabActual]);
+    }, 4500);
+    return () => clearInterval(interval);
+  }, [parActivo, tabActual, esAdminCentral]);
 
-  // Scroll automático hacia abajo al recibir mensajes
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -111,7 +103,7 @@ export default function Mensajes({ usuario }) {
     try {
       const res = await api.get('/mensajes/contactos');
       setContactos(res.data.datos || []);
-    } catch (e) {}
+    } catch {}
   };
 
   const cargarHistorialChat = async (idOtro) => {
@@ -119,8 +111,10 @@ export default function Mensajes({ usuario }) {
     try {
       const res = await api.get(`/mensajes/chat/${idOtro}`);
       setMensajesChat(res.data.datos || []);
-    } catch (err) {
-      toast.error('Error al cargar la conversación');
+      cargarContactosSilencioso();
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+    } catch {
+      toast.error('No se pudo cargar la conversación.');
     } finally {
       setCargandoChat(false);
     }
@@ -130,7 +124,8 @@ export default function Mensajes({ usuario }) {
     try {
       const res = await api.get(`/mensajes/chat/${idOtro}`);
       setMensajesChat(res.data.datos || []);
-    } catch (e) {}
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+    } catch {}
   };
 
   const handleEnviarMensaje = async (e) => {
@@ -150,15 +145,16 @@ export default function Mensajes({ usuario }) {
         cargarContactosSilencioso();
       }
     } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'Error al enviar mensaje');
+      toast.error(err.response?.data?.mensaje || 'No se pudo enviar el mensaje.');
       setNuevoMensaje(texto);
     } finally {
       setEnviando(false);
     }
   };
 
-  // Funciones de Supervisión para Jefatura
+  // Funciones exclusivas para Admin Central
   const cargarParesSupervision = async () => {
+    if (!esAdminCentral) return;
     setCargandoSupervision(true);
     try {
       const res = await api.get('/mensajes/supervision');
@@ -167,8 +163,8 @@ export default function Mensajes({ usuario }) {
       if (pares.length > 0 && !parActivo) {
         seleccionarParSupervision(pares[0]);
       }
-    } catch (err) {
-      toast.error('Error al cargar auditoría de conversaciones');
+    } catch {
+      toast.error('No se pudo cargar la lista de conversaciones.');
     } finally {
       setCargandoSupervision(false);
     }
@@ -179,8 +175,8 @@ export default function Mensajes({ usuario }) {
     try {
       const res = await api.get(`/mensajes/supervision/${par.u1_id}/${par.u2_id}`);
       setMensajesSupervision(res.data.datos || []);
-    } catch (err) {
-      toast.error('Error al obtener transcripción auditada');
+    } catch {
+      toast.error('No se pudo abrir la conversación seleccionada.');
     }
   };
 
@@ -188,7 +184,7 @@ export default function Mensajes({ usuario }) {
     try {
       const res = await api.get(`/mensajes/supervision/${u1}/${u2}`);
       setMensajesSupervision(res.data.datos || []);
-    } catch (e) {}
+    } catch {}
   };
 
   const formatearHoraMensaje = (fechaISO) => {
@@ -197,52 +193,47 @@ export default function Mensajes({ usuario }) {
     return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const formatearFechaCabecera = (fechaISO) => {
-    if (!fechaISO) return '';
-    const d = new Date(fechaISO);
-    return d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' });
-  };
-
-  // Filtrado de contactos
   const contactosFiltrados = contactos.filter(c => {
     if (!busquedaContacto.trim()) return true;
     const q = busquedaContacto.toLowerCase();
-    return c.nombre_completo.toLowerCase().includes(q) ||
-           c.email.toLowerCase().includes(q) ||
-           c.nombre_rol.toLowerCase().includes(q) ||
-           (c.area && c.area.toLowerCase().includes(q));
+    return (
+      (c.nombre_completo || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q) ||
+      (c.nombre_rol || '').toLowerCase().includes(q) ||
+      (c.nombre_ubicacion || '').toLowerCase().includes(q)
+    );
   });
 
-  // Filtrado de pares de supervisión
   const paresFiltrados = paresSupervision.filter(p => {
     if (!busquedaPar.trim()) return true;
     const q = busquedaPar.toLowerCase();
-    return p.u1_nombre.toLowerCase().includes(q) ||
-           p.u2_nombre.toLowerCase().includes(q) ||
-           (p.ultimo_mensaje && p.ultimo_mensaje.toLowerCase().includes(q));
+    return (
+      (p.u1_nombre || '').toLowerCase().includes(q) ||
+      (p.u2_nombre || '').toLowerCase().includes(q) ||
+      (p.ultimo_mensaje || '').toLowerCase().includes(q)
+    );
   });
 
   return (
-    <div className="space-y-4 h-[calc(100vh-100px)] flex flex-col">
-      
-      {/* CABECERA Y CONMUTADOR (SOLO SI ES JEFE) */}
+    <div className="space-y-4 h-[calc(100vh-115px)] flex flex-col">
+      {/* CABECERA */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs shrink-0">
         <div className="flex items-center space-x-3">
           <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-600/20">
             <MessageSquare size={22} />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-blue-950">Mensajería Interna</h1>
-            <p className="text-xs text-slate-500">Comunicación directa en tiempo real entre colaboradores</p>
+            <h1 className="text-xl font-bold text-blue-950">Mensajes Internos</h1>
+            <p className="text-xs text-slate-500">Escribe y responde mensajes directos con tus compañeros de trabajo</p>
           </div>
         </div>
 
-        {/* Pestañas de modo para la Jefatura */}
-        {esJefe && (
+        {/* Pestañas visibles ÚNICAMENTE para Admin Central */}
+        {esAdminCentral && (
           <div className="flex space-x-2 bg-slate-100 p-1 rounded-xl">
             <button
               onClick={() => setTabActual('chat')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
                 tabActual === 'chat' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -251,34 +242,28 @@ export default function Mensajes({ usuario }) {
             </button>
             <button
               onClick={() => setTabActual('supervision')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
                 tabActual === 'supervision' ? 'bg-slate-900 text-amber-300 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Eye size={14} className="text-amber-400" />
               <span>Supervisión de Personal</span>
-              <span className="text-[10px] bg-amber-400/20 text-amber-300 px-1.5 py-0.2 rounded font-mono font-bold">
-                JEFATURA
-              </span>
             </button>
           </div>
         )}
       </div>
 
-      {/* VISTA 1: CHAT PERSONAL ENTRE EMPLEADOS */}
+      {/* VISTA 1: CHAT PERSONAL ENTRE COMPAÑEROS */}
       {tabActual === 'chat' && (
         <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex min-h-0">
-          
-          {/* PANEL IZQUIERDO: LISTA DE CONTACTOS */}
-          <div className="w-80 sm:w-88 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
-            
-            {/* Buscador de contactos */}
+          {/* LISTA DE COMPAÑEROS */}
+          <div className="w-72 sm:w-84 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
             <div className="p-3 border-b border-slate-200 bg-white">
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Buscar colega por nombre o rol..."
+                  placeholder="Buscar compañero por nombre o sede..."
                   value={busquedaContacto}
                   onChange={(e) => setBusquedaContacto(e.target.value)}
                   className="w-full pl-9 pr-3 py-1.5 bg-slate-100 rounded-xl text-xs border border-transparent focus:bg-white focus:border-indigo-500 focus:outline-hidden"
@@ -286,11 +271,10 @@ export default function Mensajes({ usuario }) {
               </div>
             </div>
 
-            {/* Lista scrollable de contactos */}
             <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
               {contactosFiltrados.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-400">
-                  No se encontraron compañeros de trabajo.
+                  No se encontraron compañeros con ese nombre.
                 </div>
               ) : (
                 contactosFiltrados.map((c) => {
@@ -299,23 +283,21 @@ export default function Mensajes({ usuario }) {
                     <button
                       key={c.id_usuario}
                       onClick={() => setContactoActivo(c)}
-                      className={`w-full p-3.5 text-left flex items-start space-x-3 transition-colors ${
+                      className={`w-full p-3.5 text-left flex items-start space-x-3 transition-colors cursor-pointer ${
                         esActivo ? 'bg-indigo-50/80 border-r-2 border-indigo-600' : 'hover:bg-white'
                       }`}
                     >
-                      {/* Avatar */}
                       <div className="relative shrink-0">
                         <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs shadow-xs">
-                          {c.nombre_completo.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                          {(c.nombre_completo || 'U').split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('')}
                         </div>
-                        {c.no_leidos > 0 && (
-                          <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow-xs animate-pulse">
+                        {Number(c.no_leidos) > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-xs">
                             {c.no_leidos}
                           </span>
                         )}
                       </div>
 
-                      {/* Info colega */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className="text-xs font-bold text-slate-800 truncate">{c.nombre_completo}</p>
@@ -327,10 +309,10 @@ export default function Mensajes({ usuario }) {
                         </div>
                         <p className="text-[11px] text-slate-500 flex items-center space-x-1 mt-0.5 truncate">
                           <span>{c.nombre_rol}</span>
-                          {c.area && (
+                          {c.nombre_ubicacion && (
                             <>
                               <span>·</span>
-                              <span className="capitalize">{c.area.toLowerCase()}</span>
+                              <span>{c.nombre_ubicacion}</span>
                             </>
                           )}
                         </p>
@@ -348,15 +330,14 @@ export default function Mensajes({ usuario }) {
             </div>
           </div>
 
-          {/* PANEL DERECHO: CONVERSACIÓN ACTIVA */}
+          {/* CONVERSACIÓN ACTIVA */}
           <div className="flex-1 flex flex-col min-w-0 bg-white">
             {contactoActivo ? (
               <>
-                {/* Cabecera del chat activo */}
                 <div className="p-3.5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
                   <div className="flex items-center space-x-3">
                     <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
-                      {contactoActivo.nombre_completo.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                      {(contactoActivo.nombre_completo || 'U').split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('')}
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-slate-900 leading-tight">
@@ -371,17 +352,16 @@ export default function Mensajes({ usuario }) {
                   </div>
                 </div>
 
-                {/* Lista de Mensajes */}
                 <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
                   {cargandoChat ? (
                     <div className="flex items-center justify-center h-full text-xs text-slate-400">
-                      Cargando mensajes...
+                      Cargando conversación...
                     </div>
                   ) : mensajesChat.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center p-6 text-slate-400">
                       <MessageSquare size={36} className="text-slate-300 mb-2" />
-                      <p className="text-xs font-semibold text-slate-600">No hay mensajes previos con este compañero.</p>
-                      <p className="text-[11px] text-slate-400 mt-1">Escribe un saludo para iniciar la comunicación.</p>
+                      <p className="text-xs font-semibold text-slate-600">Todavía no tienes mensajes con {contactoActivo.nombre_completo}.</p>
+                      <p className="text-[11px] text-slate-400 mt-1">Escribe abajo y presiona Enviar para conversar.</p>
                     </div>
                   ) : (
                     mensajesChat.map((m) => {
@@ -389,8 +369,8 @@ export default function Mensajes({ usuario }) {
                       return (
                         <div key={m.id_mensaje} className={`flex ${soyEmisor ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[75%] rounded-2xl p-3 shadow-xs text-xs leading-relaxed ${
-                            soyEmisor 
-                              ? 'bg-indigo-600 text-white rounded-br-xs' 
+                            soyEmisor
+                              ? 'bg-indigo-600 text-white rounded-br-xs'
                               : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
                           }`}>
                             <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
@@ -409,11 +389,10 @@ export default function Mensajes({ usuario }) {
                   )}
                 </div>
 
-                {/* Barra de Entrada de Mensaje */}
                 <form onSubmit={handleEnviarMensaje} className="p-3 border-t border-slate-200 bg-white shrink-0 flex items-center space-x-2">
                   <input
                     type="text"
-                    placeholder={`Escribir a ${contactoActivo.nombre_completo.split(' ')[0]}...`}
+                    placeholder={`Escribe un mensaje para ${(contactoActivo.nombre_completo || '').split(' ')[0]}...`}
                     value={nuevoMensaje}
                     onChange={(e) => setNuevoMensaje(e.target.value)}
                     className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
@@ -421,51 +400,44 @@ export default function Mensajes({ usuario }) {
                   <button
                     type="submit"
                     disabled={enviando || !nuevoMensaje.trim()}
-                    className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40"
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer"
                   >
-                    <Send size={16} />
+                    <Send size={15} />
+                    <span>Enviar</span>
                   </button>
                 </form>
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
                 <MessageSquare size={48} className="text-slate-200 mb-3" />
-                <p className="text-sm font-semibold text-slate-600">Selecciona un compañero para iniciar el chat</p>
-                <p className="text-xs text-slate-400 mt-1">Podrás intercambiar mensajes internos de trabajo</p>
+                <p className="text-sm font-semibold text-slate-600">Elige un compañero de la lista izquierda</p>
+                <p className="text-xs text-slate-400 mt-1">Podrás enviarle mensajes directos al instante</p>
               </div>
             )}
           </div>
-
         </div>
       )}
 
-      {/* VISTA 2: SUPERVISIÓN SILENCIOSA (MODO JEFATURA) */}
-      {tabActual === 'supervision' && esJefe && (
+      {/* VISTA 2: SUPERVISIÓN SILENCIOSA (EXCLUSIVO ADMIN CENTRAL) */}
+      {tabActual === 'supervision' && esAdminCentral && (
         <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col min-h-0">
-          
-          {/* BANNER INFORMATIVO DE AUDITORÍA SILENCIOSA */}
           <div className="p-3 bg-amber-500/10 border-b border-amber-500/20 px-4 flex items-center justify-between text-xs text-amber-950 shrink-0">
             <div className="flex items-center space-x-2">
               <Lock size={15} className="text-amber-700 shrink-0" />
               <span>
-                <b>Modo Supervisión Silenciosa Activo:</b> Estás auditando las comunicaciones entre colaboradores. 
-                <span className="text-amber-900 font-medium ml-1">
-                  Los empleados <b>no reciben ninguna alerta ni sabrán que sus conversaciones están siendo visualizadas</b>. No se alteran marcas de lectura.
-                </span>
+                <strong>Modo Supervisión Silenciosa (Solo Admin Central):</strong> Puedes leer las conversaciones entre empleados sin que les aparezca ningún aviso ni cambie el estado de lectura.
               </span>
             </div>
           </div>
 
           <div className="flex-1 flex min-h-0">
-            {/* PANEL IZQUIERDO: PARES DE EMPLEADOS */}
-            <div className="w-88 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
-              
+            <div className="w-84 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
               <div className="p-3 border-b border-slate-200 bg-white">
                 <div className="relative">
                   <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Filtrar por empleado en la conversación..."
+                    placeholder="Buscar por nombre de empleado..."
                     value={busquedaPar}
                     onChange={(e) => setBusquedaPar(e.target.value)}
                     className="w-full pl-9 pr-3 py-1.5 bg-slate-100 rounded-xl text-xs border border-transparent focus:bg-white focus:border-amber-500 focus:outline-hidden"
@@ -473,13 +445,12 @@ export default function Mensajes({ usuario }) {
                 </div>
               </div>
 
-              {/* Lista de Conversaciones entre Empleados */}
               <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
                 {cargandoSupervision ? (
                   <div className="p-6 text-center text-xs text-slate-400">Cargando conversaciones...</div>
                 ) : paresFiltrados.length === 0 ? (
                   <div className="p-6 text-center text-xs text-slate-400">
-                    No se registran conversaciones entre empleados.
+                    Todavía no hay conversaciones registradas entre empleados.
                   </div>
                 ) : (
                   paresFiltrados.map((p, idx) => {
@@ -488,13 +459,13 @@ export default function Mensajes({ usuario }) {
                       <button
                         key={idx}
                         onClick={() => seleccionarParSupervision(p)}
-                        className={`w-full p-3.5 text-left transition-colors ${
+                        className={`w-full p-3.5 text-left transition-colors cursor-pointer ${
                           esActivo ? 'bg-amber-50/80 border-r-2 border-amber-600' : 'hover:bg-white'
                         }`}
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded font-mono">
-                            {p.total_mensajes} msgs
+                          <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-mono">
+                            {p.total_mensajes} mensajes
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono">
                             {formatearHoraMensaje(p.ultima_fecha)}
@@ -518,7 +489,6 @@ export default function Mensajes({ usuario }) {
               </div>
             </div>
 
-            {/* PANEL DERECHO: TRANSCRIPCIÓN AUDITADA */}
             <div className="flex-1 flex flex-col min-w-0 bg-white">
               {parActivo ? (
                 <>
@@ -526,29 +496,28 @@ export default function Mensajes({ usuario }) {
                     <div>
                       <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
                         <Eye size={15} className="text-amber-600" />
-                        <span>Auditoría de Conversación:</span>
+                        <span>Conversación entre:</span>
                         <span className="text-indigo-700 font-bold">{parActivo.u1_nombre}</span>
                         <span className="text-slate-400 font-normal">y</span>
                         <span className="text-indigo-700 font-bold">{parActivo.u2_nombre}</span>
                       </h3>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Total {parActivo.total_mensajes} mensajes registrados · Visualización encubierta de jefatura
+                        {parActivo.total_mensajes} mensajes · Vista silenciosa de Admin Central
                       </p>
                     </div>
                   </div>
 
-                  {/* Transcripción completa de mensajes */}
                   <div ref={supervisionScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/30">
                     {mensajesSupervision.length === 0 ? (
-                      <div className="text-center text-xs text-slate-400 p-8">No hay mensajes.</div>
+                      <div className="text-center text-xs text-slate-400 p-8">No hay mensajes en esta charla.</div>
                     ) : (
                       mensajesSupervision.map((m) => {
                         const esU1 = m.id_emisor === parActivo.u1_id;
                         return (
                           <div key={m.id_mensaje} className={`flex ${esU1 ? 'justify-start' : 'justify-end'}`}>
                             <div className={`max-w-[75%] rounded-2xl p-3 shadow-xs text-xs leading-relaxed border ${
-                              esU1 
-                                ? 'bg-white border-slate-200 text-slate-800' 
+                              esU1
+                                ? 'bg-white border-slate-200 text-slate-800'
                                 : 'bg-slate-800 text-white border-slate-700'
                             }`}>
                               <div className="flex items-center justify-between gap-3 border-b pb-1 mb-1 border-current/15">
@@ -557,7 +526,7 @@ export default function Mensajes({ usuario }) {
                               </div>
                               <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
                               <div className="mt-1 text-[9px] opacity-60 flex justify-end">
-                                <span>{m.leido ? '✓✓ Visto por destinatario' : '✓ Entregado'}</span>
+                                <span>{m.leido ? '✓✓ Leído' : '✓ Enviado'}</span>
                               </div>
                             </div>
                           </div>
@@ -566,26 +535,22 @@ export default function Mensajes({ usuario }) {
                     )}
                   </div>
 
-                  {/* Pie de solo lectura */}
                   <div className="p-3 bg-slate-100 border-t border-slate-200 text-center text-xs text-slate-500 shrink-0 flex items-center justify-center space-x-1.5">
                     <Lock size={13} className="text-slate-400" />
-                    <span>Modo de lectura de auditoría. La jefatura supervisa el intercambio sin intervenir en la charla.</span>
+                    <span>Vista de solo lectura para supervisión.</span>
                   </div>
                 </>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
                   <Eye size={48} className="text-slate-200 mb-3" />
-                  <p className="text-sm font-semibold text-slate-600">Selecciona una conversación para auditar</p>
-                  <p className="text-xs text-slate-400 mt-1">Podrás leer la transcripción íntegra entre ambos colaboradores</p>
+                  <p className="text-sm font-semibold text-slate-600">Elige una conversación de la lista izquierda</p>
+                  <p className="text-xs text-slate-400 mt-1">Aquí verás todos los mensajes intercambiados entre ambos empleados</p>
                 </div>
               )}
             </div>
           </div>
-
         </div>
       )}
-
     </div>
   );
 }
-

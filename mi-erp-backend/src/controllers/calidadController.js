@@ -39,13 +39,15 @@ const calidadController = {
 
         const id_usuario = req.usuario.id_usuario;
 
-        // Si viene con items_detalle, calcular fecha_vencimiento y lote_o_producto si faltan
         let fechaVencFinal = fecha_vencimiento;
         if (!fechaVencFinal && Array.isArray(items_detalle) && items_detalle.length > 0) {
-            fechaVencFinal = items_detalle[0].fecha_vencimiento;
+            const fechasItems = items_detalle.map(i => i.fecha_vencimiento).filter(Boolean);
+            if (fechasItems.length > 0) {
+                fechasItems.sort();
+                fechaVencFinal = fechasItems[fechasItems.length - 1];
+            }
         }
         if (!fechaVencFinal) {
-            // Default 1 año
             const fv = new Date();
             fv.setFullYear(fv.getFullYear() + 1);
             fechaVencFinal = fv.toISOString().split('T')[0];
@@ -53,23 +55,21 @@ const calidadController = {
 
         const fechaEmisionFinal = fecha_emision || new Date().toISOString().split('T')[0];
 
-        // Generar código único si no se envió
         const codigoFinal = codigo_certificado && codigo_certificado.trim() !== '' 
             ? codigo_certificado.trim() 
             : `CERT-${Date.now().toString().slice(-6)}`;
 
         try {
-            // Validar unicidad de código
             const check = await pool.query('SELECT id_certificado FROM certificados_calidad WHERE LOWER(codigo_certificado) = LOWER($1)', [codigoFinal]);
             if (check.rows.length > 0) {
-                return res.status(400).json({ exito: false, mensaje: 'Ya existe un certificado con este código.' });
+                return res.status(400).json({ exito: false, mensaje: 'Ya existe un certificado con ese código.' });
             }
 
             const nuevo = await Calidad.crear({
                 codigo_certificado: codigoFinal,
-                tipo_certificado: tipo_certificado || 'Certificado de Calidad SENASA',
-                lote_o_producto: lote_o_producto || (Array.isArray(items_detalle) ? items_detalle.map(i => `${i.producto} (${i.lote})`).join(', ') : null),
-                entidad_emisora: entidad_emisora || 'PROCESOS CÁRNICOS S.A.C.',
+                tipo_certificado: tipo_certificado || 'Certificado de Calidad e Inocuidad',
+                lote_o_producto: lote_o_producto || (Array.isArray(items_detalle) ? items_detalle.map(i => `${i.producto || 'Producto'}${i.lote ? ` (${i.lote})` : ''}`).join(', ') : null),
+                entidad_emisora: entidad_emisora || 'SENASA',
                 fecha_emision: fechaEmisionFinal,
                 fecha_vencimiento: fechaVencFinal,
                 estado: estado || 'VIGENTE',
@@ -78,8 +78,8 @@ const calidadController = {
                 id_cliente: id_cliente ? Number(id_cliente) : null,
                 cliente_nombre: cliente_nombre || null,
                 cliente_ruc: cliente_ruc || null,
-                senasa_resolucion: senasa_resolucion || 'N° 000111-MINAGRI-SENASA-AREQUIPA',
-                ciudad_emision: ciudad_emision || 'Arequipa',
+                senasa_resolucion: senasa_resolucion || 'N° AUTORIZACIÓN SANITARIA',
+                ciudad_emision: ciudad_emision || 'Ciudad',
                 items_detalle: Array.isArray(items_detalle) ? items_detalle : [],
                 archivo_url,
                 observaciones
@@ -175,4 +175,3 @@ const calidadController = {
 };
 
 module.exports = calidadController;
-

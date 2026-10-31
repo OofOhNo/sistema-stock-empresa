@@ -24,16 +24,30 @@ const Cliente = {
             const { rows } = await pool.query(query);
 
             let permitidosSet = new Set();
+            let rolPuedeVerTodos = esAdminCentral;
+
             if (!esAdminCentral && idUsuario) {
-                const resPermisos = await pool.query(
-                    'SELECT id_cliente FROM permisos_celulares_clientes WHERE id_usuario = $1',
-                    [idUsuario]
-                );
+                const [resPermisos, resRol] = await Promise.all([
+                    pool.query(
+                        'SELECT id_cliente FROM permisos_celulares_clientes WHERE id_usuario = $1',
+                        [idUsuario]
+                    ),
+                    pool.query(
+                        `SELECT COALESCE(u.puede_ver_celulares, FALSE) AS puede_ver_celulares
+                         FROM usuarios u
+                         LEFT JOIN roles r ON u.rol_id = r.id_rol
+                         WHERE u.id_usuario = $1`,
+                        [idUsuario]
+                    ).catch(() => ({ rows: [] }))
+                ]);
                 permitidosSet = new Set(resPermisos.rows.map(r => r.id_cliente));
+                if (resRol.rows[0]?.puede_ver_celulares === true) {
+                    rolPuedeVerTodos = true;
+                }
             }
 
             return rows.map(c => {
-                const puedeVer = esAdminCentral || permitidosSet.has(c.id_cliente);
+                const puedeVer = rolPuedeVerTodos || permitidosSet.has(c.id_cliente);
                 return {
                     ...c,
                     celular: puedeVer 
@@ -94,6 +108,14 @@ const Cliente = {
             ]);
             const nuevoCliente = rows[0];
 
+            // Si el creador ingresó un celular, darle permiso automático para ver ese celular
+            if (idUsuario && nuevoCliente.celular) {
+                await client.query(
+                    'INSERT INTO permisos_celulares_clientes (id_usuario, id_cliente) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [idUsuario, nuevoCliente.id_cliente]
+                );
+            }
+
             await registrarAuditoria(
                 client,
                 idUsuario,
@@ -125,16 +147,47 @@ const Cliente = {
             }
             const anterior = actual.rows[0];
 
+            // Verificar si el usuario que actualiza tiene permiso para ver/modificar el celular de este cliente
+            let puedeModificarCelular = false;
+            if (idUsuario) {
+                const resPerm = await client.query(
+                    `SELECT 
+                        (r.nombre = 'Admin Central' OR COALESCE(u.puede_ver_celulares, FALSE) = TRUE) AS acceso_global,
+                        EXISTS(
+                            SELECT 1 FROM permisos_celulares_clientes pcc 
+                            WHERE pcc.id_usuario = u.id_usuario AND pcc.id_cliente = $2
+                        ) AS acceso_cliente
+                     FROM usuarios u
+                     LEFT JOIN roles r ON u.rol_id = r.id_rol
+                     WHERE u.id_usuario = $1`,
+                    [idUsuario, id]
+                );
+                if (resPerm.rows[0]) {
+                    puedeModificarCelular = Boolean(resPerm.rows[0].acceso_global || resPerm.rows[0].acceso_cliente || !anterior.celular);
+                }
+            }
+
+            let nuevoCelular = anterior.celular;
+            if (datos.celular !== undefined && !String(datos.celular).includes('***-***-***')) {
+                const limpio = String(datos.celular).trim();
+                if (puedeModificarCelular) {
+                    nuevoCelular = limpio || null;
+                } else if (limpio !== '') {
+                    // Si escribió un número nuevo explícitamente cuando antes no podía verlo, solo permitir si antes estaba vacío
+                    nuevoCelular = anterior.celular || limpio;
+                }
+            }
+
             const query = `
                 UPDATE clientes
                 SET 
-                    tipo_documento = COALESCE($1, tipo_documento),
-                    numero_documento = COALESCE($2, numero_documento),
-                    razon_social_o_nombre = COALESCE($3, razon_social_o_nombre),
+                    tipo_documento = $1,
+                    numero_documento = $2,
+                    razon_social_o_nombre = $3,
                     nombre_comercial = $4,
                     contacto = $5,
                     cargo = $6,
-                    celular = COALESCE($7, celular),
+                    celular = $7,
                     direccion = $8,
                     email = $9
                 WHERE id_cliente = $10
@@ -144,12 +197,12 @@ const Cliente = {
                 datos.tipo_documento || anterior.tipo_documento,
                 datos.numero_documento ? datos.numero_documento.trim() : anterior.numero_documento,
                 datos.razon_social_o_nombre ? datos.razon_social_o_nombre.trim() : anterior.razon_social_o_nombre,
-                datos.nombre_comercial !== undefined ? datos.nombre_comercial : anterior.nombre_comercial,
-                datos.contacto !== undefined ? datos.contacto : anterior.contacto,
-                datos.cargo !== undefined ? datos.cargo : anterior.cargo,
-                datos.celular !== undefined ? datos.celular : anterior.celular,
-                datos.direccion !== undefined ? datos.direccion : anterior.direccion,
-                datos.email !== undefined ? datos.email : anterior.email,
+                datos.nombre_comercial !== undefined ? (datos.nombre_comercial ? datos.nombre_comercial.trim() : null) : anterior.nombre_comercial,
+                datos.contacto !== undefined ? (datos.contacto ? datos.contacto.trim() : null) : anterior.contacto,
+                datos.cargo !== undefined ? (datos.cargo ? datos.cargo.trim() : null) : anterior.cargo,
+                nuevoCelular,
+                datos.direccion !== undefined ? (datos.direccion ? datos.direccion.trim() : null) : anterior.direccion,
+                datos.email !== undefined ? (datos.email ? datos.email.trim() : null) : anterior.email,
                 id
             ]);
             const actualizado = rows[0];
@@ -190,13 +243,11 @@ const Cliente = {
         try {
             await client.query('BEGIN');
 
-            // Limpiar permisos actuales del usuario
             await client.query(
                 'DELETE FROM permisos_celulares_clientes WHERE id_usuario = $1',
                 [idUsuario]
             );
 
-            // Insertar los nuevos permisos seleccionados
             if (Array.isArray(clientesIds) && clientesIds.length > 0) {
                 for (const idCliente of clientesIds) {
                     await client.query(
@@ -229,4 +280,3 @@ const Cliente = {
 };
 
 module.exports = Cliente;
-

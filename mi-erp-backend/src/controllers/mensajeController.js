@@ -2,18 +2,17 @@ const Mensaje = require('../models/mensajeModel');
 
 const mensajeController = {
 
-    // Enviar un mensaje
     enviarMensaje: async (req, res) => {
         try {
             const id_emisor = req.usuario.id_usuario;
             const { id_receptor, mensaje } = req.body;
 
             if (!id_receptor) {
-                return res.status(400).json({ exito: false, mensaje: 'Debes especificar el destinatario.' });
+                return res.status(400).json({ exito: false, mensaje: 'Elige a qué compañero quieres enviarle el mensaje.' });
             }
 
             if (!mensaje || !mensaje.trim()) {
-                return res.status(400).json({ exito: false, mensaje: 'El mensaje no puede estar vacío.' });
+                return res.status(400).json({ exito: false, mensaje: 'Escribe un mensaje antes de enviarlo.' });
             }
 
             if (Number(id_emisor) === Number(id_receptor)) {
@@ -37,19 +36,16 @@ const mensajeController = {
         }
     },
 
-    // Obtener chat directo entre el usuario autenticado y otro colega
     obtenerChat: async (req, res) => {
         try {
             const id_usuario_actual = req.usuario.id_usuario;
             const id_otro = Number(req.params.id_otro);
 
             if (!id_otro) {
-                return res.status(400).json({ exito: false, mensaje: 'ID de colega inválido.' });
+                return res.status(400).json({ exito: false, mensaje: 'Compañero inválido.' });
             }
 
             const historial = await Mensaje.obtenerHistorial(id_usuario_actual, id_otro);
-
-            // Marcar mensajes que me envió este colega como leídos
             await Mensaje.marcarLeidos(id_usuario_actual, id_otro);
 
             res.status(200).json({
@@ -58,11 +54,10 @@ const mensajeController = {
             });
         } catch (error) {
             console.error('Error en obtenerChat:', error);
-            res.status(500).json({ exito: false, mensaje: 'Error al obtener chat', error: error.message });
+            res.status(500).json({ exito: false, mensaje: 'Error al abrir la conversación', error: error.message });
         }
     },
 
-    // Listar compañeros de trabajo con contador de no leídos y último mensaje
     listarContactos: async (req, res) => {
         try {
             const id_usuario_actual = req.usuario.id_usuario;
@@ -74,24 +69,29 @@ const mensajeController = {
             });
         } catch (error) {
             console.error('Error en listarContactos:', error);
-            res.status(500).json({ exito: false, mensaje: 'Error al listar contactos', error: error.message });
+            res.status(500).json({ exito: false, mensaje: 'Error al cargar compañeros', error: error.message });
+        }
+    },
+
+    contarNoLeidos: async (req, res) => {
+        try {
+            const total = await Mensaje.contarNoLeidos(req.usuario.id_usuario);
+            res.status(200).json({ exito: true, no_leidos: total });
+        } catch (error) {
+            res.status(500).json({ exito: false, no_leidos: 0 });
         }
     },
 
     // =========================================================================
-    // MODO SUPERVISIÓN SILENCIOSA (JEFATURA / ADMIN CENTRAL)
+    // MODO SUPERVISIÓN SILENCIOSA (EXCLUSIVO ADMIN CENTRAL)
     // =========================================================================
 
-    // Listar todas las conversaciones entre empleados para auditoría de jefatura
     supervisarConversaciones: async (req, res) => {
         try {
-            const rol = req.usuario.nombre_rol;
-            const esJefe = rol === 'Admin Central' || rol === 'Administrador' || rol === 'Gerente de Área';
-
-            if (!esJefe) {
+            if (req.usuario.nombre_rol !== 'Admin Central') {
                 return res.status(403).json({
                     exito: false,
-                    mensaje: 'Acceso restringido. Solo la jefatura puede supervisar conversaciones internas.'
+                    mensaje: 'Acceso restringido únicamente al Admin Central.'
                 });
             }
 
@@ -109,16 +109,12 @@ const mensajeController = {
         }
     },
 
-    // Auditar transcripción de un par de empleados SIN marcar como leído ni alertar
     supervisarChatPar: async (req, res) => {
         try {
-            const rol = req.usuario.nombre_rol;
-            const esJefe = rol === 'Admin Central' || rol === 'Administrador' || rol === 'Gerente de Área';
-
-            if (!esJefe) {
+            if (req.usuario.nombre_rol !== 'Admin Central') {
                 return res.status(403).json({
                     exito: false,
-                    mensaje: 'Acceso restringido. Solo la jefatura puede supervisar conversaciones internas.'
+                    mensaje: 'Acceso restringido únicamente al Admin Central.'
                 });
             }
 
@@ -126,10 +122,9 @@ const mensajeController = {
             const u2 = Number(req.params.u2);
 
             if (!u1 || !u2) {
-                return res.status(400).json({ exito: false, mensaje: 'IDs de usuarios inválidos.' });
+                return res.status(400).json({ exito: false, mensaje: 'Usuarios inválidos.' });
             }
 
-            // Se obtiene la transcripción EXACTA sin alterar flags ni fechas de lectura
             const mensajes = await Mensaje.supervisarChatPar(u1, u2);
 
             res.status(200).json({
@@ -146,4 +141,3 @@ const mensajeController = {
 };
 
 module.exports = mensajeController;
-

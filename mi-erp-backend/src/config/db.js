@@ -11,7 +11,12 @@ function getSslConfig(connectionUrl) {
     if (!connectionUrl) return false;
     const lower = connectionUrl.toLowerCase();
     // En entornos locales o Docker interno con postgres local no se requiere SSL
-    if (lower.includes('sslmode=disable') || lower.includes('localhost') || lower.includes('127.0.0.1')) {
+    if (
+        lower.includes('sslmode=disable') ||
+        lower.includes('localhost') ||
+        lower.includes('127.0.0.1') ||
+        lower.includes('postgres-local')
+    ) {
         return false;
     }
     // Compatible con Supabase (puerto 5432 / 6543) y otros proveedores cloud

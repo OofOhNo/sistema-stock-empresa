@@ -4,8 +4,8 @@ const clienteController = require('../controllers/clienteController');
 const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
-// Listar clientes (con protección de celulares según permiso individual por cliente)
-router.get('/', verificarToken, requierePermiso('clientes', 'ver'), clienteController.listarClientes);
+// Listar clientes (disponible para selectores en Pedidos/Facturación; los celulares siguen protegidos por permiso individual)
+router.get('/', verificarToken, clienteController.listarClientes);
 
 // Crear cliente
 router.post('/', verificarToken, requierePermiso('clientes', 'editar'), clienteController.crearCliente);

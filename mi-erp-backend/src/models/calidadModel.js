@@ -20,8 +20,8 @@ const Calidad = {
                     c.id_cliente,
                     c.cliente_nombre,
                     c.cliente_ruc,
-                    COALESCE(c.senasa_resolucion, 'N° 000111-MINAGRI-SENASA-AREQUIPA') AS senasa_resolucion,
-                    COALESCE(c.ciudad_emision, 'Arequipa') AS ciudad_emision,
+                    COALESCE(c.senasa_resolucion, 'N° AUTORIZACIÓN SANITARIA') AS senasa_resolucion,
+                    COALESCE(c.ciudad_emision, 'Ciudad') AS ciudad_emision,
                     COALESCE(c.items_detalle, '[]'::jsonb) AS items_detalle,
                     c.archivo_url,
                     c.observaciones,
@@ -115,9 +115,9 @@ const Calidad = {
             `;
             const res = await pool.query(query, [
                 codigo_certificado,
-                tipo_certificado || 'Certificado de Calidad SENASA',
+                tipo_certificado || 'Certificado de Calidad e Inocuidad',
                 lote_o_producto || null,
-                entidad_emisora || 'PROCESOS CÁRNICOS S.A.C.',
+                entidad_emisora || 'SENASA',
                 fecha_emision || new Date(),
                 fecha_vencimiento,
                 estadoFinal,
@@ -126,8 +126,8 @@ const Calidad = {
                 id_cliente || null,
                 cliente_nombre || null,
                 cliente_ruc || null,
-                senasa_resolucion || 'N° 000111-MINAGRI-SENASA-AREQUIPA',
-                ciudad_emision || 'Arequipa',
+                senasa_resolucion || 'N° AUTORIZACIÓN SANITARIA',
+                ciudad_emision || 'Ciudad',
                 JSON.stringify(items_detalle || []),
                 archivo_url || null,
                 observaciones || null
@@ -218,4 +218,3 @@ const Calidad = {
 };
 
 module.exports = Calidad;
-

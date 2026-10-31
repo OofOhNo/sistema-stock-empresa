@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Login from './Login';
 import Layout from './components/Layout';
 import Stock from './pages/Stock';
@@ -16,49 +16,90 @@ import Errores from './pages/Errores';
 import Organizacion from './pages/Organizacion';
 import Mensajes from './pages/Mensajes';
 import api from './api';
-import { Toaster } from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 
 export default function App() {
-  const [usuario, setUsuario] = useState(null);
-  //estado para controlar que pantalla vemos (por defecto 'dashboard')
+  const [usuario, setUsuario] = useState(() => {
+    try {
+      const usuarioGuardado = localStorage.getItem('usuario_erp');
+      const tokenGuardado = localStorage.getItem('token_erp');
+      return usuarioGuardado && tokenGuardado ? JSON.parse(usuarioGuardado) : null;
+    } catch {
+      return null;
+    }
+  });
   const [vistaActual, setVistaActual] = useState('dashboard');
 
-  useEffect(() => {
-    const usuarioGuardado = localStorage.getItem('usuario_erp');
-    const tokenGuardado = localStorage.getItem('token_erp');
-    if (usuarioGuardado && tokenGuardado) {
-      const parsed = JSON.parse(usuarioGuardado);
-      setUsuario(parsed);
-
-      // Sincronizar perfil actualizado desde el servidor (área, permisos de celular, etc.)
-      api.get('/auth/perfil')
-        .then(res => {
-          if (res.data.exito && res.data.usuario) {
-            setUsuario(res.data.usuario);
-            localStorage.setItem('usuario_erp', JSON.stringify(res.data.usuario));
-          }
-        })
-        .catch(() => {
-          // Si el token expiró, cerrar sesión
-        });
-    }
-  }, []);
-
-  const cerrarSesion = () => {
+  const cerrarSesion = useCallback(() => {
     localStorage.removeItem('token_erp');
     localStorage.removeItem('usuario_erp');
     setUsuario(null);
+    setVistaActual('dashboard');
+  }, []);
+
+  const sincronizarPerfil = useCallback(async () => {
+    const tokenGuardado = localStorage.getItem('token_erp');
+    if (!tokenGuardado) return;
+    try {
+      const res = await api.get('/auth/perfil');
+      if (res.data?.exito && res.data?.usuario) {
+        if (res.data.token) {
+          localStorage.setItem('token_erp', res.data.token);
+        }
+        localStorage.setItem('usuario_erp', JSON.stringify(res.data.usuario));
+        setUsuario(res.data.usuario);
+      }
+    } catch {
+      // El interceptor de api.js se encarga si la sesión expiró
+    }
+  }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem('token_erp')) {
+      sincronizarPerfil();
+    }
+  }, [sincronizarPerfil]);
+
+  // Refrescar permisos al volver a la pestaña del navegador para aplicar cambios de rol al instante
+  useEffect(() => {
+    const onFocus = () => {
+      if (localStorage.getItem('token_erp')) {
+        sincronizarPerfil();
+      }
+    };
+    const onSesionExpirada = () => {
+      cerrarSesion();
+      toast.error('Tu sesión terminó. Por favor vuelve a entrar con tu correo y contraseña.');
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('sesion_expirada', onSesionExpirada);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('sesion_expirada', onSesionExpirada);
+    };
+  }, [cerrarSesion, sincronizarPerfil]);
+
+  const cambiarVista = (nuevaVista) => {
+    setVistaActual(nuevaVista);
+    sincronizarPerfil();
   };
 
   if (!usuario) {
-    return <Login onLoginExitoso={(datosUsuario) => setUsuario(datosUsuario)} />;
+    return (
+      <>
+        <Toaster position="top-right" />
+        <Login onLoginExitoso={(datosUsuario) => {
+          setVistaActual('dashboard');
+          setUsuario(datosUsuario);
+        }} />
+      </>
+    );
   }
 
-  //controlador para renderizar la pantalla correcta segun el menu
   const renderizarVista = () => {
     switch (vistaActual) {
       case 'dashboard':
-        return <Dashboard usuario={usuario} />; 
+        return <Dashboard usuario={usuario} setVistaActual={cambiarVista} />;
       case 'stock':
         return <Stock usuario={usuario} />;
       case 'productos':
@@ -80,24 +121,24 @@ export default function App() {
       case 'organizacion':
         return <Organizacion usuario={usuario} />;
       case 'usuarios':
-        return <Usuarios usuarioLogueado={usuario} />;
+        return <Usuarios usuarioLogueado={usuario} onPermisosActualizados={sincronizarPerfil} />;
       case 'ubicaciones':
         return <Ubicaciones usuario={usuario} />;
       case 'mensajes':
         return <Mensajes usuario={usuario} />;
       default:
-        return <div className="text-slate-500">Módulo en construcción...</div>;
+        return <Dashboard usuario={usuario} setVistaActual={cambiarVista} />;
     }
   };
 
   return (
     <>
       <Toaster position="top-right" />
-      <Layout 
-        usuario={usuario} 
-        cerrarSesion={cerrarSesion} 
+      <Layout
+        usuario={usuario}
+        cerrarSesion={cerrarSesion}
         vistaActual={vistaActual}
-        setVistaActual={setVistaActual}
+        setVistaActual={cambiarVista}
       >
         {renderizarVista()}
       </Layout>

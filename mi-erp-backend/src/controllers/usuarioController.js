@@ -27,20 +27,13 @@ const usuarioController = {
         const { id_usuario } = req.params;
         const { nuevo_rol } = req.body;
         const adminSolicitante = req.usuario;
+        const esAdminCentral = adminSolicitante.nombre_rol === 'Admin Central';
 
-        // Seguridad Etapa 3: Solo Admin Central puede cambiar roles
-        if (adminSolicitante.nombre_rol !== 'Admin Central') {
-            return res.status(403).json({ 
-                exito: false, 
-                mensaje: "Acceso denegado. Solo un Admin Central puede cambiar roles." 
-            });
-        }
-
-        // Seguridad Etapa 3: Impedir que alguien se ascienda o modifique a sí mismo
+        // Impedir que alguien modifique su propio rol
         if (Number(id_usuario) === Number(adminSolicitante.id_usuario)) {
             return res.status(403).json({ 
                 exito: false, 
-                mensaje: "Por motivos de seguridad y separación de poderes, no puedes modificar tu propio rol o permisos." 
+                mensaje: 'Por seguridad, no puedes cambiar tu propio rol.' 
             });
         }
 
@@ -48,25 +41,54 @@ const usuarioController = {
         try {
             await client.query('BEGIN');
 
-            const usuarioAnterior = await client.query('SELECT * FROM usuarios WHERE id_usuario = $1', [id_usuario]);
+            const usuarioAnterior = await client.query(`
+                SELECT u.*, r.nombre AS nombre_rol_actual
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                WHERE u.id_usuario = $1
+            `, [id_usuario]);
             if (usuarioAnterior.rows.length === 0) {
                 await client.query('ROLLBACK');
-                return res.status(404).json({ exito: false, mensaje: "Usuario no encontrado." });
+                return res.status(404).json({ exito: false, mensaje: 'Usuario no encontrado.' });
             }
 
-            // Resolver rolId numérico si vino nombre
+            if (!esAdminCentral && usuarioAnterior.rows[0].nombre_rol_actual === 'Admin Central') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede modificar a otro Admin Central.'
+                });
+            }
+
             let rolId = Number(nuevo_rol);
+            let nombreRolDestino = '';
             if (isNaN(rolId)) {
-                const r = await client.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nuevo_rol]);
+                const r = await client.query('SELECT id_rol, nombre FROM roles WHERE LOWER(nombre) = LOWER($1)', [nuevo_rol]);
                 if (r.rows.length === 0) {
                     await client.query('ROLLBACK');
-                    return res.status(400).json({ exito: false, mensaje: "El rol especificado no existe." });
+                    return res.status(400).json({ exito: false, mensaje: 'El rol seleccionado no existe.' });
                 }
                 rolId = r.rows[0].id_rol;
+                nombreRolDestino = r.rows[0].nombre;
+            } else {
+                const r = await client.query('SELECT id_rol, nombre FROM roles WHERE id_rol = $1', [rolId]);
+                if (r.rows.length === 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ exito: false, mensaje: 'El rol seleccionado no existe.' });
+                }
+                nombreRolDestino = r.rows[0].nombre;
+            }
+
+            if (!esAdminCentral && nombreRolDestino === 'Admin Central') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede asignar el rol de Admin Central.'
+                });
             }
 
             const resUpdate = await client.query(
-                "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2 RETURNING *",
+                'UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2 RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area',
                 [rolId, id_usuario]
             );
 
@@ -76,21 +98,21 @@ const usuarioController = {
                 'CAMBIAR_ROL_USUARIO', 
                 'usuarios', 
                 Number(id_usuario), 
-                { rol_id: usuarioAnterior.rows[0].rol_id }, 
-                { rol_id: rolId }
+                { rol_id: usuarioAnterior.rows[0].rol_id, rol: usuarioAnterior.rows[0].nombre_rol_actual }, 
+                { rol_id: rolId, rol: nombreRolDestino }
             );
 
             await client.query('COMMIT');
             
             res.status(200).json({ 
                 exito: true, 
-                mensaje: `Rol de usuario actualizado correctamente a ${nuevo_rol}.`,
+                mensaje: `Rol actualizado correctamente a "${nombreRolDestino}".`,
                 usuario: resUpdate.rows[0]
             });
         } catch (error) {
             await client.query('ROLLBACK');
-            console.error("Error al actualizar rol:", error);
-            res.status(500).json({ exito: false, mensaje: "Error al modificar los permisos.", error: error.message });
+            console.error('Error al actualizar rol:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al cambiar el rol.', error: error.message });
         } finally {
             client.release();
         }
@@ -127,15 +149,18 @@ const usuarioController = {
         const { rol_id, modulo, puede_ver, puede_editar } = req.body;
         const adminSolicitante = req.usuario;
 
-        if (adminSolicitante.nombre_rol !== 'Admin Central') {
-            return res.status(403).json({ exito: false, mensaje: "Solo un Admin Central puede configurar la matriz de permisos." });
+        // Proteger el rol Admin Central para que nunca quede bloqueado
+        if (Number(rol_id) === 1) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: 'El rol Admin Central siempre tiene acceso completo por seguridad.'
+            });
         }
 
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
 
-            // UPSERT en la grilla usando (rol_id, modulo)
             const queryUpsert = `
                 INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
                 SELECT $1, p.id, COALESCE($2, false), COALESCE($3, false)
@@ -159,7 +184,7 @@ const usuarioController = {
             );
 
             await client.query('COMMIT');
-            res.json({ exito: true, mensaje: 'Permisos actualizados correctamente en la base de datos.' });
+            res.json({ exito: true, mensaje: 'Permisos guardados correctamente.' });
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Error actualizarPermisos:', error);
@@ -172,20 +197,12 @@ const usuarioController = {
     actualizarConfiguracion: async (req, res) => {
         const { id_usuario } = req.params;
         const { puede_ver_celulares, area } = req.body;
-        const adminSolicitante = req.usuario;
-
-        if (adminSolicitante.nombre_rol !== 'Admin Central') {
-            return res.status(403).json({ 
-                exito: false, 
-                mensaje: "Acceso denegado. Solo un Admin Central puede modificar los permisos y área de un usuario." 
-            });
-        }
 
         try {
             const actualizado = await Usuario.actualizarConfiguracion(id_usuario, puede_ver_celulares, area);
             res.status(200).json({
                 exito: true,
-                mensaje: 'Configuración de usuario actualizada correctamente.',
+                mensaje: 'Configuración de empleado actualizada correctamente.',
                 usuario: actualizado
             });
         } catch (error) {
@@ -216,7 +233,6 @@ const usuarioController = {
         }
 
         try {
-            // Verificar si el rol ya existe
             const rolExistente = await pool.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nombre.trim()]);
             if (rolExistente.rows.length > 0) {
                 return res.status(400).json({ exito: false, mensaje: 'Ya existe un rol con ese nombre.' });
@@ -236,7 +252,7 @@ const usuarioController = {
 
             res.status(201).json({
                 exito: true,
-                mensaje: `Rol "${nuevoRol.nombre}" creado exitosamente y registrado en la matriz de permisos.`,
+                mensaje: `Rol "${nuevoRol.nombre}" creado con éxito. Ahora puedes activar qué pestañas puede ver en la pestaña de Permisos.`,
                 rol: nuevoRol
             });
         } catch (error) {
@@ -246,37 +262,49 @@ const usuarioController = {
     },
 
     crearUsuario: async (req, res) => {
-        const { nombre_completo, email, password, rol_id, id_ubicacion, area, puede_ver_celulares } = req.body;
+        const { nombre_completo, email, password, id_ubicacion, area, puede_ver_celulares } = req.body;
+        const rol_id = req.body.rol_id ?? req.body.id_rol;
         const usuarioSolicitante = req.usuario;
+        const esAdminCentral = usuarioSolicitante.nombre_rol === 'Admin Central';
 
         if (!nombre_completo || !email || !password || !rol_id || !id_ubicacion) {
             return res.status(400).json({ 
                 exito: false, 
-                mensaje: 'Todos los campos son obligatorios: Nombre completo, Email, Contraseña, Rol y Sede/Ubicación.' 
+                mensaje: 'Por favor completa todos los campos: Nombre completo, Correo, Contraseña, Rol y Sede.' 
+            });
+        }
+
+        if (String(password).trim().length < 4) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: 'La contraseña debe tener al menos 4 letras o números.'
             });
         }
 
         try {
-            // Verificar si email ya existe
             const emailExistente = await pool.query('SELECT id_usuario FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
             if (emailExistente.rows.length > 0) {
-                return res.status(400).json({ exito: false, mensaje: 'El correo electrónico ya está registrado en el sistema.' });
+                return res.status(400).json({ exito: false, mensaje: 'Ese correo electrónico ya pertenece a otro empleado en el sistema.' });
             }
 
-            // Verificar si rol existe
-            const rolCheck = await pool.query('SELECT id_rol FROM roles WHERE id_rol = $1', [rol_id]);
+            const rolCheck = await pool.query('SELECT id_rol, nombre FROM roles WHERE id_rol = $1', [rol_id]);
             if (rolCheck.rows.length === 0) {
                 return res.status(400).json({ exito: false, mensaje: 'El rol seleccionado no es válido.' });
             }
 
-            // Verificar si ubicacion existe
-            const ubCheck = await pool.query('SELECT id_ubicacion FROM ubicaciones WHERE id_ubicacion = $1', [id_ubicacion]);
-            if (ubCheck.rows.length === 0) {
-                return res.status(400).json({ exito: false, mensaje: 'La sede/ubicación seleccionada no es válida.' });
+            if (!esAdminCentral && rolCheck.rows[0].nombre === 'Admin Central') {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede crear otro usuario con rol Admin Central.'
+                });
             }
 
-            // Encriptar contraseña
-            const password_hash = await bcrypt.hash(password, 10);
+            const ubCheck = await pool.query('SELECT id_ubicacion FROM ubicaciones WHERE id_ubicacion = $1', [id_ubicacion]);
+            if (ubCheck.rows.length === 0) {
+                return res.status(400).json({ exito: false, mensaje: 'La sede seleccionada no es válida.' });
+            }
+
+            const password_hash = await bcrypt.hash(String(password), 10);
 
             const nuevoUsuario = await Usuario.crearUsuario({
                 nombre_completo: nombre_completo.trim(),
@@ -300,7 +328,7 @@ const usuarioController = {
 
             res.status(201).json({
                 exito: true,
-                mensaje: `Usuario ${nuevoUsuario.nombre_completo} creado con éxito.`,
+                mensaje: `Empleado "${nuevoUsuario.nombre_completo}" registrado con éxito.`,
                 usuario: nuevoUsuario
             });
         } catch (error) {
@@ -313,13 +341,6 @@ const usuarioController = {
         const { id_rol } = req.params;
         const { puede_ver_otras_ubicaciones } = req.body;
         const adminSolicitante = req.usuario;
-
-        if (adminSolicitante.nombre_rol !== 'Admin Central') {
-            return res.status(403).json({ 
-                exito: false, 
-                mensaje: "Acceso denegado. Solo un Admin Central puede configurar los permisos de acceso entre ubicaciones." 
-            });
-        }
 
         try {
             const rolActualizado = await Usuario.actualizarPermisoOtrasUbicaciones(id_rol, puede_ver_otras_ubicaciones);
@@ -335,7 +356,7 @@ const usuarioController = {
 
             res.status(200).json({
                 exito: true,
-                mensaje: `Permiso de sedes para el rol "${rolActualizado.nombre}" actualizado correctamente.`,
+                mensaje: `Acceso a otras sedes actualizado para el rol "${rolActualizado.nombre}".`,
                 rol: rolActualizado
             });
         } catch (error) {
@@ -359,7 +380,7 @@ const usuarioController = {
         if (Number(id_usuario) === Number(solicitante.id_usuario)) {
             return res.status(400).json({
                 exito: false,
-                mensaje: 'No puedes eliminar tu propia cuenta de Admin Central.'
+                mensaje: 'No puedes eliminar tu propia cuenta.'
             });
         }
 
@@ -385,12 +406,166 @@ const usuarioController = {
 
             res.status(200).json({
                 exito: true,
-                mensaje: `Empleado "${resultado.usuario?.nombre_completo || ''}" eliminado exitosamente.`,
+                mensaje: `Empleado "${resultado.usuario?.nombre_completo || ''}" eliminado correctamente.`,
                 datos: resultado
             });
         } catch (error) {
             console.error('Error al eliminar usuario:', error);
             res.status(500).json({ exito: false, mensaje: 'Error interno al eliminar usuario', error: error.message });
+        }
+    },
+
+    // =========================================================================
+    // RECUPERACIÓN Y RESTABLECIMIENTO DE CONTRASEÑAS POR ENCARGADO DE ROLES
+    // =========================================================================
+
+    listarSolicitudesRecuperacion: async (req, res) => {
+        try {
+            const { rows } = await pool.query(`
+                SELECT 
+                    s.id_solicitud,
+                    s.id_usuario,
+                    s.identificador_ingresado,
+                    s.mensaje,
+                    s.estado,
+                    s.creado_en,
+                    u.nombre_completo,
+                    u.email,
+                    r.nombre AS nombre_rol,
+                    ub.nombre AS nombre_ubicacion
+                FROM solicitudes_recuperacion_password s
+                LEFT JOIN usuarios u ON s.id_usuario = u.id_usuario
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                WHERE s.estado = 'PENDIENTE'
+                ORDER BY s.creado_en DESC;
+            `);
+
+            res.status(200).json({
+                exito: true,
+                total_pendientes: rows.length,
+                solicitudes: rows
+            });
+        } catch (error) {
+            console.error('Error al listar solicitudes de recuperación:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'No se pudieron cargar las solicitudes de recuperación de contraseña.'
+            });
+        }
+    },
+
+    restablecerPasswordUsuario: async (req, res) => {
+        const { id_usuario } = req.params;
+        const { nueva_password } = req.body;
+        const encargado = req.usuario;
+        const esAdminCentral = encargado.nombre_rol === 'Admin Central';
+
+        if (!nueva_password || String(nueva_password).trim().length < 4) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: 'La nueva contraseña debe tener al menos 4 letras o números.'
+            });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const resUser = await client.query(`
+                SELECT u.id_usuario, u.nombre_completo, u.email, r.nombre AS nombre_rol
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                WHERE u.id_usuario = $1 AND COALESCE(u.activo, true) = true
+                FOR UPDATE OF u;
+            `, [id_usuario]);
+
+            if (resUser.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ exito: false, mensaje: 'Empleado no encontrado.' });
+            }
+
+            const empleado = resUser.rows[0];
+
+            // Un encargado que no sea Admin Central no puede cambiarle la contraseña al Admin Central
+            if (!esAdminCentral && empleado.nombre_rol === 'Admin Central') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede restablecer la contraseña de una cuenta Admin Central.'
+                });
+            }
+
+            const passwordHash = await bcrypt.hash(String(nueva_password), 10);
+
+            await client.query(
+                'UPDATE usuarios SET password_hash = $1 WHERE id_usuario = $2',
+                [passwordHash, id_usuario]
+            );
+
+            // Marcar como atendidas todas las solicitudes pendientes de este usuario
+            await client.query(`
+                UPDATE solicitudes_recuperacion_password
+                SET estado = 'ATENDIDA',
+                    atendido_por = $1,
+                    atendido_en = CURRENT_TIMESTAMP
+                WHERE estado = 'PENDIENTE'
+                  AND (id_usuario = $2 OR LOWER(TRIM(identificador_ingresado)) = LOWER($3));
+            `, [encargado.id_usuario, id_usuario, empleado.email]);
+
+            await registrarAuditoria(
+                client,
+                encargado.id_usuario,
+                'RESTABLECER_PASSWORD_USUARIO',
+                'usuarios',
+                Number(id_usuario),
+                null,
+                { empleado: empleado.nombre_completo, email: empleado.email }
+            );
+
+            await client.query('COMMIT');
+
+            res.status(200).json({
+                exito: true,
+                mensaje: `¡Listo! Ya se guardó la nueva contraseña para ${empleado.nombre_completo}.`
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error al restablecer contraseña:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'Ocurrió un error al guardar la nueva contraseña.'
+            });
+        } finally {
+            client.release();
+        }
+    },
+
+    descartarSolicitudRecuperacion: async (req, res) => {
+        const { id_solicitud } = req.params;
+        const encargado = req.usuario;
+
+        try {
+            const { rows } = await pool.query(`
+                UPDATE solicitudes_recuperacion_password
+                SET estado = 'DESCARTADA',
+                    atendido_por = $1,
+                    atendido_en = CURRENT_TIMESTAMP
+                WHERE id_solicitud = $2
+                RETURNING *;
+            `, [encargado.id_usuario, id_solicitud]);
+
+            if (rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Aviso no encontrado.' });
+            }
+
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Aviso descartado correctamente.'
+            });
+        } catch (error) {
+            console.error('Error al descartar solicitud:', error);
+            res.status(500).json({ exito: false, mensaje: 'No se pudo descartar el aviso.' });
         }
     }
 

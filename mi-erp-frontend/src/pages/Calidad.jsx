@@ -1,11 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { 
-  ShieldCheck, AlertTriangle, Clock, CheckCircle2, XCircle, 
-  Plus, Search, Filter, Calendar, Building, FileText, Trash2, Edit3, X,
-  Printer, Eye, Award, Check
+import {
+  AlertTriangle, Clock, CheckCircle2, XCircle,
+  Plus, Search, Filter, FileText, Trash2, Edit3, X,
+  Printer, Eye, Award
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+const crearFormularioInicial = (hoyStr, idUbicacion = '') => ({
+  codigo_certificado: '',
+  tipo_certificado: 'Certificado de Calidad e Inocuidad',
+  lote_o_producto: '',
+  entidad_emisora: 'SENASA',
+  empresa_nombre: '',
+  empresa_ruc: '',
+  id_cliente: '',
+  cliente_nombre: '',
+  cliente_ruc: '',
+  senasa_resolucion: 'N° AUTORIZACIÓN SANITARIA / RESOLUCIÓN',
+  ciudad_emision: 'Ciudad',
+  fecha_emision: hoyStr,
+  fecha_vencimiento: '',
+  id_ubicacion: idUbicacion,
+  observaciones: '',
+  archivo_url: '',
+  items_detalle: [
+    { producto: '', lote: 'LOTE-001', fecha_produccion: hoyStr, fecha_vencimiento: '', kilos: '50.00' }
+  ]
+});
 
 export default function Calidad({ usuario }) {
   const [certificados, setCertificados] = useState([]);
@@ -15,34 +37,20 @@ export default function Calidad({ usuario }) {
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('TODOS');
-  
+
+  const puedeEditarCalidad =
+    usuario?.rol === 'Admin Central' || usuario?.permisos?.calidad?.puede_editar === true;
+
   // Modales
   const [modalNuevo, setModalNuevo] = useState(false);
   const [modalEditar, setModalEditar] = useState(null);
   const [modalVerOficial, setModalVerOficial] = useState(null);
+  const [certificadoAEliminar, setCertificadoAEliminar] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
 
-  // Formulario Nuevo Certificado Oficial
   const hoyStr = new Date().toISOString().split('T')[0];
-  const [form, setForm] = useState({
-    codigo_certificado: '',
-    tipo_certificado: 'Certificado de Calidad e Inocuidad',
-    lote_o_producto: '',
-    entidad_emisora: 'SENASA',
-    id_cliente: '',
-    cliente_nombre: '',
-    cliente_ruc: '',
-    senasa_resolucion: 'N° AUTORIZACIÓN SANITARIA / RESOLUCIÓN',
-    ciudad_emision: 'Ciudad',
-    fecha_emision: hoyStr,
-    fecha_vencimiento: '',
-    id_ubicacion: '',
-    observaciones: '',
-    archivo_url: '',
-    items_detalle: [
-      { producto: 'PRODUCTO DE EJEMPLO', lote: 'LOTE-001', fecha_produccion: hoyStr, fecha_vencimiento: '', kilos: '50.00' }
-    ]
-  });
+  const [form, setForm] = useState(() => crearFormularioInicial(hoyStr));
 
   // Cerrar cualquier modal con la tecla Escape
   useEffect(() => {
@@ -51,11 +59,12 @@ export default function Calidad({ usuario }) {
         if (modalVerOficial) setModalVerOficial(null);
         if (modalNuevo) setModalNuevo(false);
         if (modalEditar) setModalEditar(null);
+        if (certificadoAEliminar) setCertificadoAEliminar(null);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [modalVerOficial, modalNuevo, modalEditar]);
+  }, [modalVerOficial, modalNuevo, modalEditar, certificadoAEliminar]);
 
   const cargarDatos = async () => {
     setCargando(true);
@@ -82,7 +91,7 @@ export default function Calidad({ usuario }) {
       }
     } catch (error) {
       console.error('Error al cargar calidad:', error);
-      toast.error('Error al cargar certificados de calidad');
+      toast.error('No se pudieron cargar los certificados de calidad.');
     } finally {
       setCargando(false);
     }
@@ -91,6 +100,141 @@ export default function Calidad({ usuario }) {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  const formatearFechaOficial = (fechaStr) => {
+    if (!fechaStr) return '';
+    const d = new Date(fechaStr);
+    if (isNaN(d.getTime())) return fechaStr;
+    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    const dia = d.getUTCDate();
+    const mes = meses[d.getUTCMonth()];
+    const anio = d.getUTCFullYear();
+    return `${dia} de ${mes} del ${anio}`;
+  };
+
+  const formatearFechaCorta = (fechaStr) => {
+    if (!fechaStr) return '-';
+    const d = new Date(fechaStr);
+    if (isNaN(d.getTime())) return fechaStr;
+    const dia = String(d.getUTCDate()).padStart(2, '0');
+    const mes = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const anio = d.getUTCFullYear();
+    return `${dia}/${mes}/${anio}`;
+  };
+
+  const escaparHtml = (texto) =>
+    String(texto ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const imprimirCertificadoA4 = (cert) => {
+    if (!cert) return;
+    const empNombre = cert.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]';
+    const empRuc = cert.empresa_ruc || '[RUC DE LA EMPRESA]';
+    const cliNombre = cert.cliente_nombre || '[NOMBRE DEL CLIENTE]';
+    const cliRuc = cert.cliente_ruc || '[RUC DEL CLIENTE]';
+    const resolucion = cert.senasa_resolucion || '[N° DE RESOLUCIÓN / AUTORIZACIÓN SANITARIA]';
+    const ciudad = cert.ciudad_emision || 'Ciudad';
+    const fechaLarga = formatearFechaOficial(cert.fecha_emision || new Date());
+
+    const items = Array.isArray(cert.items_detalle) && cert.items_detalle.length > 0
+      ? cert.items_detalle
+      : [{
+          producto: cert.lote_o_producto || '[PRODUCTO DE EJEMPLO]',
+          lote: cert.codigo_certificado || 'LOTE-001',
+          fecha_produccion: cert.fecha_emision,
+          fecha_vencimiento: cert.fecha_vencimiento,
+          kilos: '50.00'
+        }];
+
+    const filasHtml = items.map(it => `
+      <tr>
+        <td style="text-align:left; font-weight:600; text-transform:uppercase;">${escaparHtml(it.producto || '[PRODUCTO]')}</td>
+        <td style="font-family:monospace; text-transform:uppercase;">${escaparHtml(it.lote || '[LOTE]')}</td>
+        <td style="font-family:monospace;">${escaparHtml(formatearFechaCorta(it.fecha_produccion))}</td>
+        <td style="font-family:monospace;">${escaparHtml(formatearFechaCorta(it.fecha_vencimiento))}</td>
+        <td style="font-family:monospace; font-weight:700;">${Number(it.kilos || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const win = window.open('', '_blank', 'width=880,height=960');
+    if (!win) {
+      window.print();
+      return;
+    }
+
+    win.document.write(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Certificado ${escaparHtml(cert.codigo_certificado || '')}</title>
+        <style>
+          @page { size: A4; margin: 18mm; }
+          body { font-family: Arial, Helvetica, sans-serif; color: #000; background: #fff; margin: 0; padding: 12px; font-size: 13px; line-height: 1.6; }
+          .header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+          .emp-title { font-size: 13px; font-weight: 900; color: #172554; text-transform: uppercase; }
+          .emp-ruc { font-size: 11px; color: #475569; font-family: monospace; font-weight: 700; }
+          h1 { text-align: center; font-size: 20px; text-decoration: underline; margin: 22px 0; }
+          table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 12px; text-align: center; }
+          th, td { border: 1.5px solid #000; padding: 8px 6px; }
+          th { font-size: 11px; font-weight: 700; background: #f8fafc; }
+          .firma { margin-top: 34px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <svg viewBox="0 0 100 100" width="60" height="60" fill="none">
+            <circle cx="50" cy="50" r="44" stroke="#1e3a8a" stroke-width="4" stroke-dasharray="4 2" />
+            <circle cx="50" cy="50" r="35" stroke="#1e3a8a" stroke-width="2" />
+            <path d="M 32 50 L 45 63 L 70 38" stroke="#1e3a8a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+            <text x="50" y="85" text-anchor="middle" font-size="9" font-weight="bold" fill="#1e3a8a">CALIDAD</text>
+          </svg>
+          <div>
+            <div class="emp-title">${escaparHtml(empNombre)}</div>
+            <div class="emp-ruc">RUC: ${escaparHtml(empRuc)}</div>
+          </div>
+        </div>
+        <h1>Certificado de calidad</h1>
+        <p>La que suscribe la empresa <strong>${escaparHtml(empNombre)}</strong> con RUC <strong>${escaparHtml(empRuc)}</strong></p>
+        <p style="margin-top:12px;">
+          <strong>CLIENTE: ${escaparHtml(cliNombre)}</strong><br/>
+          <strong>RUC: ${escaparHtml(cliRuc)}</strong>
+        </p>
+        <p style="margin-top:12px;">
+          <strong>CERTIFICA QUE:</strong><br/>
+          <strong>${escaparHtml(resolucion)}</strong>
+        </p>
+        <p>El despacho del producto consta de los siguientes datos:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>PRODUCTO</th>
+              <th>LOTE</th>
+              <th>FECHA DE PRODUCCIÓN</th>
+              <th>FECHA DE VENCIMIENTO</th>
+              <th>KILOS</th>
+            </tr>
+          </thead>
+          <tbody>${filasHtml}</tbody>
+        </table>
+        <p style="text-align:justify;">Así mismo certifico. Que se han inspeccionado las condiciones de producción y almacenamiento, la cual consta de su producción bajo condiciones higiénico-sanitarias.</p>
+        <p style="text-align:justify;">Se expide el siguiente certificado, para la verificación de las autoridades pertinentes.</p>
+        <div class="firma">
+          <p>Atentamente,</p>
+          <p><strong>${escaparHtml(empNombre)}</strong></p>
+          <p style="margin-top:24px;">${escaparHtml(ciudad)}, ${escaparHtml(fechaLarga)}</p>
+        </div>
+        <script>
+          window.onload = function() { setTimeout(function() { window.print(); }, 200); };
+        </script>
+      </body>
+      </html>
+    `);
+    win.document.close();
+  };
 
   const handleClienteChange = (e) => {
     const val = e.target.value;
@@ -121,7 +265,7 @@ export default function Calidad({ usuario }) {
 
   const quitarFilaItem = (idx) => {
     if (form.items_detalle.length <= 1) {
-      return toast.error('Debe haber al menos un producto en el certificado');
+      return toast.error('Debe haber al menos un producto en el certificado.');
     }
     setForm(prev => ({
       ...prev,
@@ -140,65 +284,46 @@ export default function Calidad({ usuario }) {
   const handleCrear = async (e) => {
     e.preventDefault();
     if (!form.cliente_nombre.trim() || !form.cliente_ruc.trim()) {
-      return toast.error('Ingresa o selecciona el Cliente y su RUC.');
+      return toast.error('Selecciona o escribe el nombre del cliente y su RUC.');
     }
     if (!form.fecha_emision) {
       return toast.error('La fecha de emisión es obligatoria.');
     }
 
-    // Calcular fecha_vencimiento global a partir de items si no se especificó
     let fVenc = form.fecha_vencimiento;
     if (!fVenc && form.items_detalle.length > 0) {
       const fechasVenc = form.items_detalle.map(i => i.fecha_vencimiento).filter(Boolean);
       if (fechasVenc.length > 0) {
         fechasVenc.sort();
-        fVenc = fechasVenc[fechasVenc.length - 1]; // Mayor fecha de vencimiento
+        fVenc = fechasVenc[fechasVenc.length - 1];
       }
     }
     if (!fVenc) {
-      // Default: 6 meses desde emisión
       const d = new Date(form.fecha_emision);
       d.setMonth(d.getMonth() + 6);
       fVenc = d.toISOString().split('T')[0];
     }
 
-    // Generar resumen de productos / lotes
     const prodsTexto = form.items_detalle.map(i => i.producto || 'Producto').filter(Boolean).join(', ');
 
     setGuardando(true);
     try {
       const payload = {
         ...form,
+        empresa_nombre: form.empresa_nombre?.trim() || undefined,
+        empresa_ruc: form.empresa_ruc?.trim() || undefined,
         fecha_vencimiento: fVenc,
-        lote_o_producto: prodsTexto || form.lote_o_producto || 'Productos Cárnicos',
+        lote_o_producto: prodsTexto || form.lote_o_producto || 'Mercadería general',
         items_detalle: form.items_detalle
       };
 
       const res = await api.post('/calidad', payload);
-      toast.success(res.data.mensaje || 'Certificado oficial emitido exitosamente');
+      toast.success(res.data.mensaje || 'Certificado emitido con éxito.');
       setModalNuevo(false);
-      setForm({
-        codigo_certificado: '',
-        tipo_certificado: 'Certificado de Calidad (SENASA)',
-        lote_o_producto: '',
-        entidad_emisora: 'SENASA',
-        id_cliente: '',
-        cliente_nombre: '',
-        cliente_ruc: '',
-        senasa_resolucion: 'N° 000111-MINAGRI-SENASA-AREQUIPA',
-        ciudad_emision: 'Arequipa',
-        fecha_emision: hoyStr,
-        fecha_vencimiento: '',
-        id_ubicacion: ubicaciones[0]?.id_ubicacion || '',
-        observaciones: '',
-        archivo_url: '',
-        items_detalle: [
-          { producto: 'PULPA DE PIERNA DE CERDO', lote: 'PP ' + new Date().toISOString().slice(0, 10).replace(/-/g, ''), fecha_produccion: hoyStr, fecha_vencimiento: '', kilos: '30.00' }
-        ]
-      });
+      setForm(crearFormularioInicial(hoyStr, ubicaciones[0]?.id_ubicacion || ''));
       cargarDatos();
     } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'Error al emitir certificado');
+      toast.error(error.response?.data?.mensaje || 'No se pudo emitir el certificado.');
     } finally {
       setGuardando(false);
     }
@@ -210,24 +335,28 @@ export default function Calidad({ usuario }) {
     setGuardando(true);
     try {
       const res = await api.put(`/calidad/${modalEditar.id_certificado}`, modalEditar);
-      toast.success(res.data.mensaje || 'Certificado actualizado');
+      toast.success(res.data.mensaje || 'Certificado actualizado.');
       setModalEditar(null);
       cargarDatos();
     } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'Error al actualizar certificado');
+      toast.error(error.response?.data?.mensaje || 'No se pudo actualizar el certificado.');
     } finally {
       setGuardando(false);
     }
   };
 
-  const handleEliminar = async (id, codigo) => {
-    if (!window.confirm(`¿Estás seguro de eliminar el certificado ${codigo}?`)) return;
+  const confirmarEliminar = async () => {
+    if (!certificadoAEliminar) return;
+    setEliminando(true);
     try {
-      await api.delete(`/calidad/${id}`);
-      toast.success('Certificado eliminado');
+      await api.delete(`/calidad/${certificadoAEliminar.id_certificado}`);
+      toast.success('Certificado eliminado.');
+      setCertificadoAEliminar(null);
       cargarDatos();
     } catch (error) {
-      toast.error('Error al eliminar certificado');
+      toast.error('No se pudo eliminar el certificado.');
+    } finally {
+      setEliminando(false);
     }
   };
 
@@ -243,13 +372,15 @@ export default function Calidad({ usuario }) {
     if (filtroEstado !== 'TODOS' && estadoReal !== filtroEstado) return false;
     if (busqueda.trim() !== '') {
       const q = busqueda.toLowerCase();
-      const matchCod = c.codigo_certificado?.toLowerCase().includes(q);
-      const matchTipo = c.tipo_certificado?.toLowerCase().includes(q);
-      const matchLote = c.lote_o_producto?.toLowerCase().includes(q);
-      const matchEntidad = c.entidad_emisora?.toLowerCase().includes(q);
-      const matchUbic = c.nombre_ubicacion?.toLowerCase().includes(q);
-      const matchCli = c.cliente_nombre?.toLowerCase().includes(q) || c.cliente_ruc?.includes(q);
-      return matchCod || matchTipo || matchLote || matchEntidad || matchUbic || matchCli;
+      return (
+        c.codigo_certificado?.toLowerCase().includes(q) ||
+        c.tipo_certificado?.toLowerCase().includes(q) ||
+        c.lote_o_producto?.toLowerCase().includes(q) ||
+        c.entidad_emisora?.toLowerCase().includes(q) ||
+        c.nombre_ubicacion?.toLowerCase().includes(q) ||
+        c.cliente_nombre?.toLowerCase().includes(q) ||
+        c.cliente_ruc?.includes(q)
+      );
     }
     return true;
   });
@@ -257,70 +388,36 @@ export default function Calidad({ usuario }) {
   const getBadgeEstado = (estado) => {
     switch (estado) {
       case 'VIGENTE':
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"><CheckCircle2 size={12} className="mr-1" /> Vigente</span>;
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 size={12} className="mr-1" /> Vigente
+          </span>
+        );
       case 'POR_VENCER':
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200"><AlertTriangle size={12} className="mr-1" /> Por Vencer</span>;
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+            <AlertTriangle size={12} className="mr-1" /> Por Vencer
+          </span>
+        );
       case 'VENCIDO':
-        return <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200"><XCircle size={12} className="mr-1" /> Vencido</span>;
+        return (
+          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200">
+            <XCircle size={12} className="mr-1" /> Vencido
+          </span>
+        );
       default:
-        return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700">{estado}</span>;
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700">
+            {estado}
+          </span>
+        );
     }
-  };
-
-  // Formato español de fecha: "Arequipa, 9 de octubre del 2026"
-  const formatearFechaOficial = (fechaStr) => {
-    if (!fechaStr) return '';
-    const d = new Date(fechaStr);
-    if (isNaN(d.getTime())) return fechaStr;
-    const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-    const dia = d.getUTCDate();
-    const mes = meses[d.getUTCMonth()];
-    const anio = d.getUTCFullYear();
-    return `${dia} de ${mes} del ${anio}`;
-  };
-
-  const formatearFechaCorta = (fechaStr) => {
-    if (!fechaStr) return '-';
-    const d = new Date(fechaStr);
-    if (isNaN(d.getTime())) return fechaStr;
-    const dia = String(d.getUTCDate()).padStart(2, '0');
-    const mes = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const anio = d.getUTCFullYear();
-    return `${dia}/${mes}/${anio}`;
   };
 
   return (
     <div className="space-y-6">
-      
-      {/* CSS para Impresión Oficial limpia */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @media print {
-          body * {
-            visibility: hidden !important;
-          }
-          #certificado-imprimible, #certificado-imprimible * {
-            visibility: visible !important;
-          }
-          #certificado-imprimible {
-            position: fixed !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 0 !important;
-            padding: 20mm 20mm !important;
-            background: white !important;
-            color: black !important;
-            box-shadow: none !important;
-            border: none !important;
-          }
-          .no-print {
-            display: none !important;
-          }
-        }
-      `}} />
 
-      {/* Header */}
+      {/* Cabecera */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex items-center space-x-3">
           <div className="p-3 bg-emerald-600 text-white rounded-xl shadow-md shadow-emerald-600/20">
@@ -328,20 +425,25 @@ export default function Calidad({ usuario }) {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-blue-950">Calidad y Sanidad</h1>
-            <p className="text-slate-500 text-sm">Emisión de certificados oficiales SENASA / Procesos Cárnicos S.A.C. y control de inocuidad</p>
+            <p className="text-slate-500 text-sm">
+              Certificados de calidad e higiene listos para ver, imprimir o guardar en PDF
+            </p>
           </div>
         </div>
 
-        <button
-          onClick={() => setModalNuevo(true)}
-          className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-emerald-600/20"
-        >
-          <Plus size={16} />
-          <span>+ Emitir Certificado Oficial</span>
-        </button>
+        {puedeEditarCalidad && (
+          <button
+            type="button"
+            onClick={() => setModalNuevo(true)}
+            className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+          >
+            <Plus size={16} />
+            <span>Crear Certificado</span>
+          </button>
+        )}
       </div>
 
-      {/* KPI Cards */}
+      {/* Tarjetas Resumen */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
@@ -355,7 +457,7 @@ export default function Calidad({ usuario }) {
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vigentes Conformes</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vigentes</p>
             <h3 className="text-2xl font-bold text-emerald-600 mt-1">{vigentes}</h3>
           </div>
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
@@ -375,7 +477,7 @@ export default function Calidad({ usuario }) {
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vencidos / Vencen Hoy</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vencidos</p>
             <h3 className="text-2xl font-bold text-red-600 mt-1">{vencidos}</h3>
           </div>
           <div className="p-3 bg-red-50 text-red-600 rounded-xl">
@@ -384,13 +486,13 @@ export default function Calidad({ usuario }) {
         </div>
       </div>
 
-      {/* Barra de Filtros y Búsqueda */}
+      {/* Barra de Búsqueda y Filtro */}
       <div className="flex flex-col sm:flex-row gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
         <div className="relative flex-1">
           <Search size={18} className="absolute left-3.5 top-3 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por cliente, RUC, código, SENASA o producto..."
+            placeholder="Buscar por cliente, RUC, número de certificado o producto..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-hidden"
@@ -415,10 +517,10 @@ export default function Calidad({ usuario }) {
       {/* Tabla de Certificados */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         {cargando ? (
-          <div className="p-12 text-center text-slate-500 font-medium">Cargando registros sanitarios y certificados...</div>
+          <div className="p-12 text-center text-slate-500 font-medium">Cargando certificados...</div>
         ) : certificadosFiltrados.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
-            No se encontraron certificados de calidad con los filtros aplicados.
+            No se encontraron certificados de calidad.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -428,8 +530,8 @@ export default function Calidad({ usuario }) {
                   <th className="p-4 font-semibold">N° Certificado</th>
                   <th className="p-4 font-semibold">Cliente y RUC</th>
                   <th className="p-4 font-semibold">Productos / Lotes</th>
-                  <th className="p-4 font-semibold">Entidad / Resolución</th>
-                  <th className="p-4 font-semibold">Emisión / Vencimiento</th>
+                  <th className="p-4 font-semibold">Autorización</th>
+                  <th className="p-4 font-semibold">Fechas</th>
                   <th className="p-4 font-semibold text-center">Estado</th>
                   <th className="p-4 font-semibold text-center">Acciones</th>
                 </tr>
@@ -437,14 +539,13 @@ export default function Calidad({ usuario }) {
               <tbody className="divide-y divide-slate-100 text-sm">
                 {certificadosFiltrados.map((c) => {
                   const estadoReal = c.estado_actualizado || c.estado;
-                  const dias = c.dias_restantes;
 
                   return (
                     <tr key={c.id_certificado} className="hover:bg-slate-50 transition-colors">
                       <td className="p-4">
                         <div className="font-bold text-slate-900 font-mono text-xs">{c.codigo_certificado}</div>
                         <span className="inline-flex mt-1 items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          FORMATO OFICIAL
+                          FORMATO A4
                         </span>
                       </td>
                       <td className="p-4">
@@ -452,19 +553,19 @@ export default function Calidad({ usuario }) {
                         <div className="text-xs text-slate-500 font-mono">RUC: {c.cliente_ruc || '-'}</div>
                       </td>
                       <td className="p-4 max-w-xs truncate">
-                        <div className="font-medium text-slate-700 truncate">{c.lote_o_producto || 'Cárnicos'}</div>
+                        <div className="font-medium text-slate-700 truncate">{c.lote_o_producto || 'Producto'}</div>
                         {Array.isArray(c.items_detalle) && c.items_detalle.length > 0 && (
                           <div className="text-[11px] text-slate-400 mt-0.5">
-                            {c.items_detalle.length} producto(s) amparado(s)
+                            {c.items_detalle.length} producto(s) incluido(s)
                           </div>
                         )}
                       </td>
                       <td className="p-4">
                         <span className="inline-flex px-2 py-0.5 rounded-md text-xs font-bold bg-slate-100 text-slate-800">
-                          {c.entidad_emisora}
+                          {c.entidad_emisora || 'SENASA'}
                         </span>
                         <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[180px]">
-                          {c.senasa_resolucion || 'SENASA AREQUIPA'}
+                          {c.senasa_resolucion || 'Autorización sanitaria'}
                         </div>
                       </td>
                       <td className="p-4">
@@ -481,37 +582,42 @@ export default function Calidad({ usuario }) {
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center space-x-1.5">
                           <button
+                            type="button"
                             onClick={() => setModalVerOficial(c)}
-                            title="Ver Certificado Oficial (Formato A4)"
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg transition-colors border border-blue-200"
+                            title="Ver documento completo"
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg transition-colors border border-blue-200 cursor-pointer"
                           >
                             <Eye size={13} />
                             <span>Ver Oficial</span>
                           </button>
                           <button
-                            onClick={() => {
-                              setModalVerOficial(c);
-                              setTimeout(() => window.print(), 300);
-                            }}
-                            title="Imprimir / Exportar a PDF"
-                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors border border-slate-200"
+                            type="button"
+                            onClick={() => imprimirCertificadoA4(c)}
+                            title="Imprimir o guardar en PDF"
+                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors border border-slate-200 cursor-pointer"
                           >
                             <Printer size={14} />
                           </button>
-                          <button
-                            onClick={() => setModalEditar(c)}
-                            title="Editar certificado"
-                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleEliminar(c.id_certificado, c.codigo_certificado)}
-                            title="Eliminar"
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {puedeEditarCalidad && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setModalEditar(c)}
+                                title="Editar certificado"
+                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCertificadoAEliminar(c)}
+                                title="Eliminar certificado"
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -525,16 +631,16 @@ export default function Calidad({ usuario }) {
 
       {/* MODAL DOCUMENTO OFICIAL A4 (GENÉRICO Y FÁCILMENTE CERRABLE) */}
       {modalVerOficial && (
-        <div 
+        <div
           onClick={() => setModalVerOficial(null)}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-2 sm:p-4 overflow-y-auto"
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
             className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden my-6 max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150"
           >
-            {/* Barra Superior Fija (SIEMPRE VISIBLE / NUNCA SE DESAPARECE AL HACER SCROLL) */}
-            <div className="no-print sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-4 bg-slate-900 text-white border-b border-slate-800 shadow-md">
+            {/* Barra Superior Fija */}
+            <div className="sticky top-0 z-30 flex items-center justify-between p-3.5 sm:p-4 bg-slate-900 text-white border-b border-slate-800 shadow-md">
               <div className="flex items-center space-x-2">
                 <Award size={20} className="text-emerald-400" />
                 <span className="font-bold text-sm">Vista Previa — Certificado de Calidad</span>
@@ -542,16 +648,16 @@ export default function Calidad({ usuario }) {
               <div className="flex items-center space-x-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm"
+                  onClick={() => imprimirCertificadoA4(modalVerOficial)}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
                 >
                   <Printer size={14} />
-                  <span>🖨️ Imprimir / Guardar PDF</span>
+                  <span>Imprimir / Guardar PDF</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setModalVerOficial(null)}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm ml-2"
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm ml-2 cursor-pointer"
                 >
                   <X size={15} />
                   <span>Cerrar</span>
@@ -559,15 +665,12 @@ export default function Calidad({ usuario }) {
               </div>
             </div>
 
-            {/* CUERPO DEL DOCUMENTO CON SCROLL INDEPENDIENTE */}
+            {/* Cuerpo A4 con scroll independiente */}
             <div className="overflow-y-auto flex-1 p-4 sm:p-8 bg-slate-100/60">
-              {/* DOCUMENTO OFICIAL IMPRIMIBLE A4 */}
-              <div 
-                id="certificado-imprimible" 
-                className="p-10 sm:p-14 bg-white text-black font-sans max-w-2xl mx-auto shadow-sm border border-slate-200" 
-                style={{ minHeight: '850px', color: '#000', backgroundColor: '#fff' }}
+              <div
+                className="p-8 sm:p-14 bg-white text-black font-sans max-w-2xl mx-auto shadow-sm border border-slate-200"
+                style={{ minHeight: '780px', color: '#000', backgroundColor: '#fff' }}
               >
-                {/* LOGO SUPERIOR IZQUIERDA (EMBLEMA GENÉRICO) */}
                 <div className="flex items-start mb-4">
                   <div className="flex items-center space-x-3">
                     <div className="text-blue-900">
@@ -591,14 +694,12 @@ export default function Calidad({ usuario }) {
                   </div>
                 </div>
 
-                {/* TÍTULO SUBRAYADO Y CENTRADO */}
                 <div className="text-center my-6">
                   <h2 className="text-xl font-bold underline underline-offset-4 tracking-tight" style={{ fontFamily: 'Arial, sans-serif' }}>
                     Certificado de calidad
                   </h2>
                 </div>
 
-                {/* CUERPO DEL DOCUMENTO */}
                 <div className="space-y-4 text-xs leading-relaxed" style={{ fontFamily: 'Arial, sans-serif', fontSize: '13px', lineHeight: '1.6' }}>
                   <p>
                     La que suscribe la empresa <strong>{modalVerOficial.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]'}</strong> con RUC <strong>{modalVerOficial.empresa_ruc || '[RUC DE LA EMPRESA]'}</strong>
@@ -616,11 +717,8 @@ export default function Calidad({ usuario }) {
                     </p>
                   </div>
 
-                  <p className="pt-2">
-                    El despacho del producto consta de los siguientes datos:
-                  </p>
+                  <p className="pt-2">El despacho del producto consta de los siguientes datos:</p>
 
-                  {/* TABLA CON BORDES COMPLETOS NEGROS */}
                   <table className="w-full border-collapse border border-black my-5 text-xs text-center" style={{ border: '1.5px solid black' }}>
                     <thead>
                       <tr className="border-b border-black font-bold">
@@ -648,7 +746,7 @@ export default function Calidad({ usuario }) {
                           <td className="border border-black p-2 font-mono uppercase">{modalVerOficial.codigo_certificado || '[LOTE-001]'}</td>
                           <td className="border border-black p-2 font-mono">{formatearFechaCorta(modalVerOficial.fecha_emision)}</td>
                           <td className="border border-black p-2 font-mono">{formatearFechaCorta(modalVerOficial.fecha_vencimiento)}</td>
-                          <td className="border border-black p-2 font-mono font-semibold">100.00</td>
+                          <td className="border border-black p-2 font-mono font-semibold">50.00</td>
                         </tr>
                       )}
                     </tbody>
@@ -673,16 +771,16 @@ export default function Calidad({ usuario }) {
               </div>
             </div>
 
-            {/* Barra Inferior Fija de Cierre y Acciones */}
-            <div className="no-print p-3 sm:p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
+            {/* Barra Inferior Fija */}
+            <div className="p-3 sm:p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
               <span className="text-xs text-slate-500 hidden sm:inline">
                 Presiona <b>ESC</b> o haz clic fuera para cerrar
               </span>
               <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center space-x-1.5"
+                  onClick={() => imprimirCertificadoA4(modalVerOficial)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center space-x-1.5 cursor-pointer"
                 >
                   <Printer size={14} />
                   <span>Imprimir / PDF</span>
@@ -690,24 +788,23 @@ export default function Calidad({ usuario }) {
                 <button
                   type="button"
                   onClick={() => setModalVerOficial(null)}
-                  className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-slate-800 rounded-xl text-xs font-bold transition-colors"
+                  className="px-4 py-2 bg-slate-300 hover:bg-slate-400 text-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                 >
                   Cerrar Vista Previa
                 </button>
               </div>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* Modal Emitir Certificado Oficial */}
-      {modalNuevo && (
-        <div 
-          onClick={() => setModalNuevo(false)}
+      {/* Modal Emitir Certificado */}
+      {modalNuevo && puedeEditarCalidad && (
+        <div
+          onClick={() => !guardando && setModalNuevo(false)}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
             className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-100 overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-150"
           >
@@ -717,26 +814,55 @@ export default function Calidad({ usuario }) {
                   <Award size={20} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">Emitir Certificado de Calidad</h3>
-                  <p className="text-xs text-slate-500">Plantilla oficial de certificación sanitaria e inocuidad</p>
+                  <h3 className="text-lg font-bold text-blue-950">Crear Certificado de Calidad</h3>
+                  <p className="text-xs text-slate-500">Completa los datos para generar el documento oficial en formato A4</p>
                 </div>
               </div>
-              <button type="button" onClick={() => setModalNuevo(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button
+                type="button"
+                onClick={() => setModalNuevo(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
                 <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleCrear} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
-              
+              {/* DATOS DE TU EMPRESA EMISORA (OPCIONAL) */}
+              <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100 space-y-3">
+                <label className="text-xs font-bold text-blue-950 uppercase tracking-wider block">
+                  Datos de tu Empresa Emisora (Opcional — puedes personalizarlo)
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nombre o Razón Social de tu Empresa</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: Mi Empresa S.A.C."
+                      value={form.empresa_nombre}
+                      onChange={(e) => setForm({ ...form, empresa_nombre: e.target.value })}
+                      className="w-full border border-slate-300 bg-white rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">RUC de tu Empresa</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: 20100000001"
+                      value={form.empresa_ruc}
+                      onChange={(e) => setForm({ ...form, empresa_ruc: e.target.value })}
+                      className="w-full border border-slate-300 bg-white rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* SECCIÓN CLIENTE */}
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Datos del Cliente Destinatario *
                   </label>
-                  {clientes.length > 0 && (
-                    <span className="text-[11px] text-indigo-600 font-medium">Seleccionar de la lista de clientes</span>
-                  )}
                 </div>
 
                 {clientes.length > 0 && (
@@ -746,7 +872,7 @@ export default function Calidad({ usuario }) {
                       onChange={handleClienteChange}
                       className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-medium bg-white focus:ring-2 focus:ring-emerald-500"
                     >
-                      <option value="">-- Seleccionar de clientes existentes --</option>
+                      <option value="">-- Elegir un cliente registrado (o escribir abajo) --</option>
                       {clientes.map(c => (
                         <option key={c.id_cliente} value={c.id_cliente}>
                           {c.razon_social_o_nombre || c.nombre_comercial} (RUC: {c.numero_documento})
@@ -758,25 +884,25 @@ export default function Calidad({ usuario }) {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Razón Social / Cliente</label>
-                    <input 
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nombre / Razón Social del Cliente *</label>
+                    <input
                       type="text"
                       required
-                      placeholder="Ej: GILMA DISTRIBUCIONES S.A.C."
+                      placeholder="Ej: Comercial Ejemplo S.A.C."
                       value={form.cliente_nombre}
                       onChange={(e) => setForm({ ...form, cliente_nombre: e.target.value })}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500"
+                      className="w-full border border-slate-300 bg-white rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">RUC del Cliente</label>
-                    <input 
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">RUC del Cliente *</label>
+                    <input
                       type="text"
                       required
-                      placeholder="Ej: 20607411311"
+                      placeholder="Ej: 20123456789"
                       value={form.cliente_ruc}
                       onChange={(e) => setForm({ ...form, cliente_ruc: e.target.value })}
-                      className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-emerald-500"
+                      className="w-full border border-slate-300 bg-white rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-2 focus:ring-emerald-500"
                     />
                   </div>
                 </div>
@@ -785,20 +911,26 @@ export default function Calidad({ usuario }) {
               {/* RESOLUCIÓN Y CIUDAD */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Certifica Que (SENASA) *</label>
-                  <input 
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    N° de Autorización / Resolución *
+                  </label>
+                  <input
                     type="text"
                     required
+                    placeholder="Ej: N° 0001-AUTORIZACION-SANITARIA"
                     value={form.senasa_resolucion}
                     onChange={(e) => setForm({ ...form, senasa_resolucion: e.target.value })}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Ciudad de Emisión *</label>
-                  <input 
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Ciudad de Emisión *
+                  </label>
+                  <input
                     type="text"
                     required
+                    placeholder="Ej: Lima"
                     value={form.ciudad_emision}
                     onChange={(e) => setForm({ ...form, ciudad_emision: e.target.value })}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500"
@@ -808,8 +940,8 @@ export default function Calidad({ usuario }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Fecha Emisión *</label>
-                  <input 
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Fecha de Emisión *</label>
+                  <input
                     type="date"
                     required
                     value={form.fecha_emision}
@@ -835,17 +967,25 @@ export default function Calidad({ usuario }) {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Despacho de Productos Amparados ({form.items_detalle.length})
+                    Productos Incluidos ({form.items_detalle.length})
                   </label>
                   <button
                     type="button"
                     onClick={agregarFilaItem}
-                    className="text-xs font-bold text-emerald-600 hover:text-emerald-800 flex items-center space-x-1"
+                    className="text-xs font-bold text-emerald-600 hover:text-emerald-800 flex items-center space-x-1 cursor-pointer"
                   >
                     <Plus size={14} />
-                    <span>+ Añadir Producto</span>
+                    <span>+ Añadir otro producto</span>
                   </button>
                 </div>
+
+                {productosLista.length > 0 && (
+                  <datalist id="lista-productos-calidad">
+                    {productosLista.map(p => (
+                      <option key={p.id_producto} value={p.nombre} />
+                    ))}
+                  </datalist>
+                )}
 
                 <div className="border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
@@ -866,7 +1006,8 @@ export default function Calidad({ usuario }) {
                             <input
                               type="text"
                               required
-                              placeholder="Ej: PULPA DE CERDO"
+                              list="lista-productos-calidad"
+                              placeholder="Ej: Producto A"
                               value={item.producto}
                               onChange={(e) => actualizarItem(idx, 'producto', e.target.value)}
                               className="w-full min-w-[130px] border border-slate-300 rounded px-2 py-1 text-xs uppercase"
@@ -876,7 +1017,7 @@ export default function Calidad({ usuario }) {
                             <input
                               type="text"
                               required
-                              placeholder="PP 20260928"
+                              placeholder="LOTE-001"
                               value={item.lote}
                               onChange={(e) => actualizarItem(idx, 'lote', e.target.value)}
                               className="w-full min-w-[90px] border border-slate-300 rounded px-2 py-1 text-xs font-mono uppercase"
@@ -904,8 +1045,9 @@ export default function Calidad({ usuario }) {
                             <input
                               type="number"
                               step="0.01"
+                              min="0"
                               required
-                              placeholder="30.00"
+                              placeholder="50.00"
                               value={item.kilos}
                               onChange={(e) => actualizarItem(idx, 'kilos', e.target.value)}
                               className="w-20 border border-slate-300 rounded px-2 py-1 text-xs font-mono font-bold"
@@ -915,7 +1057,7 @@ export default function Calidad({ usuario }) {
                             <button
                               type="button"
                               onClick={() => quitarFilaItem(idx)}
-                              className="text-slate-400 hover:text-red-600 p-1 rounded"
+                              className="text-slate-400 hover:text-red-600 p-1 rounded cursor-pointer"
                             >
                               <X size={14} />
                             </button>
@@ -928,10 +1070,12 @@ export default function Calidad({ usuario }) {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Observaciones / Dictamen Opcional</label>
-                <textarea 
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Observaciones (Opcional)
+                </label>
+                <textarea
                   rows={2}
-                  placeholder="Observaciones adicionales de inocuidad o transporte..."
+                  placeholder="Notas adicionales sobre el transporte o almacenamiento..."
                   value={form.observaciones}
                   onChange={(e) => setForm({ ...form, observaciones: e.target.value })}
                   className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs focus:ring-2 focus:ring-emerald-500"
@@ -942,16 +1086,16 @@ export default function Calidad({ usuario }) {
                 <button
                   type="button"
                   onClick={() => setModalNuevo(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={guardando}
-                  className="px-5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-50"
+                  className="px-5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-50 cursor-pointer"
                 >
-                  {guardando ? 'Emitiendo...' : '✓ Emitir Certificado Oficial'}
+                  {guardando ? 'Guardando...' : '✓ Guardar Certificado'}
                 </button>
               </div>
             </form>
@@ -960,28 +1104,59 @@ export default function Calidad({ usuario }) {
       )}
 
       {/* Modal Editar Certificado */}
-      {modalEditar && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      {modalEditar && puedeEditarCalidad && (
+        <div
+          onClick={() => !guardando && setModalEditar(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          >
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div className="flex items-center space-x-3">
                 <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
                   <Edit3 size={20} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">Editar Certificado</h3>
+                  <h3 className="text-lg font-bold text-blue-950">Modificar Certificado</h3>
                   <p className="text-xs text-slate-500">{modalEditar.codigo_certificado}</p>
                 </div>
               </div>
-              <button onClick={() => setModalEditar(null)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button
+                type="button"
+                onClick={() => setModalEditar(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
                 <X size={20} />
               </button>
             </div>
 
             <form onSubmit={handleActualizar} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Empresa Emisora</label>
+                  <input
+                    type="text"
+                    value={modalEditar.empresa_nombre || ''}
+                    onChange={(e) => setModalEditar({ ...modalEditar, empresa_nombre: e.target.value })}
+                    className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">RUC Empresa</label>
+                  <input
+                    type="text"
+                    value={modalEditar.empresa_ruc || ''}
+                    onChange={(e) => setModalEditar({ ...modalEditar, empresa_ruc: e.target.value })}
+                    className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Cliente</label>
-                <input 
+                <input
                   type="text"
                   value={modalEditar.cliente_nombre || ''}
                   onChange={(e) => setModalEditar({ ...modalEditar, cliente_nombre: e.target.value })}
@@ -991,8 +1166,8 @@ export default function Calidad({ usuario }) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">RUC</label>
-                  <input 
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">RUC Cliente</label>
+                  <input
                     type="text"
                     value={modalEditar.cliente_ruc || ''}
                     onChange={(e) => setModalEditar({ ...modalEditar, cliente_ruc: e.target.value })}
@@ -1006,17 +1181,17 @@ export default function Calidad({ usuario }) {
                     onChange={(e) => setModalEditar({ ...modalEditar, estado: e.target.value })}
                     className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-white"
                   >
-                    <option value="VIGENTE">VIGENTE</option>
-                    <option value="POR_VENCER">POR_VENCER</option>
-                    <option value="VENCIDO">VENCIDO</option>
-                    <option value="SUSPENDIDO">SUSPENDIDO</option>
+                    <option value="VIGENTE">Vigente</option>
+                    <option value="POR_VENCER">Por Vencer</option>
+                    <option value="VENCIDO">Vencido</option>
+                    <option value="SUSPENDIDO">Suspendido</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Observaciones</label>
-                <textarea 
+                <textarea
                   rows={2}
                   value={modalEditar.observaciones || ''}
                   onChange={(e) => setModalEditar({ ...modalEditar, observaciones: e.target.value })}
@@ -1028,19 +1203,63 @@ export default function Calidad({ usuario }) {
                 <button
                   type="button"
                   onClick={() => setModalEditar(null)}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={guardando}
-                  className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-50"
+                  className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-50 cursor-pointer"
                 >
-                  {guardando ? 'Guardando...' : 'Actualizar Certificado'}
+                  {guardando ? 'Guardando...' : 'Guardar Cambios'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Confirmar Eliminación */}
+      {certificadoAEliminar && puedeEditarCalidad && (
+        <div
+          onClick={() => !eliminando && setCertificadoAEliminar(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="p-3 bg-red-100 text-red-600 rounded-xl shrink-0">
+                <AlertTriangle size={22} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-blue-950">¿Eliminar este certificado?</h3>
+                <p className="text-xs text-slate-500 font-mono">{certificadoAEliminar.codigo_certificado}</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600">
+              Se eliminará el certificado de <strong>{certificadoAEliminar.cliente_nombre || 'este cliente'}</strong>. Esta acción no se puede deshacer.
+            </p>
+            <div className="flex justify-end space-x-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={() => setCertificadoAEliminar(null)}
+                className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={confirmarEliminar}
+                className="px-5 py-2 text-sm font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                {eliminando ? 'Eliminando...' : 'Sí, eliminar'}
+              </button>
+            </div>
           </div>
         </div>
       )}

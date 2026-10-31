@@ -6,15 +6,14 @@ const requierePermiso = require('../middlewares/requierePermiso');
 
 router.use(verificarToken);
 
-// Listar ubicaciones y divisiones
-router.get('/', requierePermiso('ubicaciones', 'ver'), ubicacionController.listar);
-router.get('/divisiones', requierePermiso('ubicaciones', 'ver'), ubicacionController.listarDivisiones);
-router.get('/:id', requierePermiso('ubicaciones', 'ver'), ubicacionController.obtenerPorId);
+// Listar ubicaciones está disponible para cualquier empleado autenticado (usado en selectores de Stock, Pedidos, Calidad, Reuniones)
+router.get('/', ubicacionController.listar);
+router.get('/divisiones', ubicacionController.listarDivisiones);
+router.get('/:id', ubicacionController.obtenerPorId);
 
-// Mutaciones
+// Mutaciones exclusivas para usuarios con permiso de edición en Ubicaciones
 router.post('/', requierePermiso('ubicaciones', 'editar'), ubicacionController.crear);
 router.put('/:id', requierePermiso('ubicaciones', 'editar'), ubicacionController.actualizar);
 router.delete('/:id', requierePermiso('ubicaciones', 'editar'), ubicacionController.eliminar);
 
 module.exports = router;
-

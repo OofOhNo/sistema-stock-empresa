@@ -14,20 +14,26 @@ const requierePermiso = (modulo, accion) => {
                 return next();
             }
 
+            const modulos = Array.isArray(modulo) ? modulo : [modulo];
+            const etiquetaModulo = modulos.join(' / ');
+
             const query = `
-                SELECT rp.puede_ver, rp.puede_editar
+                SELECT 
+                    COALESCE(BOOL_OR(rp.puede_ver), FALSE) AS puede_ver,
+                    COALESCE(BOOL_OR(rp.puede_editar), FALSE) AS puede_editar,
+                    COUNT(*) AS total
                 FROM roles_permisos rp
                 JOIN roles r ON rp.rol_id = r.id_rol
                 JOIN permisos p ON rp.permiso_id = p.id
-                WHERE r.nombre = $1 AND p.modulo = $2;
+                WHERE r.nombre = $1 AND p.modulo = ANY($2::text[]);
             `;
             
-            const { rows } = await pool.query(query, [nombre_rol, modulo]);
+            const { rows } = await pool.query(query, [nombre_rol, modulos]);
 
-            if (rows.length === 0) {
+            if (!rows[0] || Number(rows[0].total) === 0) {
                 return res.status(403).json({ 
                     exito: false, 
-                    mensaje: `Acceso restringido: No tienes permisos configurados para el módulo "${modulo}".` 
+                    mensaje: `Acceso restringido: No tienes permisos configurados para la sección "${etiquetaModulo}".` 
                 });
             }
 
@@ -36,14 +42,14 @@ const requierePermiso = (modulo, accion) => {
             if (accion === 'ver' && !permisos.puede_ver) {
                 return res.status(403).json({ 
                     exito: false, 
-                    mensaje: `Acceso restringido: No tienes permiso de lectura en el módulo "${modulo}".` 
+                    mensaje: `Acceso restringido: No tienes permiso para ver la sección "${etiquetaModulo}".` 
                 });
             }
 
             if (accion === 'editar' && !permisos.puede_editar) {
                 return res.status(403).json({ 
                     exito: false, 
-                    mensaje: `Acceso restringido: No tienes permiso de edición/acción en el módulo "${modulo}".` 
+                    mensaje: `Acceso restringido: No tienes permiso para crear o modificar datos en "${etiquetaModulo}".` 
                 });
             }
 

@@ -7,20 +7,22 @@ const soloAdminCentral = (req, res, next) => {
     if (req.usuario.nombre_rol !== 'Admin Central') {
         return res.status(403).json({
             exito: false,
-            mensaje: 'Acceso denegado. Solo el Admin Central tiene autorización para ver y supervisar mensajes.'
+            mensaje: 'Acceso denegado. Solo el Admin Central puede supervisar conversaciones.'
         });
     }
     next();
 };
 
-// Rutas de Mensajería y Supervisión exclusivas para Admin Central
-router.use(verificarToken, soloAdminCentral);
+// Rutas de mensajería interna entre todos los empleados autenticados
+router.use(verificarToken);
 
 router.post('/', mensajeController.enviarMensaje);
 router.get('/contactos', mensajeController.listarContactos);
+router.get('/no-leidos', mensajeController.contarNoLeidos);
 router.get('/chat/:id_otro', mensajeController.obtenerChat);
-router.get('/supervision', mensajeController.supervisarConversaciones);
-router.get('/supervision/:u1/:u2', mensajeController.supervisarChatPar);
+
+// Rutas de Supervisión Silenciosa: EXCLUSIVAS para Admin Central
+router.get('/supervision', soloAdminCentral, mensajeController.supervisarConversaciones);
+router.get('/supervision/:u1/:u2', soloAdminCentral, mensajeController.supervisarChatPar);
 
 module.exports = router;
-

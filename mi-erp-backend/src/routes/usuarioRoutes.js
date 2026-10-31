@@ -2,13 +2,16 @@ const express = require('express');
 const router = express.Router();
 const usuarioController = require('../controllers/usuarioController');
 
-//importamos nuestros guardias
 const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
-//colocamos los guardias EN MEDIO de la ruta y el controlador - el orden importa: primero verifica el token, luego verifica el rol, luego muestra los datos
 router.get('/', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarUsuarios);
 router.post('/', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.crearUsuario);
+
+// Solicitudes de recuperación de contraseña olvidada (encargados con permiso de Editar en Personal y Roles)
+router.get('/recuperaciones', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.listarSolicitudesRecuperacion);
+router.put('/recuperaciones/:id_solicitud/descartar', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.descartarSolicitudRecuperacion);
+router.put('/:id_usuario/restablecer-password', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.restablecerPasswordUsuario);
 
 router.get('/roles', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarRoles);
 router.post('/roles', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.crearRol);

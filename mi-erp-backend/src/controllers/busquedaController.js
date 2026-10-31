@@ -24,21 +24,18 @@ function parsearParametrosBusqueda(rawQuery) {
     let mes = null;
     let anio = null;
 
-    // 1. Extraer cliente si viene con "cliente: ..." o "en: ..."
     const clienteMatch = texto.match(/(?:cliente|en|de)\s*:\s*([^,;]+)/i);
     if (clienteMatch) {
         cliente = clienteMatch[1].trim();
         texto = texto.replace(clienteMatch[0], ' ');
     }
 
-    // 2. Extraer formato "5 de noviembre" o "05 de noviembre"
     const diaMesMatch = texto.match(/(\b\d{1,2}\b)\s+(?:de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|setiembre|septiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|set|sep|oct|nov|dic)\b/i);
     if (diaMesMatch) {
         dia = parseInt(diaMesMatch[1], 10);
         mes = mesesMap[diaMesMatch[2].toLowerCase()];
         texto = texto.replace(diaMesMatch[0], ' ');
     } else {
-        // Buscar mes solo
         for (const [nombreMes, numMes] of Object.entries(mesesMap)) {
             const regexMes = new RegExp(`\\b${nombreMes}\\b`, 'i');
             if (regexMes.test(texto)) {
@@ -49,15 +46,12 @@ function parsearParametrosBusqueda(rawQuery) {
         }
     }
 
-    // 3. Extraer año (e.g. 2024, 2025, 2026)
     const anioMatch = texto.match(/\b(202[0-9])\b/);
     if (anioMatch) {
         anio = parseInt(anioMatch[1], 10);
         texto = texto.replace(anioMatch[0], ' ');
     }
 
-    // 4. Limpiar tokens restantes
-    // Eliminar palabras de enlace comunes como 'de', 'el', 'la', 'los', 'en', comas y dos puntos
     const palabrasSueltas = texto
         .replace(/[,;:]/g, ' ')
         .split(/\s+/)
@@ -89,6 +83,8 @@ const busquedaController = {
 
         const parsed = parsearParametrosBusqueda(q);
         const { cliente, dia, mes, anio, terminoLibre } = parsed;
+        const puedeVerTodas = req.usuario?.nombre_rol === 'Admin Central' || req.usuario?.puede_ver_otras_ubicaciones === true;
+        const idUbicacionUsuario = req.usuario?.id_ubicacion;
 
         try {
             // --- 1. BÚSQUEDA DE COMPROBANTES (FACTURAS/BOLETAS) ---
@@ -96,6 +92,10 @@ const busquedaController = {
             const paramsComp = [];
             let pIdxComp = 1;
 
+            if (!puedeVerTodas && idUbicacionUsuario) {
+                whereComprobantes.push(`p.id_ubicacion = $${pIdxComp++}`);
+                paramsComp.push(idUbicacionUsuario);
+            }
             if (dia) {
                 whereComprobantes.push(`EXTRACT(DAY FROM c.fecha_emision) = $${pIdxComp++}`);
                 paramsComp.push(dia);
@@ -118,6 +118,7 @@ const busquedaController = {
                     c.serie ILIKE $${pIdxComp} OR 
                     c.correlativo::text ILIKE $${pIdxComp} OR 
                     CONCAT(c.serie, '-', c.correlativo) ILIKE $${pIdxComp} OR 
+                    CONCAT(c.serie, '-', LPAD(c.correlativo::text, 6, '0')) ILIKE $${pIdxComp} OR
                     cl.razon_social_o_nombre ILIKE $${pIdxComp} OR 
                     cl.nombre_comercial ILIKE $${pIdxComp} OR 
                     cl.numero_documento ILIKE $${pIdxComp} OR 
@@ -156,17 +157,24 @@ const busquedaController = {
             const paramsPed = [];
             let pIdxPed = 1;
 
+            if (!puedeVerTodas && idUbicacionUsuario) {
+                wherePedidos.push(`p.id_ubicacion = $${pIdxPed++}`);
+                paramsPed.push(idUbicacionUsuario);
+            }
             if (dia) {
-                wherePedidos.push(`EXTRACT(DAY FROM p.creado_en) = $${pIdxPed++}`);
+                wherePedidos.push(`(EXTRACT(DAY FROM COALESCE(p.fecha_limite_despacho, p.creado_en)) = $${pIdxPed} OR EXTRACT(DAY FROM p.creado_en) = $${pIdxPed})`);
                 paramsPed.push(dia);
+                pIdxPed++;
             }
             if (mes) {
-                wherePedidos.push(`EXTRACT(MONTH FROM p.creado_en) = $${pIdxPed++}`);
+                wherePedidos.push(`(EXTRACT(MONTH FROM COALESCE(p.fecha_limite_despacho, p.creado_en)) = $${pIdxPed} OR EXTRACT(MONTH FROM p.creado_en) = $${pIdxPed})`);
                 paramsPed.push(mes);
+                pIdxPed++;
             }
             if (anio) {
-                wherePedidos.push(`EXTRACT(YEAR FROM p.creado_en) = $${pIdxPed++}`);
+                wherePedidos.push(`(EXTRACT(YEAR FROM COALESCE(p.fecha_limite_despacho, p.creado_en)) = $${pIdxPed} OR EXTRACT(YEAR FROM p.creado_en) = $${pIdxPed})`);
                 paramsPed.push(anio);
+                pIdxPed++;
             }
             if (cliente) {
                 wherePedidos.push(`(cl.razon_social_o_nombre ILIKE $${pIdxPed} OR cl.nombre_comercial ILIKE $${pIdxPed} OR cl.numero_documento ILIKE $${pIdxPed})`);
@@ -179,8 +187,8 @@ const busquedaController = {
                     cl.razon_social_o_nombre ILIKE $${pIdxPed} OR 
                     cl.nombre_comercial ILIKE $${pIdxPed} OR 
                     cl.numero_documento ILIKE $${pIdxPed} OR 
-                    p.solicitado_por ILIKE $${pIdxPed} OR 
-                    p.usuario_creador ILIKE $${pIdxPed} OR 
+                    COALESCE(p.solicitado_por, '') ILIKE $${pIdxPed} OR 
+                    COALESCE(u.nombre_completo, '') ILIKE $${pIdxPed} OR 
                     p.estado_pedido ILIKE $${pIdxPed}
                 )`);
                 paramsPed.push(`%${terminoLibre}%`);
@@ -195,15 +203,17 @@ const busquedaController = {
                     p.estado_pedido,
                     p.monto_total,
                     p.solicitado_por,
-                    p.usuario_creador,
+                    u.nombre_completo AS usuario_creador,
                     p.etiquetado,
                     p.sellado_vacio,
+                    p.fecha_limite_despacho,
                     p.creado_en,
                     cl.razon_social_o_nombre AS cliente_nombre,
                     cl.nombre_comercial AS cliente_comercial,
                     cl.numero_documento AS cliente_ruc
                 FROM pedidos p
                 LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                LEFT JOIN usuarios u ON p.id_usuario = u.id_usuario
                 ${wherePedClause}
                 ORDER BY p.creado_en DESC
                 LIMIT 25;
@@ -227,4 +237,3 @@ const busquedaController = {
 };
 
 module.exports = busquedaController;
-

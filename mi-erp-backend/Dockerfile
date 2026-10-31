@@ -16,5 +16,5 @@ COPY . .
 EXPOSE 3000
 
 # Al iniciar: ejecuta las migraciones automáticas en Supabase/PostgreSQL y luego levanta Express
-CMD ["sh", "-c", "node scripts/migrate.js && node index.js"]
+CMD ["sh", "-c", "node scripts/migrate.js --repair && node index.js"]
 

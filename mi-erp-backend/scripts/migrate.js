@@ -72,7 +72,12 @@ function destino(u) {
 function getSslConfig(connectionUrl) {
     if (!connectionUrl) return false;
     const lower = connectionUrl.toLowerCase();
-    if (lower.includes('sslmode=disable') || lower.includes('localhost') || lower.includes('127.0.0.1')) {
+    if (
+        lower.includes('sslmode=disable') ||
+        lower.includes('localhost') ||
+        lower.includes('127.0.0.1') ||
+        lower.includes('postgres-local')
+    ) {
         return false;
     }
     return {
@@ -117,9 +122,26 @@ function getSslConfig(connectionUrl) {
                 await client.query(schemaSql);
                 console.log('✔ Estructura base inicializada exitosamente desde schema.sql.');
             }
+            const bcrypt = require('bcryptjs');
+            const defaultHash = await bcrypt.hash('admin123', 10);
             await client.query(`
                 INSERT INTO divisiones (id_division, nombre) VALUES (1, 'División Central') ON CONFLICT (id_division) DO NOTHING;
                 INSERT INTO ubicaciones (id_ubicacion, id_division, nombre) VALUES (1, 1, 'Sede Principal') ON CONFLICT (id_ubicacion) DO NOTHING;
+                INSERT INTO roles (id_rol, nombre, descripcion, puede_ver_otras_ubicaciones)
+                VALUES (1, 'Admin Central', 'Acceso total y configuración del sistema', TRUE)
+                ON CONFLICT (id_rol) DO NOTHING;
+            `);
+            await client.query(
+                `INSERT INTO usuarios (id_usuario, nombre_completo, email, password_hash, rol_id, id_ubicacion, puede_ver_celulares, area)
+                 VALUES (3, 'Administrador General', 'admin@erp.local', $1, 1, 1, TRUE, 'ADMINISTRACION')
+                 ON CONFLICT (id_usuario) DO NOTHING`,
+                [defaultHash]
+            );
+            await client.query(`
+                SELECT setval('divisiones_id_division_seq', COALESCE((SELECT MAX(id_division) FROM divisiones), 1));
+                SELECT setval('ubicaciones_id_ubicacion_seq', COALESCE((SELECT MAX(id_ubicacion) FROM ubicaciones), 1));
+                SELECT setval('roles_id_seq', COALESCE((SELECT MAX(id_rol) FROM roles), 1));
+                SELECT setval('usuarios_id_usuario_seq', COALESCE((SELECT MAX(id_usuario) FROM usuarios), 1));
             `);
         }
 
