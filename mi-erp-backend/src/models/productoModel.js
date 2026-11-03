@@ -41,21 +41,24 @@ class ProductoModel {
         const {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo,
-            id_unidad, unidad_medida
+            id_unidad, unidad_medida,
+            tipo_afectacion_igv, codigo_producto_sunat
         } = data;
         
         const query = `
             INSERT INTO productos (
                 sku, nombre, descripcion, id_categoria, 
                 precio_venta, precio_costo, stock_minimo, 
-                id_unidad, unidad_medida, activo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+                id_unidad, unidad_medida, tipo_afectacion_igv, codigo_producto_sunat, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
             RETURNING *
         `;
         const values = [
-            sku, nombre, descripcion, id_categoria,
+            sku, nombre, descripcion, id_categoria || null,
             precio_venta, precio_costo || 0, stock_minimo || 5,
-            id_unidad || null, unidad_medida || 'Unidad'
+            id_unidad || null, unidad_medida || 'Unidad',
+            ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : '10',
+            codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null
         ];
         
         const { rows } = await pool.query(query, values);
@@ -66,7 +69,8 @@ class ProductoModel {
         const {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo, activo,
-            id_unidad, unidad_medida
+            id_unidad, unidad_medida,
+            tipo_afectacion_igv, codigo_producto_sunat
         } = data;
 
         const query = `
@@ -81,14 +85,18 @@ class ProductoModel {
                 stock_minimo = COALESCE($7, stock_minimo),
                 activo = COALESCE($8, activo),
                 id_unidad = COALESCE($9, id_unidad),
-                unidad_medida = COALESCE($10, unidad_medida)
-            WHERE id_producto = $11
+                unidad_medida = COALESCE($10, unidad_medida),
+                tipo_afectacion_igv = COALESCE($11, tipo_afectacion_igv),
+                codigo_producto_sunat = COALESCE($12, codigo_producto_sunat)
+            WHERE id_producto = $13
             RETURNING *
         `;
         const values = [
             sku, nombre, descripcion, id_categoria,
             precio_venta, precio_costo, stock_minimo, activo,
             id_unidad || null, unidad_medida || null,
+            ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : null,
+            codigo_producto_sunat !== undefined ? (codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null) : null,
             id
         ];
 

@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS productos (
     id_categoria INTEGER REFERENCES categorias(id_categoria) ON DELETE SET NULL,
     id_unidad INTEGER REFERENCES unidades_medida(id_unidad) ON DELETE SET NULL,
     unidad_medida VARCHAR(50) DEFAULT 'Unidad',
+    tipo_afectacion_igv VARCHAR(2) NOT NULL DEFAULT '10' CHECK (tipo_afectacion_igv IN ('10', '20', '30', '40')),
+    codigo_producto_sunat VARCHAR(20),
     precio_venta NUMERIC(10,2) NOT NULL,
     precio_costo NUMERIC(12,2) DEFAULT 0,
     stock_minimo INTEGER DEFAULT 5,
@@ -133,7 +135,7 @@ CREATE TABLE IF NOT EXISTS movimientos_kardex (
 -- 6. CLIENTES, PEDIDOS Y DETALLE
 CREATE TABLE IF NOT EXISTS clientes (
     id_cliente SERIAL PRIMARY KEY,
-    tipo_documento VARCHAR(2) NOT NULL CHECK (tipo_documento IN ('1', '6', '4')),
+    tipo_documento VARCHAR(2) NOT NULL CHECK (tipo_documento IN ('0', '1', '4', '6', '7')),
     numero_documento VARCHAR(15) NOT NULL UNIQUE,
     razon_social_o_nombre VARCHAR(255) NOT NULL,
     nombre_comercial VARCHAR(255),
@@ -171,7 +173,25 @@ CREATE TABLE IF NOT EXISTS detalle_pedidos (
     subtotal NUMERIC(10,2) NOT NULL
 );
 
--- 7. FACTURACIÓN ELECTRÓNICA Y COMPROBANTES
+-- 7. FACTURACIÓN ELECTRÓNICA, CONFIGURACIÓN SUNAT/NUBEFACT Y COMPROBANTES
+CREATE TABLE IF NOT EXISTS configuracion_empresa_sunat (
+    id_config INTEGER PRIMARY KEY DEFAULT 1 CHECK (id_config = 1),
+    ruc_emisor VARCHAR(11) NOT NULL DEFAULT '20600000001',
+    razon_social VARCHAR(255) NOT NULL DEFAULT 'EMPRESA DEMO ERP S.A.C.',
+    nombre_comercial VARCHAR(255) DEFAULT 'SISTEMA ERP PERÚ',
+    direccion_fiscal VARCHAR(255) DEFAULT 'Av. Empresarial 100, Lima - Perú',
+    ubigeo VARCHAR(6) DEFAULT '150101',
+    modo_integracion VARCHAR(30) NOT NULL DEFAULT 'DEMO_NUBEFACT'
+        CHECK (modo_integracion IN ('DEMO_NUBEFACT', 'NUBEFACT_REAL')),
+    nubefact_ruta TEXT DEFAULT 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
+    nubefact_token TEXT DEFAULT 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+    igv_porcentaje NUMERIC(5,2) NOT NULL DEFAULT 18.00,
+    detraccion_cuenta_bn VARCHAR(50) DEFAULT '00-000-000000',
+    enviar_automaticamente_sunat BOOLEAN NOT NULL DEFAULT TRUE,
+    enviar_automaticamente_cliente BOOLEAN NOT NULL DEFAULT TRUE,
+    actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS series_sunat (
     id_serie SERIAL PRIMARY KEY,
     tipo_comprobante VARCHAR(2) NOT NULL,
@@ -182,18 +202,39 @@ CREATE TABLE IF NOT EXISTS series_sunat (
 CREATE TABLE IF NOT EXISTS comprobantes (
     id_comprobante SERIAL PRIMARY KEY,
     id_pedido INTEGER REFERENCES pedidos(id_pedido) ON DELETE SET NULL,
-    tipo_comprobante VARCHAR(2) NOT NULL CHECK (tipo_comprobante IN ('01', '03', '07')),
+    tipo_comprobante VARCHAR(2) NOT NULL CHECK (tipo_comprobante IN ('01', '03', '07', '08')),
     serie VARCHAR(4) NOT NULL,
     correlativo INTEGER NOT NULL,
     monto_subtotal NUMERIC(10,2) NOT NULL,
+    monto_gravada NUMERIC(10,2) DEFAULT 0,
+    monto_exonerada NUMERIC(10,2) DEFAULT 0,
+    monto_inafecta NUMERIC(10,2) DEFAULT 0,
     monto_igv NUMERIC(10,2) NOT NULL,
     monto_total NUMERIC(10,2) NOT NULL,
     forma_pago VARCHAR(20) DEFAULT 'CONTADO' CHECK (forma_pago IN ('CONTADO', 'CREDITO')),
     dias_credito INTEGER DEFAULT 0,
     fecha_vencimiento_cuota DATE,
-    estado_sunat VARCHAR(50) DEFAULT 'PENDIENTE_ENVIO' CHECK (estado_sunat IN ('PENDIENTE_ENVIO', 'ACEPTADO', 'RECHAZADO', 'ANULADO')),
+    medio_pago_sunat VARCHAR(3) DEFAULT '008',
+    tipo_operacion_sunat VARCHAR(4) DEFAULT '0101',
+    aplica_detraccion BOOLEAN DEFAULT FALSE,
+    codigo_detraccion VARCHAR(5),
+    porcentaje_detraccion NUMERIC(5,2) DEFAULT 0,
+    monto_detraccion NUMERIC(10,2) DEFAULT 0,
+    id_comprobante_referencia INTEGER REFERENCES comprobantes(id_comprobante) ON DELETE SET NULL,
+    codigo_motivo_nc VARCHAR(2),
+    descripcion_motivo_nc TEXT,
+    estado_sunat VARCHAR(50) DEFAULT 'PENDIENTE_ENVIO' CHECK (estado_sunat IN ('PENDIENTE_ENVIO', 'ACEPTADO', 'OBSERVADO', 'RECHAZADO', 'ANULADO')),
     codigo_hash TEXT,
     mensaje_cdr TEXT,
+    cadena_qr TEXT,
+    monto_en_letras VARCHAR(255),
+    enlace_pdf TEXT,
+    enlace_xml TEXT,
+    enlace_cdr TEXT,
+    xml_firmado TEXT,
+    cdr_xml TEXT,
+    respuesta_ose_json JSONB,
+    modo_emision VARCHAR(30) DEFAULT 'DEMO_NUBEFACT',
     fecha_emision TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT comprobantes_tipo_comprobante_serie_correlativo_key UNIQUE (tipo_comprobante, serie, correlativo)
 );
@@ -304,7 +345,7 @@ CREATE TABLE IF NOT EXISTS reportes_errores (
     fecha_solucion TIMESTAMP
 );
 
--- 12. PERMISOS ESPECÍFICOS POR USUARIO PARA VER CELULARES DE CLIENTES
+-- 12. PERMISOS ESPECÍFFICOS POR USUARIO PARA VER CELULARES DE CLIENTES
 CREATE TABLE IF NOT EXISTS permisos_celulares_clientes (
     id_permiso SERIAL PRIMARY KEY,
     id_usuario INTEGER NOT NULL REFERENCES usuarios(id_usuario) ON DELETE CASCADE,

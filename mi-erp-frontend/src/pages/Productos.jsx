@@ -20,7 +20,8 @@ export default function Productos({ usuario }) {
     precio_venta: '',
     precio_costo: '',
     stock_minimo: '',
-    id_unidad: ''
+    id_unidad: '',
+    tipo_afectacion_igv: '10'
   });
   const [editando, setEditando] = useState(null);
   const [guardandoProd, setGuardandoProd] = useState(false);
@@ -148,7 +149,8 @@ export default function Productos({ usuario }) {
         precio_venta: '',
         precio_costo: '',
         stock_minimo: '',
-        id_unidad: unidades[0]?.id_unidad || ''
+        id_unidad: unidades[0]?.id_unidad || '',
+        tipo_afectacion_igv: '10'
       });
       setEditando(null);
       cargarProductos();
@@ -169,7 +171,8 @@ export default function Productos({ usuario }) {
       precio_venta: prod.precio_venta ?? '',
       precio_costo: prod.precio_costo ?? '',
       stock_minimo: prod.stock_minimo ?? '',
-      id_unidad: prod.id_unidad || unidades[0]?.id_unidad || ''
+      id_unidad: prod.id_unidad || unidades[0]?.id_unidad || '',
+      tipo_afectacion_igv: prod.tipo_afectacion_igv || '10'
     });
     setEditando(prod.id_producto);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -346,7 +349,7 @@ export default function Productos({ usuario }) {
               </div>
 
               {/* Unidad de Medida */}
-              <div className="md:col-span-2">
+              <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                     Unidad de Medida *
@@ -357,7 +360,7 @@ export default function Productos({ usuario }) {
                     className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1 cursor-pointer"
                   >
                     <Plus size={13} />
-                    <span>Crear nueva unidad</span>
+                    <span>Nueva</span>
                   </button>
                 </div>
                 <select
@@ -372,6 +375,23 @@ export default function Productos({ usuario }) {
                       {u.nombre.toUpperCase()}
                     </option>
                   ))}
+                </select>
+              </div>
+
+              {/* Tipo de Afectación IGV (Catálogo 07 SUNAT) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Impuesto (IGV SUNAT)
+                </label>
+                <select
+                  name="tipo_afectacion_igv"
+                  value={form.tipo_afectacion_igv || '10'}
+                  onChange={handleChange}
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white font-medium"
+                >
+                  <option value="10">Con IGV (18% - Gravado)</option>
+                  <option value="20">Exonerado de IGV (0%)</option>
+                  <option value="30">Inafecto de IGV (0%)</option>
                 </select>
               </div>
 

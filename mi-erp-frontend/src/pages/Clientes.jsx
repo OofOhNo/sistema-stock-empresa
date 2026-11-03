@@ -95,8 +95,16 @@ export default function Clientes({ usuario }) {
 
   const guardarCliente = async (e) => {
     e.preventDefault();
-    if (!form.numero_documento.trim() || !form.razon_social_o_nombre.trim()) {
+    const docLimpio = form.numero_documento.trim();
+    if (!docLimpio || !form.razon_social_o_nombre.trim()) {
       return toast.error('El número de RUC/DNI y el nombre del cliente son obligatorios.');
+    }
+
+    if (form.tipo_documento === '6' && !/^(10|15|16|17|20)\d{9}$/.test(docLimpio)) {
+      return toast.error('El RUC debe tener exactamente 11 números y empezar con 10 o 20.');
+    }
+    if (form.tipo_documento === '1' && !/^\d{8}$/.test(docLimpio)) {
+      return toast.error('El DNI debe tener exactamente 8 números.');
     }
 
     setGuardando(true);
@@ -385,22 +393,33 @@ export default function Clientes({ usuario }) {
                     onChange={(e) => setForm({ ...form, tipo_documento: e.target.value })}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-indigo-500 bg-white"
                   >
-                    <option value="6">RUC (Empresa / Negocio)</option>
-                    <option value="1">DNI (Persona)</option>
+                    <option value="6">RUC - Empresa o Negocio (11 dígitos)</option>
+                    <option value="1">DNI - Persona Natural (8 dígitos)</option>
                     <option value="4">Carnet de Extranjería</option>
+                    <option value="7">Pasaporte</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Número de RUC o DNI *
+                    Número de {form.tipo_documento === '6' ? 'RUC (11 dígitos)' : form.tipo_documento === '1' ? 'DNI (8 dígitos)' : 'Documento'} *
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="Ej: 20123456789"
+                    placeholder={form.tipo_documento === '6' ? 'Ej: 20123456789' : 'Ej: 45678912'}
                     value={form.numero_documento}
-                    onChange={(e) => setForm({ ...form, numero_documento: e.target.value })}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const soloDig = val.trim();
+                      let nuevoTipo = form.tipo_documento;
+                      if (/^\d{8}$/.test(soloDig) && form.tipo_documento === '6') {
+                        nuevoTipo = '1';
+                      } else if (/^(10|15|16|17|20)\d{9}$/.test(soloDig) && form.tipo_documento === '1') {
+                        nuevoTipo = '6';
+                      }
+                      setForm({ ...form, numero_documento: val, tipo_documento: nuevoTipo });
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:border-indigo-500 font-mono"
                   />
                 </div>
