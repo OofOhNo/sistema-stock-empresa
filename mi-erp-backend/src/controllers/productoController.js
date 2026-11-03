@@ -190,7 +190,51 @@ const deleteUnidad = async (req, res) => {
     }
 };
 
+const getTipos = async (req, res) => {
+    try {
+        const tipos = await ProductoModel.getTipos();
+        res.status(200).json({ exito: true, tipos });
+    } catch (error) {
+        console.error('Error fetching tipos:', error);
+        res.status(500).json({ exito: false, message: 'Error al obtener tipos de producto', error: error.message });
+    }
+};
+
+const createTipo = async (req, res) => {
+    const { nombre, descripcion } = req.body;
+    if (!nombre || !nombre.trim()) {
+        return res.status(400).json({ exito: false, message: 'El nombre del tipo de producto es obligatorio.' });
+    }
+    try {
+        const nuevo = await ProductoModel.createTipo({ nombre, descripcion });
+        res.status(201).json({ exito: true, mensaje: 'Tipo de producto creado exitosamente.', tipo: nuevo });
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.status(400).json({ 
+                exito: false, 
+                message: `Ya existe un tipo de producto registrado con el nombre "${nombre}".` 
+            });
+        }
+        console.error('Error creating tipo:', error);
+        res.status(500).json({ exito: false, message: 'Error al crear tipo de producto', error: error.message });
+    }
+};
+
+const deleteTipo = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await ProductoModel.deleteTipo(id);
+        res.status(200).json({ exito: true, message: 'Tipo de producto eliminado con éxito.' });
+    } catch (error) {
+        console.error('Error deleting tipo:', error);
+        res.status(400).json({ exito: false, message: error.message || 'Error al eliminar tipo de producto' });
+    }
+};
+
 module.exports = {
+    getTipos,
+    createTipo,
+    deleteTipo,
     getAllProductos,
     getProductoById,
     createProducto,

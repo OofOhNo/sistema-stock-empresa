@@ -123,6 +123,7 @@ const Pedido = {
                     p.sellado_vacio,
                     p.solicitado_por,
                     p.id_ubicacion,
+                    p.peso_total,
                     COALESCE(p.stock_descontado, false) AS stock_descontado,
                     p.despachado_en,
                     EXISTS (
@@ -149,7 +150,8 @@ const Pedido = {
                     (SELECT COUNT(*) FROM fotos_pedidos fp WHERE fp.id_pedido = p.id_pedido AND fp.expira_en > CURRENT_TIMESTAMP)::int AS total_fotos,
                     c.numero_documento AS ruc_cliente,
                     c.tipo_documento AS tipo_documento_cliente,
-                    c.razon_social_o_nombre AS cliente, 
+                    c.razon_social_o_nombre AS razon_social_cliente,
+                    COALESCE(NULLIF(c.nombre_comercial, ''), NULLIF(c.contacto, ''), c.razon_social_o_nombre) AS cliente, 
                     c.nombre_comercial,
                     c.contacto,
                     c.cargo,
@@ -204,7 +206,7 @@ const Pedido = {
         }
     },
 
-    marcarListoDespacho: async (id_pedido, usuario) => {
+    marcarListoDespacho: async (id_pedido, usuario, peso_total = null) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -219,9 +221,10 @@ const Pedido = {
                 throw new Error('Este pedido ya fue despachado.');
             }
 
+            const pesoVal = peso_total !== null && !isNaN(Number(peso_total)) ? Number(peso_total) : null;
             const resUpdate = await client.query(
-                "UPDATE pedidos SET estado_pedido = 'LISTO_DESPACHO' WHERE id_pedido = $1 RETURNING *",
-                [id_pedido]
+                "UPDATE pedidos SET estado_pedido = 'LISTO_DESPACHO', peso_total = COALESCE($2, peso_total) WHERE id_pedido = $1 RETURNING *",
+                [id_pedido, pesoVal]
             );
 
             await registrarAuditoria(

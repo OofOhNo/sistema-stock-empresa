@@ -43,7 +43,8 @@ async function construirPayloadUsuario(usuario) {
             nombre_ubicacion: usuario.nombre_ubicacion || 'Sede Central',
             puede_ver_celulares: puedeVerCelulares,
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
-            area: area
+            area: area,
+            seccion_facturacion: usuario.seccion_facturacion || 'AMBAS'
         },
         usuarioFront: {
             id_usuario: usuario.id_usuario,
@@ -55,6 +56,7 @@ async function construirPayloadUsuario(usuario) {
             puede_ver_celulares: puedeVerCelulares,
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
             area: area,
+            seccion_facturacion: usuario.seccion_facturacion || 'AMBAS',
             permisos: permisosMap
         }
     };

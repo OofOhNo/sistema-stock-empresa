@@ -14,6 +14,8 @@ export default function Stock({ usuario }) {
   const [ubicacionesLista, setUbicacionesLista] = useState([]);
   const [subVistaInventario, setSubVistaInventario] = useState('total');
   const [filtroSede, setFiltroSede] = useState('todas');
+  const [tiposProducto, setTiposProducto] = useState([]);
+  const [filtroTipoProducto, setFiltroTipoProducto] = useState('todos');
   const [busquedaStock, setBusquedaStock] = useState('');
 
   const [historial, setHistorial] = useState([]);
@@ -77,9 +79,10 @@ export default function Stock({ usuario }) {
     setCargando(true);
     setError('');
     try {
-      const [resStock, resUbic] = await Promise.all([
+      const [resStock, resUbic, resTipos] = await Promise.all([
         api.get('/stock'),
-        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } }))
+        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
+        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } }))
       ]);
 
       const stTotal = resStock.data.stock_total || resStock.data.datos || [];
@@ -94,6 +97,7 @@ export default function Stock({ usuario }) {
 
       const ubs = resUbic.data.ubicaciones || resUbic.data.datos || [];
       setUbicacionesLista(ubs);
+      setTiposProducto(resTipos.data?.tipos || []);
 
       setForm(f => ({
         ...f,
@@ -267,12 +271,15 @@ export default function Stock({ usuario }) {
 
   const filtrarPorTexto = (item) => {
     const q = busquedaStock.toLowerCase().trim();
-    if (!q) return true;
-    return (
+    const coincideTexto = !q || (
       (item.sku || '').toLowerCase().includes(q) ||
       (item.nombre_producto || item.nombre || '').toLowerCase().includes(q) ||
       (item.nombre_ubicacion || '').toLowerCase().includes(q)
     );
+    const coincideTipo = filtroTipoProducto === 'todos' ||
+      String(item.id_tipo_producto) === String(filtroTipoProducto) ||
+      (item.tipo_producto_nombre && item.tipo_producto_nombre.toLowerCase() === filtroTipoProducto.toLowerCase());
+    return coincideTexto && coincideTipo;
   };
 
   const totalAnulados = historial.filter(m => m.estado === 'ANULADO').length;
@@ -426,6 +433,23 @@ export default function Stock({ usuario }) {
                 />
               </div>
 
+
+              <div className="flex items-center space-x-1.5">
+                <span className="text-xs font-medium text-slate-500">Tipo:</span>
+                <select
+                  value={filtroTipoProducto}
+                  onChange={(e) => setFiltroTipoProducto(e.target.value)}
+                  className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="todos">🏷️ Todos los tipos</option>
+                  {tiposProducto.map(t => (
+                    <option key={t.id_tipo_producto} value={t.id_tipo_producto}>
+                      {t.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {subVistaInventario === 'ubicacion' && (
                 puedeVerOtrasUbicaciones ? (
                   <div className="flex items-center space-x-2">
@@ -501,7 +525,14 @@ export default function Stock({ usuario }) {
                         return (
                           <tr key={item.id_producto || index} className="hover:bg-slate-50 transition-colors">
                             <td className="p-4 font-mono text-xs font-bold text-slate-900">{item.sku}</td>
-                            <td className="p-4 text-slate-700 font-medium">{item.nombre_producto || item.nombre}</td>
+                            <td className="p-4 text-slate-700 font-medium">
+                              <div>{item.nombre_producto || item.nombre}</div>
+                              {item.tipo_producto_nombre && (
+                                <span className="inline-block mt-0.5 text-[10px] font-semibold px-2 py-0.2 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  {item.tipo_producto_nombre}
+                                </span>
+                              )}
+                            </td>
                             <td className="p-4 text-center">
                               <span className="px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700 font-mono">
                                 {item.simbolo_unidad || item.unidad_medida || 'und'}

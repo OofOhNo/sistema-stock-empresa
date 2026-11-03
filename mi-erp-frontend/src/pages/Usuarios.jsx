@@ -144,7 +144,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     rol_id: '',
     id_ubicacion: '',
     area: 'ADMINISTRACION',
-    puede_ver_celulares: false
+    puede_ver_celulares: false,
+    seccion_facturacion: 'AMBAS'
   });
 
   const [formRol, setFormRol] = useState({
@@ -265,10 +266,10 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
-  const actualizarConfiguracion = async (idUsuario, puede_ver_celulares, area) => {
+  const actualizarConfiguracion = async (idUsuario, puede_ver_celulares, area, seccion_facturacion) => {
     setActualizando(idUsuario);
     try {
-      const res = await api.put(`/usuarios/${idUsuario}/configuracion`, { puede_ver_celulares, area });
+      const res = await api.put(`/usuarios/${idUsuario}/configuracion`, { puede_ver_celulares, area, seccion_facturacion });
       toast.success(res.data.mensaje);
       await cargarDatos();
       if (idUsuario === usuarioLogueado?.id_usuario) {
@@ -429,7 +430,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       rol_id: rolInicial?.id_rol || '',
       id_ubicacion: ubicaciones[0]?.id_ubicacion || '',
       area: 'ADMINISTRACION',
-      puede_ver_celulares: false
+      puede_ver_celulares: false,
+      seccion_facturacion: 'AMBAS'
     });
     setVerPasswordNuevo(true);
     setModalNuevoUsuario(true);
@@ -822,6 +824,7 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                             <th className="p-4 font-semibold">Sede</th>
                             <th className="p-4 font-semibold text-center">Rol</th>
                             <th className="p-4 font-semibold text-center">Área (Hora de pedidos)</th>
+                            <th className="p-4 font-semibold text-center">Facturación</th>
                             <th className="p-4 font-semibold text-center">📱 Teléfonos de Clientes</th>
                             {puedeEditarUsuarios && (
                               <th className="p-4 font-semibold text-center">Contraseña y Acciones</th>
@@ -872,11 +875,27 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                                     <select
                                       disabled={!puedeEditarUsuarios || actualizando === user.id_usuario || noPuedoModificarEsteAdmin}
                                       value={user.area || 'ADMINISTRACION'}
-                                      onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, e.target.value)}
+                                      onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, e.target.value, user.seccion_facturacion)}
                                       className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 font-semibold disabled:opacity-50 cursor-pointer"
                                     >
                                       <option value="ADMINISTRACION">Administración</option>
                                       <option value="PRODUCCION">Producción (-1 hora)</option>
+                                    </select>
+                                  </div>
+                                </td>
+
+                                {/* Acceso a Facturación */}
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    <select
+                                      disabled={!puedeEditarUsuarios || actualizando === user.id_usuario || noPuedoModificarEsteAdmin}
+                                      value={user.seccion_facturacion || 'AMBAS'}
+                                      onChange={(e) => actualizarConfiguracion(user.id_usuario, user.puede_ver_celulares, user.area, e.target.value)}
+                                      className="bg-white border border-slate-300 rounded-lg text-xs px-2 py-1.5 focus:outline-hidden focus:border-indigo-500 font-semibold disabled:opacity-50 cursor-pointer"
+                                    >
+                                      <option value="AMBAS">Ambas (Pedidos y Manual)</option>
+                                      <option value="PEDIDOS">Solo Pedidos</option>
+                                      <option value="MANUAL">Solo Manual</option>
                                     </select>
                                   </div>
                                 </td>
@@ -1225,6 +1244,19 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                 >
                   <option value="ADMINISTRACION">Administración (ve la hora de entrega normal)</option>
                   <option value="PRODUCCION">Producción / Planta (ve la hora de entrega 1 hora antes)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Acceso a Facturación</label>
+                <select
+                  value={formUsuario.seccion_facturacion || 'AMBAS'}
+                  onChange={(e) => setFormUsuario({ ...formUsuario, seccion_facturacion: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-hidden bg-white"
+                >
+                  <option value="AMBAS">Ambas (Facturación por Pedidos y Manual)</option>
+                  <option value="PEDIDOS">Solo Facturación por Pedidos</option>
+                  <option value="MANUAL">Solo Facturación Manual (Sin pedidos previos)</option>
                 </select>
               </div>
 

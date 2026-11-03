@@ -155,18 +155,26 @@ function validarReglasTributarias({ tipo_comprobante, cliente, monto_total, fech
         }
     }
 
-    // 2. Regla para Boletas (03): Si supera S/ 700, es obligatorio identificar al cliente con DNI/RUC/CE
+    // 2. Regla para Boletas (03): NO puede tener RUC, SOLO DNI (8 dígitos) o CLIENTES VARIOS (< S/ 700)
     if (tipo_comprobante === '03') {
-        if (total >= 700 && (tipoDoc === '0' || !numDoc || numDoc === '-' || numDoc === '00000000')) {
+        if (tipoDoc === '6' || /^(10|15|16|17|20)\d{9}$/.test(numDoc)) {
             return {
                 valido: false,
-                mensaje: 'Por norma de SUNAT, las Boletas de Venta de S/ 700.00 o más requieren obligatoriamente el DNI o RUC del cliente.'
+                mensaje: 'Una Boleta de Venta no puede emitirse con RUC. Debe utilizarse exclusivamente DNI (8 dígitos) o "Clientes Varios". Si el cliente tiene RUC, emite una Factura (01).'
             };
         }
-        if (tipoDoc === '1' && !/^\d{8}$/.test(numDoc)) {
+        const esClientesVarios = numDoc === '00000000' || numDoc === '-' || numDoc === '' || tipoDoc === '-' || tipoDoc === '0' || (cliente?.razon_social_o_nombre || '').toUpperCase().includes('VARIOS');
+        if (esClientesVarios) {
+            if (total >= 700) {
+                return {
+                    valido: false,
+                    mensaje: 'Por normativa de SUNAT (RS 007-99), las Boletas de Venta por un monto de S/ 700.00 o más exigen identificar obligatoriamente al cliente con su DNI (8 dígitos).'
+                };
+            }
+        } else if (!/^\d{8}$/.test(numDoc)) {
             return {
                 valido: false,
-                mensaje: `El DNI del cliente "${cliente.razon_social_o_nombre}" debe tener exactamente 8 dígitos numéricos.`
+                mensaje: `Para emitir una Boleta de Venta a "${cliente.razon_social_o_nombre || cliente.nombre || 'el cliente'}", el documento debe ser un DNI válido de exactamente 8 dígitos (o "00000000" para Clientes Varios en compras menores a S/ 700).`
             };
         }
     }
@@ -307,9 +315,13 @@ function construirPayloadNubefact({
         serie,
         numero: Number(correlativo),
         sunat_transaction: aplica_detraccion ? 30 : 1,
-        cliente_tipo_de_documento: String(cliente.tipo_documento || '6'),
-        cliente_numero_de_documento: String(cliente.numero_documento || ''),
-        cliente_denominacion: String(cliente.razon_social_o_nombre || 'CLIENTE VARIOS'),
+        cliente_tipo_de_documento: (String(cliente.numero_documento || '') === '00000000' || String(cliente.tipo_documento || '') === '-' || String(cliente.tipo_documento || '') === '0' || (cliente.razon_social_o_nombre || '').toUpperCase().includes('VARIOS'))
+            ? '-'
+            : String(cliente.tipo_documento || (tipo_comprobante === '01' ? '6' : '1')),
+        cliente_numero_de_documento: (String(cliente.numero_documento || '') === '00000000' || String(cliente.tipo_documento || '') === '-' || String(cliente.tipo_documento || '') === '0' || (cliente.razon_social_o_nombre || '').toUpperCase().includes('VARIOS'))
+            ? '-'
+            : String(cliente.numero_documento || ''),
+        cliente_denominacion: String(cliente.razon_social_o_nombre || 'CLIENTES VARIOS'),
         cliente_direccion: String(cliente.direccion || ''),
         cliente_email: String(cliente.email || ''),
         fecha_de_emision: formatearFechaNubefact(new Date()),

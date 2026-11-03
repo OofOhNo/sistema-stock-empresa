@@ -6,6 +6,7 @@ import { Package, Edit, Trash, Plus, Ruler, Search, AlertTriangle, X, Check } fr
 export default function Productos({ usuario }) {
   const [productos, setProductos] = useState([]);
   const [unidades, setUnidades] = useState([]);
+  const [tiposProducto, setTiposProducto] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [puedeEditar, setPuedeEditar] = useState(
@@ -17,6 +18,7 @@ export default function Productos({ usuario }) {
     nombre: '',
     descripcion: '',
     id_categoria: '',
+    id_tipo_producto: '',
     precio_venta: '',
     precio_costo: '',
     stock_minimo: '',
@@ -28,6 +30,10 @@ export default function Productos({ usuario }) {
 
   // Modal para crear nuevo formato de unidad de medida
   const [modalUnidad, setModalUnidad] = useState(false);
+  const [modalTipo, setModalTipo] = useState(false);
+  const [formTipo, setFormTipo] = useState({ nombre: '', descripcion: '' });
+  const [guardandoTipo, setGuardandoTipo] = useState(false);
+  const [tipoAEliminar, setTipoAEliminar] = useState(null);
   const [formUnidad, setFormUnidad] = useState({
     codigo: '',
     nombre: '',
@@ -54,6 +60,8 @@ export default function Productos({ usuario }) {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
         setModalUnidad(false);
+        setModalTipo(false);
+        setTipoAEliminar(null);
         setProductoADesactivar(null);
         setUnidadAEliminar(null);
       }
@@ -65,9 +73,10 @@ export default function Productos({ usuario }) {
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const [resProd, resUni] = await Promise.all([
+      const [resProd, resUni, resTipos] = await Promise.all([
         api.get('/productos'),
-        api.get('/productos/unidades')
+        api.get('/productos/unidades'),
+        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } }))
       ]);
       const listaProds = Array.isArray(resProd.data)
         ? resProd.data
@@ -80,6 +89,7 @@ export default function Productos({ usuario }) {
 
       const listaUnidades = resUni.data?.unidades || [];
       setUnidades(listaUnidades);
+      setTiposProducto(resTipos.data?.tipos || []);
       if (listaUnidades.length > 0 && !form.id_unidad) {
         setForm(f => ({ ...f, id_unidad: listaUnidades[0].id_unidad }));
       }
@@ -126,6 +136,7 @@ export default function Productos({ usuario }) {
         nombre: form.nombre.trim(),
         descripcion: form.descripcion ? form.descripcion.trim() : '',
         id_categoria: form.id_categoria ? parseInt(form.id_categoria, 10) : null,
+        id_tipo_producto: form.id_tipo_producto ? parseInt(form.id_tipo_producto, 10) : null,
         precio_venta: form.precio_venta !== '' ? parseFloat(form.precio_venta) : 0,
         precio_costo: form.precio_costo !== '' ? parseFloat(form.precio_costo) : 0,
         stock_minimo: form.stock_minimo !== '' ? parseInt(form.stock_minimo, 10) : 5,
@@ -146,6 +157,7 @@ export default function Productos({ usuario }) {
         nombre: '',
         descripcion: '',
         id_categoria: '',
+        id_tipo_producto: '',
         precio_venta: '',
         precio_costo: '',
         stock_minimo: '',
@@ -168,6 +180,7 @@ export default function Productos({ usuario }) {
       nombre: prod.nombre || '',
       descripcion: prod.descripcion || '',
       id_categoria: prod.id_categoria || '',
+      id_tipo_producto: prod.id_tipo_producto || '',
       precio_venta: prod.precio_venta ?? '',
       precio_costo: prod.precio_costo ?? '',
       stock_minimo: prod.stock_minimo ?? '',
@@ -191,6 +204,7 @@ export default function Productos({ usuario }) {
           nombre: '',
           descripcion: '',
           id_categoria: '',
+          id_tipo_producto: '',
           precio_venta: '',
           precio_costo: '',
           stock_minimo: '',
@@ -243,6 +257,45 @@ export default function Productos({ usuario }) {
       toast.error('No se pudo crear la unidad: ' + msg);
     } finally {
       setGuardandoUnidad(false);
+    }
+  };
+
+  
+  const handleGuardarTipo = async (e) => {
+    e.preventDefault();
+    if (!formTipo.nombre.trim()) return toast.error('El nombre del tipo de producto es obligatorio.');
+    setGuardandoTipo(true);
+    try {
+      const res = await api.post('/productos/tipos', formTipo);
+      toast.success(res.data.mensaje || '¡Tipo de producto agregado!');
+      const resTipos = await api.get('/productos/tipos');
+      const actualizados = resTipos.data?.tipos || [];
+      setTiposProducto(actualizados);
+      if (res.data?.tipo?.id_tipo_producto) {
+        setForm(f => ({ ...f, id_tipo_producto: res.data.tipo.id_tipo_producto }));
+      }
+      setFormTipo({ nombre: '', descripcion: '' });
+      setModalTipo(false);
+    } catch (err) {
+      toast.error('No se pudo crear el tipo: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setGuardandoTipo(false);
+    }
+  };
+
+  const confirmarRetirarTipo = async () => {
+    if (!tipoAEliminar) return;
+    setEliminando(true);
+    try {
+      await api.delete(`/productos/tipos/${tipoAEliminar.id_tipo_producto}`);
+      toast.success(`Tipo "${tipoAEliminar.nombre}" retirado.`);
+      const resTipos = await api.get('/productos/tipos');
+      setTiposProducto(resTipos.data?.tipos || []);
+      setTipoAEliminar(null);
+    } catch (err) {
+      toast.error('No se pudo retirar el tipo: ' + (err.response?.data?.mensaje || err.message));
+    } finally {
+      setEliminando(false);
     }
   };
 
@@ -346,6 +399,37 @@ export default function Productos({ usuario }) {
                   className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
                   required
                 />
+              </div>
+
+              
+              {/* Tipo de Producto */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Tipo de Producto
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setModalTipo(true)}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1 cursor-pointer"
+                  >
+                    <Plus size={13} />
+                    <span>Nuevo Tipo</span>
+                  </button>
+                </div>
+                <select
+                  name="id_tipo_producto"
+                  value={form.id_tipo_producto}
+                  onChange={handleChange}
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500 bg-white font-medium"
+                >
+                  <option value="">(Sin tipo específico)</option>
+                  {tiposProducto.map(t => (
+                    <option key={t.id_tipo_producto} value={t.id_tipo_producto}>
+                      {t.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Unidad de Medida */}

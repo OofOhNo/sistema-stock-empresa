@@ -73,7 +73,8 @@ const pedidoController = {
     marcarListoDespacho: async (req, res) => {
         try {
             const { id } = req.params;
-            const pedido = await Pedido.marcarListoDespacho(id, req.usuario);
+            const { peso_total } = req.body;
+            const pedido = await Pedido.marcarListoDespacho(id, req.usuario, peso_total);
             res.status(200).json({
                 exito: true,
                 mensaje: 'Pedido marcado como listo para despacho.',

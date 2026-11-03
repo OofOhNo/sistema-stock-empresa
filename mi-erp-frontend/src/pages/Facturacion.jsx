@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
   FileText, Plus, AlertCircle, RefreshCw, XCircle,
   Search, ShieldCheck, DollarSign, Receipt,
-  X, Printer, Eye, Loader2, Settings, Download, CheckCircle2, EyeOff
+  X, Printer, Eye, Loader2, Settings, Download, CheckCircle2,
+  Trash2, Calendar, Scale, Users, Layers, Tag, CreditCard, ChevronRight,
+  ShieldAlert, Lock, Unlock, Coffee, ShoppingBag, Zap, Banknote, Minus
 } from 'lucide-react';
 
-// Generador determinístico de matriz QR en SVG (25x25 con patrones de posición oficiales)
-// a partir de la cadena reglamentaria de SUNAT (RUC|TIPO|SERIE|CORRELATIVO|IGV|TOTAL|FECHA|DOC|HASH|)
+// Generador determinístico de matriz QR en SVG SUNAT
 function construirMatrizQr(cadena = '') {
   const N = 25;
   const matriz = Array.from({ length: N }, () => Array(N).fill(false));
@@ -33,7 +34,6 @@ function construirMatrizQr(cadena = '') {
   colocarFinder(0, N - 7);
   colocarFinder(N - 7, 0);
 
-  // Patrones de sincronización (Timing patterns)
   for (let i = 8; i < N - 8; i++) {
     reservado[6][i] = true;
     matriz[6][i] = i % 2 === 0;
@@ -41,7 +41,6 @@ function construirMatrizQr(cadena = '') {
     matriz[i][6] = i % 2 === 0;
   }
 
-  // Patrón de alineación (5x5 en esquina inferior derecha)
   const ar = N - 9;
   const ac = N - 9;
   for (let r = 0; r < 5; r++) {
@@ -63,7 +62,7 @@ function construirMatrizQr(cadena = '') {
     for (let c = 0; c < N; c++) {
       if (!reservado[r][c]) {
         const byteVal = bytes[Math.floor(bitIdx / 8) % bytes.length];
-        const shift = 7 - (bitIdx % 8);
+        const shift = 7 - (bitIdx / 8);
         const mask = (r * 3 + c * 5 + bitIdx) % 2 === 0;
         const bit = ((byteVal >> shift) & 1) === 1;
         matriz[r][c] = bit !== mask;
@@ -88,58 +87,188 @@ function generarSvgQrString(cadena = '', size = 110) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N + 4} ${N + 4}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${N + 4}" height="${N + 4}" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.5"/>${rects}</svg>`;
 }
 
+// Logo SVG PROCESOS CÁRNICOS S.A.C.
+function LogoProcesosCarnicos({ className = "h-20 w-auto" }) {
+  return (
+    <svg viewBox="0 0 340 180" className={className} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <path id="curveProcesos" d="M 25 105 A 115 100 0 0 1 295 105" fill="none" />
+      </defs>
+      <g transform="translate(15, 50)">
+        <circle cx="50" cy="50" r="42" fill="#94a3b8" />
+        <circle cx="50" cy="50" r="38" fill="#e2e8f0" stroke="#003399" strokeWidth="2" strokeDasharray="6,4" />
+        <circle cx="50" cy="50" r="16" fill="#cbd5e1" stroke="#003399" strokeWidth="2" />
+        <circle cx="50" cy="50" r="7" fill="#003399" />
+        <path d="M 50 48 L 100 48 L 115 28 L 125 28 L 125 58 L 175 58 L 175 92 L 150 92 L 150 78 L 105 78 L 85 92 L 40 92 Z" fill="#003399" />
+        <rect x="75" y="32" width="16" height="12" rx="3" fill="#003399" />
+        <path d="M 152 64 L 170 64 L 170 86 L 152 86 Z" fill="#ffffff" />
+      </g>
+      <text fill="#003399" fontSize="26" fontWeight="900" fontFamily="Impact, Arial Black, sans-serif" letterSpacing="1">
+        <textPath href="#curveProcesos" startOffset="50%" textAnchor="middle">
+          PROCESOS CÁRNICOS
+        </textPath>
+      </text>
+      <line x1="20" y1="152" x2="110" y2="152" stroke="#003399" strokeWidth="4" />
+      <text x="145" y="158" textAnchor="middle" fill="#003399" fontSize="20" fontWeight="900" fontFamily="Impact, Arial Black, sans-serif" letterSpacing="2">
+        S.A.C. ★★★
+      </text>
+      <line x1="180" y1="152" x2="270" y2="152" stroke="#003399" strokeWidth="4" />
+    </svg>
+  );
+}
+
+// Helpers de formato de fecha
+function formatearEtiquetaPedido(id, fechaIso) {
+  const d = fechaIso ? new Date(fechaIso) : new Date();
+  const dia = String(d.getDate()).padStart(2, '0');
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const anio = d.getFullYear();
+  return `Pedido-${dia}/${mes}/${anio}#${id}`;
+}
+
+function formatearFechaTextoEspanol(fecha) {
+  const meses = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  ];
+  const d = fecha ? new Date(fecha) : new Date();
+  const dia = d.getDate();
+  const mes = meses[d.getMonth()];
+  const anio = d.getFullYear();
+  return `${dia} de ${mes} del ${anio}`;
+}
+
 export default function Facturacion({ usuario }) {
   const [comprobantes, setComprobantes] = useState([]);
+  const [notasPedido, setNotasPedido] = useState([]);
   const [pedidosFacturables, setPedidosFacturables] = useState([]);
+  const [clientes, setClientes] = useState([]);
+  const [productos, setProductos] = useState([]);
+  const [ubicaciones, setUbicaciones] = useState([]);
   const [configSunat, setConfigSunat] = useState(null);
   const [catalogos, setCatalogos] = useState(null);
   const [cargando, setCargando] = useState(true);
-  const [filtroTipo, setFiltroTipo] = useState('todos'); // 'todos', '01', '03', '07'
   const [busqueda, setBusqueda] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState('todos');
 
-  // Modal Emitir
+  // Permisos y secciones
+  const esAdminCentral = usuario?.rol === 'Admin Central';
+  const puedeEditarFacturacion = esAdminCentral || usuario?.permisos?.facturacion?.puede_editar === true;
+  const seccionAsignada = usuario?.seccion_facturacion || 'AMBAS';
+  const tieneAccesoPedidos = esAdminCentral || seccionAsignada === 'AMBAS' || seccionAsignada === 'PEDIDOS';
+  const tieneAccesoManual = esAdminCentral || seccionAsignada === 'AMBAS' || seccionAsignada === 'MANUAL';
+
+  // Pestaña principal activa: 'pedidos' | 'manual' | 'notas' | 'historial'
+  const [tabActiva, setTabActiva] = useState(() => {
+    if (tieneAccesoPedidos) return 'pedidos';
+    if (tieneAccesoManual) return 'manual';
+    return 'notas';
+  });
+
+  // Modal Emitir Comprobante (Por Pedido)
   const [modalEmitir, setModalEmitir] = useState(false);
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null);
   const [tipoComprobante, setTipoComprobante] = useState('01'); // '01' Factura, '03' Boleta
-  const [formaPago, setFormaPago] = useState('CONTADO'); // 'CONTADO' o 'CREDITO'
-  const [diasCredito, setDiasCredito] = useState(30);
-  const [medioPagoSunat, setMedioPagoSunat] = useState('008'); // Catálogo 59
+  const [formaPago, setFormaPago] = useState('CONTADO'); // 'CONTADO' | 'CREDITO'
+  const [diasCredito, setDiasCredito] = useState(28); // Múltiplos de 7
+  const [esPlazoPersonalizado, setEsPlazoPersonalizado] = useState(false);
+  const [cantidadCuotas, setCantidadCuotas] = useState(1);
+  const [medioPagoSunat, setMedioPagoSunat] = useState('008');
   const [aplicaDetraccion, setAplicaDetraccion] = useState(false);
-  const [codigoDetraccion, setCodigoDetraccion] = useState('014'); // Catálogo 54
+  const [codigoDetraccion, setCodigoDetraccion] = useState('014');
+  const [pesoTotalFactura, setPesoTotalFactura] = useState('');
+  const [itemsEditables, setItemsEditables] = useState([]);
   const [procesando, setProcesando] = useState(false);
 
-  // Modal Anular (Nota de Crédito con Catálogo 09)
+  // Pago dividido entre múltiples clientes (Req 2 - Opción A)
+  const [esPagoDividido, setEsPagoDividido] = useState(false);
+  const [pagosDivididos, setPagosDivididos] = useState([]);
+
+  // Modal Facturación Manual (Sin Pedido Previo)
+  const [modalManual, setModalManual] = useState(false);
+  const [manualClienteId, setManualClienteId] = useState('');
+  const [manualUbicacionId, setManualUbicacionId] = useState('');
+  const [manualTipoComp, setManualTipoComp] = useState('01');
+  const [manualFormaPago, setManualFormaPago] = useState('CONTADO');
+  const [manualDiasCredito, setManualDiasCredito] = useState(28);
+  const [manualPlazoCustom, setManualPlazoCustom] = useState(false);
+  const [manualCuotas, setManualCuotas] = useState(1);
+  const [manualMedioPago, setManualMedioPago] = useState('008');
+  const [manualAplicaDetraccion, setManualAplicaDetraccion] = useState(false);
+  const [manualCodigoDetraccion, setManualCodigoDetraccion] = useState('014');
+  const [manualPesoTotal, setManualPesoTotal] = useState('');
+  const [manualItems, setManualItems] = useState([
+    { id_producto: '', descripcion: '', cantidad: 1, peso: '', precio_unitario: 0, subtotal: 0 }
+  ]);
+
+  // Modal Crear Nota de Pedido (Req 13, 16)
+  const [modalNotaPedido, setModalNotaPedido] = useState(false);
+  const [formNota, setFormNota] = useState({
+    id_cliente: '',
+    cliente_nombre: '',
+    cliente_documento: '',
+    observaciones: '',
+    items: [
+      { id_producto: '', descripcion: '', peso: '', precio_unitario: '', total: '' }
+    ]
+  });
+  const [guardandoNota, setGuardandoNota] = useState(false);
+
+  // Modal Ver / Imprimir Nota de Pedido
+  const [modalVerNota, setModalVerNota] = useState(null); // { nota, items }
+
+  // Modal Anular Comprobante
   const [modalAnular, setModalAnular] = useState(false);
   const [comprobanteAAnular, setComprobanteAAnular] = useState(null);
   const [codigoMotivoNc, setCodigoMotivoNc] = useState('01');
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
 
   // Modal Ver / Imprimir Comprobante A4
-  const [modalPdf, setModalPdf] = useState(null); // { comprobante, emisor, items }
+  const [modalPdf, setModalPdf] = useState(null);
   const [cargandoPdf, setCargandoPdf] = useState(false);
 
-  // Modal Configurar SUNAT / NubeFact
+  // Modal Configuración SUNAT
   const [modalConfig, setModalConfig] = useState(false);
   const [formConfig, setFormConfig] = useState({
-    ruc_emisor: '20600000001',
-    razon_social: 'EMPRESA DEMO ERP S.A.C.',
-    nombre_comercial: 'SISTEMA ERP PERÚ',
-    direccion_fiscal: 'Av. Empresarial 100, Lima - Perú',
+    ruc_emisor: '20608725394',
+    razon_social: 'PROCESOS CARNICOS S.A.C.',
+    nombre_comercial: 'PROCESOS CÁRNICOS S.A.C.',
+    direccion_fiscal: 'Lima - Perú',
     modo_integracion: 'DEMO_NUBEFACT',
     nubefact_ruta: 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
     nubefact_token: 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
     detraccion_cuenta_bn: '00-000-000000'
   });
-  const [mostrarToken, setMostrarToken] = useState(false);
   const [guardandoConfig, setGuardandoConfig] = useState(false);
   const [probandoConexion, setProbandoConexion] = useState(false);
 
-  const esAdminCentral = usuario?.rol === 'Admin Central';
-  const puedeEditarFacturacion =
-    esAdminCentral || usuario?.permisos?.facturacion?.puede_editar === true;
+  // Estados Modo Emergencia / Pánico y Desbloqueo Secreto
+  const [modoEmergencia, setModoEmergencia] = useState(() => {
+    return localStorage.getItem('erp_modo_emergencia') === 'true';
+  });
+  const [modalConfirmarEmergencia, setModalConfirmarEmergencia] = useState(false);
+  const [modalDesbloqueoSecreto, setModalDesbloqueoSecreto] = useState(false);
+  const [pinDesbloqueo, setPinDesbloqueo] = useState('');
+  const [errorPin, setErrorPin] = useState('');
+  const clicsSecretosRef = useRef({ count: 0, lastTime: 0 });
+
+  // Estados para Venta Rápida de Mostrador / Cafetería (POS)
+  const [submodoManual, setSubmodoManual] = useState('CAFETERIA'); // 'CAFETERIA' | 'DETALLADO'
+  const [busquedaProdPos, setBusquedaProdPos] = useState('');
+  const [categoriaPos, setCategoriaPos] = useState('TODOS');
+  const [carritoPos, setCarritoPos] = useState([]);
+  const [metodoPagoPos, setMetodoPagoPos] = useState('EFECTIVO'); // 'EFECTIVO' | 'YAPE' | 'TARJETA'
+  const [montoEntregadoPos, setMontoEntregadoPos] = useState('');
+  const [cobrandoPos, setCobrandoPos] = useState(false);
 
   useEffect(() => {
     cargarDatos();
+  }, []);
+
+  useEffect(() => {
+    const onRestaurar = () => setModoEmergencia(false);
+    window.addEventListener('restaurar_modo_emergencia', onRestaurar);
+    return () => window.removeEventListener('restaurar_modo_emergencia', onRestaurar);
   }, []);
 
   useEffect(() => {
@@ -147,30 +276,63 @@ export default function Facturacion({ usuario }) {
       if (e.key === 'Escape') {
         setModalPdf(null);
         setModalEmitir(false);
+        setModalManual(false);
+        setModalNotaPedido(false);
+        setModalVerNota(null);
         setModalAnular(false);
         setModalConfig(false);
+        setModalConfirmarEmergencia(false);
+        setModalDesbloqueoSecreto(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  // Forzar Tarjeta de Crédito si forma de pago es CRÉDITO (Req 7)
+  useEffect(() => {
+    if (formaPago === 'CREDITO') {
+      setMedioPagoSunat('005'); // Tarjeta de crédito
+    }
+  }, [formaPago]);
+
+  useEffect(() => {
+    if (manualFormaPago === 'CREDITO') {
+      setManualMedioPago('005');
+    }
+  }, [manualFormaPago]);
+
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const [resComp, resPed, resConf] = await Promise.all([
+      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic] = await Promise.all([
         api.get('/facturacion'),
+        api.get('/facturacion/notas-pedido').catch(() => ({ data: { notas: [] } })),
         api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } })),
-        api.get('/facturacion/configuracion').catch(() => ({ data: {} }))
+        api.get('/facturacion/configuracion').catch(() => ({ data: {} })),
+        api.get('/clientes').catch(() => ({ data: { datos: [] } })),
+        api.get('/productos').catch(() => ({ data: { datos: [] } })),
+        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } }))
       ]);
 
       setComprobantes(resComp.data.comprobantes || []);
+      setNotasPedido(resNotas.data.notas || []);
+      const listaCli = resCli.data.datos || resCli.data.clientes || [];
+      setClientes(listaCli);
+      const listaProd = resProd.data.datos || resProd.data.productos || [];
+      setProductos(listaProd);
+      const listaUbic = resUbic.data.datos || resUbic.data.ubicaciones || [];
+      setUbicaciones(listaUbic);
+      if (listaUbic.length > 0 && !manualUbicacionId) {
+        setManualUbicacionId(usuario?.id_ubicacion || listaUbic[0].id_ubicacion);
+      }
+
       if (resConf.data?.configuracion) {
         setConfigSunat(resConf.data.configuracion);
         setFormConfig({
-          ruc_emisor: resConf.data.configuracion.ruc_emisor || '20600000001',
-          razon_social: resConf.data.configuracion.razon_social || 'EMPRESA DEMO ERP S.A.C.',
-          nombre_comercial: resConf.data.configuracion.nombre_comercial || 'SISTEMA ERP PERÚ',
+          ruc_emisor: resConf.data.configuracion.ruc_emisor || '20608725394',
+          razon_social: resConf.data.configuracion.razon_social || 'PROCESOS CARNICOS S.A.C.',
+          nombre_comercial: resConf.data.configuracion.nombre_comercial || 'PROCESOS CÁRNICOS S.A.C.',
           direccion_fiscal: resConf.data.configuracion.direccion_fiscal || '',
           modo_integracion: resConf.data.configuracion.modo_integracion || 'DEMO_NUBEFACT',
           nubefact_ruta: resConf.data.configuracion.nubefact_ruta || '',
@@ -186,7 +348,9 @@ export default function Facturacion({ usuario }) {
         p => p.estado_pedido !== 'CANCELADO' && !p.tiene_factura && p.estado_pedido !== 'FACTURADO'
       );
       setPedidosFacturables(disponibles);
-      setPedidoSeleccionado(disponibles[0] || null);
+      if (disponibles.length > 0 && !pedidoSeleccionado) {
+        seleccionarPedido(disponibles[0]);
+      }
     } catch (error) {
       toast.error('No se pudieron cargar los comprobantes: ' + (error.response?.data?.mensaje || error.message));
     } finally {
@@ -194,173 +358,529 @@ export default function Facturacion({ usuario }) {
     }
   };
 
-  const seleccionarPedidoYTipoAuto = (ped) => {
+  // Seleccionar Pedido y cargar ítems editables y peso
+  const seleccionarPedido = (ped) => {
     setPedidoSeleccionado(ped);
-    if (ped) {
-      const rucDoc = String(ped.ruc_cliente || '').trim();
-      const esRuc11 = ped.tipo_documento_cliente === '6' && /^(10|15|16|17|20)\d{9}$/.test(rucDoc);
-      setTipoComprobante(esRuc11 ? '01' : '03');
+    if (!ped) return;
+
+    // Regla tributaria inicial: si tiene RUC -> Factura (01), si no -> Boleta (03)
+    const doc = String(ped.ruc_cliente || '').trim();
+    const esRuc = ped.tipo_documento_cliente === '6' && /^(10|15|16|17|20)\d{9}$/.test(doc);
+    setTipoComprobante(esRuc ? '01' : '03');
+
+    // Req 10: Si ya está listo para despacho, pre-llenar peso registrado; si no, vacío
+    if (ped.estado_pedido === 'LISTO_DESPACHO' && ped.peso_total) {
+      setPesoTotalFactura(String(ped.peso_total));
+    } else {
+      setPesoTotalFactura('');
+    }
+
+    // Cargar ítems editables (Req 9)
+    const itemsRaw = ped.items || [
+      {
+        id_producto: 1,
+        descripcion: ped.descripcion || 'Cortes Cárnicos Seleccionados',
+        cantidad: 1,
+        peso: ped.peso_total || '',
+        precio_unitario: parseFloat(ped.monto_total || 0),
+        subtotal: parseFloat(ped.monto_total || 0)
+      }
+    ];
+    setItemsEditables(itemsRaw.map(it => ({
+      ...it,
+      peso: it.peso || '',
+      precio_unitario: parseFloat(it.precio_unitario || 0),
+      subtotal: parseFloat(it.subtotal || (it.cantidad * it.precio_unitario) || 0)
+    })));
+
+    // Resetear pagos divididos
+    setEsPagoDividido(false);
+    setPagosDivididos([]);
+  };
+
+  // Recalcular subtotal de un ítem editable
+  const actualizarItemEditable = (idx, campo, valor) => {
+    const copia = [...itemsEditables];
+    copia[idx] = { ...copia[idx], [campo]: valor };
+    if (campo === 'cantidad' || campo === 'precio_unitario') {
+      const cant = parseFloat(copia[idx].cantidad) || 0;
+      const pu = parseFloat(copia[idx].precio_unitario) || 0;
+      copia[idx].subtotal = Number((cant * pu).toFixed(2));
+    }
+    setItemsEditables(copia);
+  };
+
+  // Total recalculado de los ítems editables
+  const totalItemsCalculado = useMemo(() => {
+    return itemsEditables.reduce((acc, it) => acc + (parseFloat(it.subtotal) || 0), 0);
+  }, [itemsEditables]);
+
+  // Inicializar pagos divididos cuando el usuario marca el checkbox
+  const togglePagoDividido = (activar) => {
+    setEsPagoDividido(activar);
+    if (activar && pedidoSeleccionado) {
+      const total = totalItemsCalculado || parseFloat(pedidoSeleccionado.monto_total);
+      const mitad = Number((total / 2).toFixed(2));
+      const resto = Number((total - mitad).toFixed(2));
+      setPagosDivididos([
+        {
+          id_cliente: pedidoSeleccionado.id_cliente,
+          nombre_cliente: pedidoSeleccionado.cliente,
+          tipo_comprobante: tipoComprobante,
+          monto: mitad,
+          porcentaje: 50
+        },
+        {
+          id_cliente: '',
+          nombre_cliente: '',
+          tipo_comprobante: '01',
+          monto: resto,
+          porcentaje: 50
+        }
+      ]);
     }
   };
 
-  const abrirModalEmitir = () => {
-    if (pedidosFacturables.length === 0) {
-      toast.error('No hay pedidos sin facturar en este momento. Crea primero un pedido en la pestaña Pedidos.');
+  const actualizarPagoDividido = (idx, campo, valor) => {
+    const copia = [...pagosDivididos];
+    copia[idx] = { ...copia[idx], [campo]: valor };
+    const total = totalItemsCalculado || parseFloat(pedidoSeleccionado?.monto_total || 0);
+
+    if (campo === 'porcentaje') {
+      const porc = parseFloat(valor) || 0;
+      copia[idx].monto = Number(((porc / 100) * total).toFixed(2));
+    } else if (campo === 'monto') {
+      const m = parseFloat(valor) || 0;
+      copia[idx].porcentaje = total > 0 ? Number(((m / total) * 100).toFixed(1)) : 0;
+    } else if (campo === 'id_cliente') {
+      const cli = clientes.find(c => String(c.id_cliente) === String(valor));
+      if (cli) {
+        copia[idx].nombre_cliente = cli.razon_social_o_nombre || cli.nombre_comercial;
+        const esRuc = cli.tipo_documento === '6' && /^(10|15|16|17|20)\d{9}$/.test(cli.numero_documento);
+        copia[idx].tipo_comprobante = esRuc ? '01' : '03';
+      }
+    }
+    setPagosDivididos(copia);
+  };
+
+  const agregarFilaPagoDividido = () => {
+    setPagosDivididos([
+      ...pagosDivididos,
+      { id_cliente: '', nombre_cliente: '', tipo_comprobante: '01', monto: 0, porcentaje: 0 }
+    ]);
+  };
+
+  const eliminarFilaPagoDividido = (idx) => {
+    if (pagosDivididos.length <= 2) {
+      return toast.error('El pago dividido requiere al menos 2 clientes.');
+    }
+    setPagosDivididos(pagosDivididos.filter((_, i) => i !== idx));
+  };
+
+  // Validaciones tributarias previas
+  const validarTributarioAntesDeEmitir = (tipo, docCliente, montoTotal = 0) => {
+    const doc = String(docCliente || '').trim();
+    // Req 17: Boleta no puede tener RUC
+    if (tipo === '03' && (doc.length === 11 || /^(10|15|16|17|20)\d{9}$/.test(doc))) {
+      return 'Por disposición de SUNAT, una Boleta de Venta no puede emitirse con RUC. Debe utilizar DNI (8 dígitos), "Clientes Varios" o cambiar a Factura (01).';
+    }
+    if (tipo === '03' && (doc === '00000000' || doc === '-' || doc === '')) {
+      if (montoTotal >= 700) {
+        return 'Por normativa de SUNAT (RS 007-99), para Boletas de Venta de S/ 700 a más es obligatorio identificar al cliente con su DNI.';
+      }
+      return null;
+    }
+    if (tipo === '01' && (!doc || doc.length !== 11)) {
+      return 'Para emitir una Factura Electrónica (01), el cliente debe tener un RUC válido de 11 dígitos.';
+    }
+    return null;
+  };
+
+  // Abrir Modal de Emisión de Pedido
+  const abrirModalEmitirConPedido = (ped = null) => {
+    const p = ped || pedidosFacturables[0];
+    if (!p) {
+      toast.error('No hay pedidos pendientes para facturar. Puedes usar "Facturación Manual" para ventas directas.');
       return;
     }
-    const primero = pedidosFacturables[0];
-    seleccionarPedidoYTipoAuto(primero);
+    seleccionarPedido(p);
     setFormaPago('CONTADO');
-    setDiasCredito(30);
+    setDiasCredito(28);
+    setEsPlazoPersonalizado(false);
+    setCantidadCuotas(1);
     setMedioPagoSunat('008');
     setAplicaDetraccion(false);
-    setCodigoDetraccion('014');
     setModalEmitir(true);
   };
 
-  const handleEmitir = async (e) => {
+  // Emitir Comprobante de Pedido
+  const handleEmitirComprobante = async (e) => {
     e.preventDefault();
     if (!pedidoSeleccionado) {
-      toast.error('Elige un pedido para emitir su comprobante.');
-      return;
+      return toast.error('Selecciona un pedido para facturar.');
+    }
+
+    // Validación Boleta con RUC (Req 17)
+    const docPedido = pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente;
+    const errorTrib = validarTributarioAntesDeEmitir(tipoComprobante, docPedido);
+    if (errorTrib) {
+      return toast.error(errorTrib);
+    }
+
+    // Validación pago dividido
+    if (esPagoDividido) {
+      const sumaMontos = pagosDivididos.reduce((acc, p) => acc + (parseFloat(p.monto) || 0), 0);
+      const totalEsp = totalItemsCalculado || parseFloat(pedidoSeleccionado.monto_total);
+      if (Math.abs(sumaMontos - totalEsp) > 0.05) {
+        return toast.error(`La suma de los pagos divididos (S/ ${sumaMontos.toFixed(2)}) debe coincidir con el total del pedido (S/ ${totalEsp.toFixed(2)}).`);
+      }
+      for (const p of pagosDivididos) {
+        if (!p.id_cliente) return toast.error('Selecciona el cliente para todas las partes del pago dividido.');
+      }
     }
 
     setProcesando(true);
     try {
-      const res = await api.post('/facturacion/emitir', {
+      const payload = {
         id_pedido: pedidoSeleccionado.id_pedido,
         tipo_comprobante: tipoComprobante,
         forma_pago: formaPago,
         dias_credito: formaPago === 'CREDITO' ? parseInt(diasCredito, 10) : 0,
-        medio_pago_sunat: medioPagoSunat,
+        cantidad_cuotas: formaPago === 'CREDITO' ? parseInt(cantidadCuotas, 10) : 1,
+        medio_pago_sunat: formaPago === 'CREDITO' ? '005' : medioPagoSunat,
         aplica_detraccion: tipoComprobante === '01' ? aplicaDetraccion : false,
-        codigo_detraccion: codigoDetraccion
-      });
-      toast.success(res.data.mensaje || '¡Comprobante emitido y aceptado por SUNAT!');
+        codigo_detraccion: codigoDetraccion,
+        peso_total: pesoTotalFactura ? parseFloat(pesoTotalFactura) : null,
+        items: itemsEditables,
+        es_pago_dividido: esPagoDividido,
+        pagos: esPagoDividido ? pagosDivididos : null
+      };
+
+      const res = await api.post('/facturacion/emitir', payload);
+      toast.success(res.data.mensaje || '¡Comprobante emitido y validado con SUNAT!');
       setModalEmitir(false);
       await cargarDatos();
-    } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'No se pudo emitir el comprobante.');
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo emitir el comprobante.');
     } finally {
       setProcesando(false);
     }
   };
 
-  const abrirModalAnular = (comp) => {
-    setComprobanteAAnular(comp);
-    setCodigoMotivoNc('01');
-    setMotivoAnulacion('');
-    setModalAnular(true);
+  // Handlers para Facturación Manual
+  const abrirModalManual = () => {
+    setManualClienteId('CLIENTES_VARIOS');
+    setManualUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || 1);
+    setManualTipoComp('03');
+    setManualFormaPago('CONTADO');
+    setManualDiasCredito(28);
+    setManualPlazoCustom(false);
+    setManualCuotas(1);
+    setManualMedioPago('008');
+    setManualAplicaDetraccion(false);
+    setManualPesoTotal('');
+    setManualItems([
+      { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || '', cantidad: 1, peso: '', precio_unitario: productos[0]?.precio_venta || 0, subtotal: productos[0]?.precio_venta || 0 }
+    ]);
+    setModalManual(true);
   };
 
-  const handleAnular = async (e) => {
+  const agregarFilaManual = () => {
+    const prod = productos[0];
+    setManualItems([
+      ...manualItems,
+      { id_producto: prod?.id_producto || '', descripcion: prod?.nombre || '', cantidad: 1, peso: '', precio_unitario: prod?.precio_venta || 0, subtotal: prod?.precio_venta || 0 }
+    ]);
+  };
+
+  const actualizarFilaManual = (idx, campo, valor) => {
+    const copia = [...manualItems];
+    copia[idx] = { ...copia[idx], [campo]: valor };
+    if (campo === 'id_producto') {
+      const p = productos.find(prod => String(prod.id_producto) === String(valor));
+      if (p) {
+        copia[idx].descripcion = p.nombre;
+        copia[idx].precio_unitario = parseFloat(p.precio_venta || 0);
+        copia[idx].subtotal = Number(((parseFloat(copia[idx].cantidad) || 1) * parseFloat(p.precio_venta || 0)).toFixed(2));
+      }
+    } else if (campo === 'cantidad' || campo === 'precio_unitario') {
+      const c = parseFloat(copia[idx].cantidad) || 0;
+      const pu = parseFloat(copia[idx].precio_unitario) || 0;
+      copia[idx].subtotal = Number((c * pu).toFixed(2));
+    }
+    setManualItems(copia);
+  };
+
+  const eliminarFilaManual = (idx) => {
+    if (manualItems.length <= 1) return toast.error('Debe incluir al menos un producto.');
+    setManualItems(manualItems.filter((_, i) => i !== idx));
+  };
+
+  const totalManualCalculado = useMemo(() => {
+    return manualItems.reduce((acc, it) => acc + (parseFloat(it.subtotal) || 0), 0);
+  }, [manualItems]);
+
+  const handleEmitirManual = async (e) => {
     e.preventDefault();
-    if (!motivoAnulacion.trim()) {
-      toast.error('Escribe brevemente por qué vas a anular este comprobante.');
-      return;
+    if (!manualClienteId) return toast.error('Selecciona un cliente o "Clientes Varios".');
+    if (manualClienteId === 'CLIENTES_VARIOS') {
+      if (manualTipoComp === '01') {
+        return toast.error('No se puede emitir Factura (01) a Clientes Varios. Debe emitirse con Boleta de Venta (03).');
+      }
+      if (totalManualCalculado >= 700) {
+        return toast.error('Por normativa de SUNAT (RS 007-99), para importes de S/ 700.00 a más en Boleta es obligatorio ingresar el DNI del cliente.');
+      }
+    } else {
+      const cli = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
+      const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
+      if (errorTrib) return toast.error(errorTrib);
     }
 
     setProcesando(true);
     try {
-      const res = await api.post('/facturacion/anular', {
-        id_comprobante: comprobanteAAnular.id_comprobante,
-        codigo_motivo_nc: codigoMotivoNc,
-        motivo: motivoAnulacion.trim()
+      const res = await api.post('/facturacion/emitir-manual', {
+        id_cliente: manualClienteId,
+        id_ubicacion: manualUbicacionId,
+        tipo_comprobante: manualTipoComp,
+        forma_pago: manualFormaPago,
+        dias_credito: manualFormaPago === 'CREDITO' ? parseInt(manualDiasCredito, 10) : 0,
+        cantidad_cuotas: manualFormaPago === 'CREDITO' ? parseInt(manualCuotas, 10) : 1,
+        medio_pago_sunat: manualFormaPago === 'CREDITO' ? '005' : manualMedioPago,
+        aplica_detraccion: manualTipoComp === '01' ? manualAplicaDetraccion : false,
+        codigo_detraccion: manualCodigoDetraccion,
+        peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
+        items: manualItems
       });
-      toast.success(res.data.mensaje || 'Comprobante anulado con Nota de Crédito y stock devuelto al inventario.');
-      setModalAnular(false);
+
+      toast.success(res.data.mensaje || '¡Factura manual emitida y stock descontado!');
+      setModalManual(false);
       await cargarDatos();
-    } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'No se pudo anular el comprobante.');
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo emitir la factura manual.');
     } finally {
       setProcesando(false);
     }
   };
 
-  const handleGuardarConfigSunat = async (e) => {
+  // Handlers para Notas de Pedido (Req 13, 16)
+  const abrirModalNotaPedido = () => {
+    setFormNota({
+      id_cliente: clientes[0]?.id_cliente || '',
+      cliente_nombre: clientes[0]?.razon_social_o_nombre || clientes[0]?.nombre_comercial || '',
+      cliente_documento: clientes[0]?.numero_documento || '',
+      observaciones: '',
+      items: [
+        { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || 'Chuleta de cogote', peso: '11.60', precio_unitario: '15.00', total: '174.00' }
+      ]
+    });
+    setModalNotaPedido(true);
+  };
+
+  const agregarFilaNota = () => {
+    const prod = productos[0];
+    setFormNota({
+      ...formNota,
+      items: [
+        ...formNota.items,
+        { id_producto: prod?.id_producto || '', descripcion: prod?.nombre || '', peso: '', precio_unitario: prod?.precio_venta || '', total: '' }
+      ]
+    });
+  };
+
+  const actualizarFilaNota = (idx, campo, valor) => {
+    const items = [...formNota.items];
+    items[idx] = { ...items[idx], [campo]: valor };
+    if (campo === 'peso' || campo === 'precio_unitario') {
+      const p = parseFloat(items[idx].peso) || 0;
+      const pu = parseFloat(items[idx].precio_unitario) || 0;
+      items[idx].total = p > 0 && pu > 0 ? (p * pu).toFixed(2) : items[idx].total;
+    } else if (campo === 'id_producto') {
+      const prod = productos.find(pr => String(pr.id_producto) === String(valor));
+      if (prod) {
+        items[idx].descripcion = prod.nombre;
+        items[idx].precio_unitario = prod.precio_venta || '';
+        const p = parseFloat(items[idx].peso) || 0;
+        const pu = parseFloat(prod.precio_venta) || 0;
+        if (p > 0 && pu > 0) items[idx].total = (p * pu).toFixed(2);
+      }
+    }
+    setFormNota({ ...formNota, items });
+  };
+
+  const eliminarFilaNota = (idx) => {
+    if (formNota.items.length <= 1) return toast.error('Debe haber al menos un producto.');
+    setFormNota({ ...formNota, items: formNota.items.filter((_, i) => i !== idx) });
+  };
+
+  const totalNotaCalculado = useMemo(() => {
+    return formNota.items.reduce((acc, it) => acc + (parseFloat(it.total) || 0), 0);
+  }, [formNota.items]);
+
+  const handleCrearNotaPedido = async (e) => {
     e.preventDefault();
-    setGuardandoConfig(true);
+    if (!formNota.cliente_nombre.trim()) {
+      return toast.error('Escribe el nombre del cliente para la nota de pedido.');
+    }
+    for (const it of formNota.items) {
+      if (!it.descripcion.trim()) return toast.error('Cada fila debe tener una descripción de producto.');
+    }
+
+    setGuardandoNota(true);
     try {
-      const res = await api.put('/facturacion/configuracion', formConfig);
-      setConfigSunat(res.data.configuracion);
-      toast.success(res.data.mensaje || 'Configuración SUNAT / NubeFact guardada.');
-      setModalConfig(false);
-    } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'No se pudo guardar la configuración.');
+      const payload = {
+        id_cliente: formNota.id_cliente || null,
+        cliente_nombre: formNota.cliente_nombre.trim(),
+        cliente_documento: formNota.cliente_documento.trim(),
+        observaciones: formNota.observaciones,
+        items: formNota.items.map(it => ({
+          id_producto: it.id_producto || null,
+          descripcion: it.descripcion,
+          peso: it.peso ? parseFloat(it.peso) : null,
+          precio_unitario: it.precio_unitario ? parseFloat(it.precio_unitario) : 0,
+          subtotal: it.total ? parseFloat(it.total) : 0
+        }))
+      };
+
+      const res = await api.post('/facturacion/notas-pedido', payload);
+      toast.success(res.data.mensaje || '¡Nota de pedido creada con éxito!');
+      setModalNotaPedido(false);
+      await cargarDatos();
+
+      // Abrir vista previa de la nota creada
+      if (res.data?.nota) {
+        setModalVerNota({
+          nota: res.data.nota,
+          items: res.data.items || payload.items
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo crear la nota de pedido.');
     } finally {
-      setGuardandoConfig(false);
+      setGuardandoNota(false);
     }
   };
 
-  const handleProbarConexion = async () => {
-    setProbandoConexion(true);
+  // Abrir Visor de Nota de Pedido existente
+  const abrirDetalleNota = async (np) => {
     try {
-      const res = await api.post('/facturacion/probar-conexion', formConfig);
-      toast.success(res.data.mensaje || 'Conexión verificada correctamente.');
-    } catch (error) {
-      toast.error(error.response?.data?.mensaje || 'No se pudo conectar con NubeFact.');
-    } finally {
-      setProbandoConexion(false);
-    }
-  };
-
-  const descargarArchivoTributario = async (idComprobante, tipoArchivo, serie, correlativo) => {
-    try {
-      const endpoint = tipoArchivo === 'cdr'
-        ? `/facturacion/${idComprobante}/cdr`
-        : `/facturacion/${idComprobante}/xml`;
-      const res = await api.get(endpoint, { responseType: 'blob' });
-      const ruc = configSunat?.ruc_emisor || '20600000001';
-      const prefijo = tipoArchivo === 'cdr' ? 'R-' : '';
-      const nombreDescarga = `${prefijo}${ruc}-${serie}-${String(correlativo).padStart(8, '0')}.xml`;
-
-      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/xml' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', nombreDescarga);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success(`${tipoArchivo === 'cdr' ? 'Constancia CDR SUNAT' : 'XML UBL 2.1 firmado'} descargado.`);
-    } catch {
-      toast.error('No se pudo descargar el archivo tributario.');
-    }
-  };
-
-  const abrirVisorPdf = async (comp) => {
-    setCargandoPdf(true);
-    try {
-      const res = await api.get(`/facturacion/${comp.id_comprobante}/detalle`);
-      setModalPdf({
-        comprobante: res.data.comprobante,
-        emisor: res.data.emisor || configSunat || {},
+      const res = await api.get(`/facturacion/notas-pedido/${np.id_nota_pedido}`);
+      setModalVerNota({
+        nota: res.data.nota || np,
         items: res.data.items || []
       });
     } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'No se pudo abrir el comprobante.');
-    } finally {
-      setCargandoPdf(false);
+      toast.error('No se pudo abrir el detalle de la nota.');
     }
   };
 
+  // Imprimir Nota de Pedido idéntica a la imagen del usuario
+  const imprimirNotaPedidoActual = () => {
+    if (!modalVerNota?.nota) return;
+    const n = modalVerNota.nota;
+    const items = modalVerNota.items || [];
+    const fechaTexto = formatearFechaTextoEspanol(n.fecha_emision || n.creado_en);
+    const total = parseFloat(n.monto_total || 0).toFixed(2);
+
+    const filasHtml = items.map(it => `
+      <tr>
+        <td style="padding:10px 14px;border:1.5px solid #000;font-weight:600;font-size:13px;">${it.descripcion}</td>
+        <td style="padding:10px 14px;border:1.5px solid #000;text-align:center;font-weight:600;font-size:13px;">${it.peso ? Number(it.peso).toFixed(2) : '-'}</td>
+        <td style="padding:10px 14px;border:1.5px solid #000;text-align:right;font-weight:600;font-size:13px;">${Number(it.precio_unitario || 0).toFixed(2)}</td>
+        <td style="padding:10px 14px;border:1.5px solid #000;text-align:right;font-weight:bold;font-size:13px;">${Number(it.subtotal || (it.peso * it.precio_unitario) || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    const ventana = window.open('', '_blank', 'width=850,height=900');
+    if (!ventana) return window.print();
+
+    ventana.document.write(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Nota de Pedido - ${n.numero_correlativo || n.id_nota_pedido}</title>
+        <style>
+          body { font-family: Arial, Helvetica, sans-serif; color: #000; margin: 30px; font-size: 13px; }
+          .logo-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; }
+          .titulo-empresa { font-size: 22px; font-weight: 900; letter-spacing: 0.5px; color: #000; text-align: center; flex: 1; }
+          .datos-cliente { font-size: 14px; line-height: 1.8; margin-bottom: 20px; }
+          .datos-cliente strong { font-size: 14px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 15px; border: 1.5px solid #000; }
+          th { border: 1.5px solid #000; padding: 10px 14px; font-size: 13px; font-weight: 900; text-transform: uppercase; }
+          .total-row td { border: 1.5px solid #000; padding: 12px 14px; font-weight: 900; font-size: 14px; }
+          @media print {
+            body { margin: 15mm; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="logo-header">
+          <div style="width: 140px;">
+            <svg viewBox="0 0 340 180" style="width: 130px;" xmlns="http://www.w3.org/2000/svg">
+              <defs><path id="cp" d="M 25 105 A 115 100 0 0 1 295 105" fill="none"/></defs>
+              <g transform="translate(15, 50)">
+                <circle cx="50" cy="50" r="42" fill="#94a3b8"/>
+                <circle cx="50" cy="50" r="38" fill="#e2e8f0" stroke="#003399" stroke-width="2" stroke-dasharray="6,4"/>
+                <circle cx="50" cy="50" r="16" fill="#cbd5e1" stroke="#003399" stroke-width="2"/>
+                <circle cx="50" cy="50" r="7" fill="#003399"/>
+                <path d="M 50 48 L 100 48 L 115 28 L 125 28 L 125 58 L 175 58 L 175 92 L 150 92 L 150 78 L 105 78 L 85 92 L 40 92 Z" fill="#003399"/>
+                <rect x="75" y="32" width="16" height="12" rx="3" fill="#003399"/>
+                <path d="M 152 64 L 170 64 L 170 86 L 152 86 Z" fill="#ffffff"/>
+              </g>
+              <text fill="#003399" font-size="26" font-weight="900" font-family="Impact, Arial Black, sans-serif" letter-spacing="1">
+                <textPath href="#cp" startOffset="50%" text-anchor="middle">PROCESOS CÁRNICOS</textPath>
+              </text>
+              <line x1="20" y1="152" x2="110" y2="152" stroke="#003399" stroke-width="4"/>
+              <text x="145" y="158" text-anchor="middle" fill="#003399" font-size="20" font-weight="900" font-family="Impact, Arial Black, sans-serif" letter-spacing="2">S.A.C. ★★★</text>
+              <line x1="180" y1="152" x2="270" y2="152" stroke="#003399" stroke-width="4"/>
+            </svg>
+          </div>
+          <div class="titulo-empresa">
+            PROCESOS CÁRNICOS S.A.C.
+          </div>
+          <div style="width: 140px; text-align: right; font-size: 11px; font-weight: bold; color: #555;">
+            ${n.numero_correlativo || ''}
+          </div>
+        </div>
+
+        <div class="datos-cliente">
+          <div><strong>Cliente:</strong> ${n.cliente_nombre}</div>
+          <div style="margin-top: 6px;"><strong>Fecha de venta:</strong> ${fechaTexto}</div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align:center;width:45%;">DESCRIPCIÓN</th>
+              <th style="text-align:center;width:18%;">PESO</th>
+              <th style="text-align:center;width:18%;">PRECIO</th>
+              <th style="text-align:center;width:19%;">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filasHtml}
+            <tr class="total-row">
+              <td colspan="3" style="text-align:center;font-weight:900;letter-spacing:1px;">TOTAL</td>
+              <td style="text-align:right;font-weight:900;">${total}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        ${n.observaciones ? `<div style="margin-top:20px;font-size:11px;color:#555;"><strong>Obs:</strong> ${n.observaciones}</div>` : ''}
+        <script>window.onload = function() { window.print(); };</script>
+      </body>
+      </html>
+    `);
+    ventana.document.close();
+  };
+
+  // Helper de nombre de tipo comprobante
   const nombreTipo = (tipo) => {
     switch (tipo) {
       case '01': return 'Factura Electrónica';
       case '03': return 'Boleta de Venta Electrónica';
       case '07': return 'Nota de Crédito Electrónica';
-      case '08': return 'Nota de Débito Electrónica';
       default: return `Comprobante (${tipo})`;
-    }
-  };
-
-  const etiquetaTipoDocCliente = (codigo) => {
-    switch (String(codigo)) {
-      case '6': return 'RUC';
-      case '1': return 'DNI';
-      case '4': return 'C.E.';
-      case '7': return 'Pasaporte';
-      default: return 'Doc.';
     }
   };
 
@@ -373,153 +893,288 @@ export default function Facturacion({ usuario }) {
     }
   };
 
-  const etiquetaEstadoPedido = (estado) => {
-    switch (estado) {
-      case 'PENDIENTE': return 'En preparación';
-      case 'LISTO_DESPACHO': return 'Listo para despacho';
-      case 'DESPACHADO': return 'Ya despachado';
-      default: return estado;
+  // Clic secreto en el título o icono para desbloquear (5 clics en 3 segundos)
+  const registrarClicSecreto = () => {
+    const ahora = Date.now();
+    if (ahora - clicsSecretosRef.current.lastTime > 3000) {
+      clicsSecretosRef.current.count = 1;
+    } else {
+      clicsSecretosRef.current.count += 1;
+    }
+    clicsSecretosRef.current.lastTime = ahora;
+
+    if (clicsSecretosRef.current.count >= 5) {
+      clicsSecretosRef.current.count = 0;
+      setPinDesbloqueo('');
+      setErrorPin('');
+      setModalDesbloqueoSecreto(true);
     }
   };
 
-  const imprimirComprobanteActual = () => {
-    if (!modalPdf?.comprobante) return;
-    const c = modalPdf.comprobante;
-    const emisor = modalPdf.emisor || configSunat || {};
-    const items = modalPdf.items || [];
-    const numero = `${c.serie}-${String(c.correlativo).padStart(8, '0')}`;
-    const titulo = nombreTipo(c.tipo_comprobante).toUpperCase();
-    const fechaEmision = new Date(c.fecha_emision).toLocaleDateString('es-PE', {
-      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-    });
-    const qrSvg = generarSvgQrString(c.cadena_qr, 115);
-
-    const filasHtml = items.length > 0
-      ? items.map((it, idx) => `
-          <tr>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:center;">${idx + 1}</td>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-family:monospace;">${it.sku || '-'}</td>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;">${it.descripcion}</td>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:center;">${it.cantidad} ${it.codigo_unidad_sunat || it.unidad_medida || 'NIU'}</td>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;">S/ ${parseFloat(it.precio_unitario || 0).toFixed(2)}</td>
-            <td style="padding:8px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:bold;">S/ ${parseFloat(it.subtotal || (it.cantidad * it.precio_unitario) || 0).toFixed(2)}</td>
-          </tr>
-        `).join('')
-      : `<tr><td colspan="6" style="padding:12px;text-align:center;color:#64748b;">Detalle de Pedido #${c.id_pedido || '-'}</td></tr>`;
-
-    const ventana = window.open('', '_blank', 'width=880,height=920');
-    if (!ventana) {
-      window.print();
+  // Manejo de búsqueda y detección de código de desbloqueo *7777#
+  const handleCambioBusqueda = (valor) => {
+    const limpio = valor.trim();
+    if (limpio === '*7777#' || limpio === '*7777' || limpio.toLowerCase() === '*desbloqueo#') {
+      localStorage.removeItem('erp_modo_emergencia');
+      setModoEmergencia(false);
+      setBusqueda('');
+      toast.success('🔓 Código de desbloqueo aceptado. Modo normal restaurado.');
       return;
     }
-
-    ventana.document.write(`
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8" />
-        <title>${titulo} ${numero}</title>
-        <style>
-          body { font-family: Arial, sans-serif; color: #0f172a; margin: 28px; font-size: 12px; }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1e1b4b; padding-bottom: 16px; margin-bottom: 16px; }
-          .box-num { border: 2px solid #1e1b4b; border-radius: 10px; padding: 12px 22px; text-align: center; min-width: 250px; }
-          .box-num .ruc { font-size: 14px; font-weight: bold; color: #0f172a; }
-          .box-num h2 { margin: 6px 0; font-size: 14px; color: #1e1b4b; background: #eef2ff; padding: 4px 8px; border-radius: 4px; }
-          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-bottom: 14px; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-          th { background: #1e1b4b; color: white; padding: 8px; font-size: 11px; text-transform: uppercase; }
-          .leyenda-letras { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; font-weight: bold; margin-bottom: 14px; font-size: 12px; }
-          .footer-sunat { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-top: 10px; }
-          .qr-box { display: flex; align-items: center; gap: 14px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; max-width: 460px; }
-          .totales { width: 280px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; }
-          .totales div { display: flex; justify-content: space-between; padding: 3px 0; }
-          .total-final { border-top: 2px solid #1e1b4b; margin-top: 6px; padding-top: 8px !important; font-weight: bold; font-size: 15px; color: #1e1b4b; }
-          .anulado { color: #dc2626; font-weight: bold; border: 2px solid #dc2626; display: inline-block; padding: 3px 10px; border-radius: 6px; margin-top: 6px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <h1 style="margin:0;color:#1e1b4b;font-size:20px;">${emisor.razon_social || c.nombre_ubicacion || 'EMPRESA DEMO ERP S.A.C.'}</h1>
-            <p style="margin:3px 0;color:#334155;font-weight:bold;">${emisor.nombre_comercial || ''}</p>
-            <p style="margin:3px 0;color:#475569;">Dirección Fiscal: ${emisor.direccion_fiscal || c.direccion_ubicacion || 'Lima - Perú'}</p>
-            <p style="margin:2px 0;color:#475569;">Sede de Despacho: ${c.nombre_ubicacion || 'Sede Central'}</p>
-          </div>
-          <div class="box-num">
-            <div class="ruc">R.U.C. N° ${emisor.ruc_emisor || '20600000001'}</div>
-            <h2>${titulo}</h2>
-            <div style="font-family:monospace;font-size:16px;font-weight:bold;">${numero}</div>
-            ${c.estado_sunat === 'ANULADO' ? '<div class="anulado">ANULADO</div>' : ''}
-          </div>
-        </div>
-
-        <div class="info-grid">
-          <div><strong>Cliente / Razón Social:</strong> ${c.nombre_cliente || 'Cliente General'}</div>
-          <div><strong>Fecha de Emisión:</strong> ${fechaEmision}</div>
-          <div><strong>${etiquetaTipoDocCliente(c.cliente_tipo_doc)}:</strong> ${c.cliente_documento || '-'}</div>
-          <div><strong>Condición de Pago:</strong> ${c.forma_pago === 'CREDITO' ? `CRÉDITO (${c.dias_credito || 30} días)` : 'CONTADO'}</div>
-          <div><strong>Dirección del Cliente:</strong> ${c.cliente_direccion || '-'}</div>
-          <div><strong>Moneda:</strong> SOLES (PEN) · Pedido #${c.id_pedido || '-'}</div>
-          ${c.tipo_comprobante === '07' && c.ref_serie ? `
-            <div><strong>Documento que Modifica:</strong> ${c.ref_serie}-${String(c.ref_correlativo).padStart(8, '0')}</div>
-            <div><strong>Motivo SUNAT (Cat. 09):</strong> (${c.codigo_motivo_nc || '01'}) ${c.descripcion_motivo_nc || ''}</div>
-          ` : ''}
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Ítem</th>
-              <th style="text-align:left;">Código</th>
-              <th style="text-align:left;">Descripción</th>
-              <th>Cant. / Unidad</th>
-              <th style="text-align:right;">P. Unitario</th>
-              <th style="text-align:right;">Importe Total</th>
-            </tr>
-          </thead>
-          <tbody>${filasHtml}</tbody>
-        </table>
-
-        <div class="leyenda-letras">
-          ${c.monto_en_letras || 'SON: SOLES'}
-        </div>
-
-        <div class="footer-sunat">
-          <div class="qr-box">
-            <div>${qrSvg}</div>
-            <div style="font-size:10px;color:#334155;line-height:1.45;">
-              <div><strong>Representación impresa de la ${nombreTipo(c.tipo_comprobante)}</strong></div>
-              <div style="margin-top:4px;"><strong>Resumen / Código Hash CPE:</strong> <span style="font-family:monospace;">${c.codigo_hash || '-'}</span></div>
-              <div><strong>Estado SUNAT:</strong> ${c.mensaje_cdr || 'Aceptado por SUNAT (Código 0)'}</div>
-              ${c.aplica_detraccion ? `<div style="margin-top:4px;color:#1e1b4b;"><strong>Operación sujeta a Detracción (${c.porcentaje_detraccion}%):</strong> S/ ${parseFloat(c.monto_detraccion || 0).toFixed(2)} · Cta. BN: ${emisor.detraccion_cuenta_bn || '00-000-000000'}</div>` : ''}
-              <div style="margin-top:4px;color:#64748b;">Autorizado mediante resolución de intendencia SUNAT. Consulte su comprobante en www.sunat.gob.pe</div>
-            </div>
-          </div>
-
-          <div class="totales">
-            <div><span>Op. Gravada:</span><span>S/ ${parseFloat(c.monto_gravada ?? c.monto_subtotal ?? 0).toFixed(2)}</span></div>
-            ${Number(c.monto_exonerada) > 0 ? `<div><span>Op. Exonerada:</span><span>S/ ${parseFloat(c.monto_exonerada).toFixed(2)}</span></div>` : ''}
-            ${Number(c.monto_inafecta) > 0 ? `<div><span>Op. Inafecta:</span><span>S/ ${parseFloat(c.monto_inafecta).toFixed(2)}</span></div>` : ''}
-            <div><span>I.G.V. (18%):</span><span>S/ ${parseFloat(c.monto_igv || 0).toFixed(2)}</span></div>
-            <div class="total-final"><span>IMPORTE TOTAL:</span><span>S/ ${parseFloat(c.monto_total || 0).toFixed(2)}</span></div>
-          </div>
-        </div>
-        <script>window.onload = function() { window.print(); };</script>
-      </body>
-      </html>
-    `);
-    ventana.document.close();
+    setBusqueda(valor);
   };
 
-  // Estadísticas
-  const totalFacturas = comprobantes.filter(c => c.tipo_comprobante === '01').length;
-  const totalBoletas = comprobantes.filter(c => c.tipo_comprobante === '03').length;
-  const totalNotas = comprobantes.filter(c => c.tipo_comprobante === '07').length;
-  const totalMonto = comprobantes
-    .filter(c => c.estado_sunat === 'ACEPTADO' && c.tipo_comprobante !== '07')
-    .reduce((acc, c) => acc + parseFloat(c.monto_total || 0), 0);
+  // Botón de emergencia: Descarga de backup y activación de modo seguro
+  const activarModoEmergenciaYDescargarBackup = () => {
+    try {
+      const backupData = {
+        fecha_exportacion: new Date().toISOString(),
+        usuario_responsable: usuario?.nombre || 'Administrador',
+        empresa_emisora: {
+          ruc: configSunat?.ruc_emisor || '20608725394',
+          razon_social: configSunat?.razon_social || 'PROCESOS CARNICOS S.A.C.',
+          modo_integracion: configSunat?.modo_integracion || 'DEMO_NUBEFACT'
+        },
+        notas_de_credito: comprobantes.filter(c => c.tipo_comprobante === '07' || c.estado_sunat === 'ANULADO'),
+        notas_de_pedido: notasPedido,
+        total_comprobantes: comprobantes.length,
+        total_facturado_soles: totalMonto
+      };
 
-  const comprobantesFiltrados = comprobantes.filter(c => {
+      const jsonStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      link.href = url;
+      link.download = `backup_seguridad_facturas_${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      localStorage.setItem('erp_modo_emergencia', 'true');
+      setModoEmergencia(true);
+      if (tabActiva === 'notas') {
+        setTabActiva(tieneAccesoPedidos ? 'pedidos' : 'manual');
+      }
+      setModalConfirmarEmergencia(false);
+      toast.success('🛡️ Respaldo descargado y Modo Seguro activado.');
+    } catch (err) {
+      toast.error('Error al generar respaldo: ' + err.message);
+    }
+  };
+
+  const desbloquearConPin = (e) => {
+    e.preventDefault();
+    if (pinDesbloqueo.trim() === '7777') {
+      localStorage.removeItem('erp_modo_emergencia');
+      setModoEmergencia(false);
+      setModalDesbloqueoSecreto(false);
+      setPinDesbloqueo('');
+      setErrorPin('');
+      toast.success('🔓 Modo normal restaurado exitosamente.');
+    } else {
+      setErrorPin('Código incorrecto. Ingresa el PIN correcto (7777).');
+    }
+  };
+
+  // Handlers para POS Cafetería / Venta Rápida de Mostrador
+  const agregarProductoAlPos = (prod) => {
+    const existe = carritoPos.find(it => it.id_producto === prod.id_producto);
+    const precio = parseFloat(prod.precio_venta || 0);
+    if (existe) {
+      setCarritoPos(carritoPos.map(it => {
+        if (it.id_producto === prod.id_producto) {
+          const nuevaCant = it.cantidad + 1;
+          return { ...it, cantidad: nuevaCant, subtotal: Number((nuevaCant * it.precio_unitario).toFixed(2)) };
+        }
+        return it;
+      }));
+    } else {
+      setCarritoPos([
+        ...carritoPos,
+        {
+          id_producto: prod.id_producto,
+          descripcion: prod.nombre,
+          cantidad: 1,
+          peso: '',
+          precio_unitario: precio,
+          subtotal: precio,
+          sku: prod.sku || 'PROD',
+          unidad_medida: prod.unidad_medida || 'Unidad',
+          codigo_unidad_sunat: prod.codigo_unidad_sunat || 'NIU'
+        }
+      ]);
+    }
+  };
+
+  const modificarCantidadPos = (idx, delta) => {
+    const item = carritoPos[idx];
+    const nuevaCant = item.cantidad + delta;
+    if (nuevaCant <= 0) {
+      setCarritoPos(carritoPos.filter((_, i) => i !== idx));
+    } else {
+      const copia = [...carritoPos];
+      copia[idx] = {
+        ...item,
+        cantidad: nuevaCant,
+        subtotal: Number((nuevaCant * item.precio_unitario).toFixed(2))
+      };
+      setCarritoPos(copia);
+    }
+  };
+
+  const eliminarItemPos = (idx) => {
+    setCarritoPos(carritoPos.filter((_, i) => i !== idx));
+  };
+
+  const totalPosCalculado = useMemo(() => {
+    return carritoPos.reduce((sum, it) => sum + (parseFloat(it.subtotal) || 0), 0);
+  }, [carritoPos]);
+
+  const vueltoPosCalculado = useMemo(() => {
+    const entrega = parseFloat(montoEntregadoPos) || 0;
+    const vuelto = entrega - totalPosCalculado;
+    return vuelto > 0 ? Number(vuelto.toFixed(2)) : 0;
+  }, [montoEntregadoPos, totalPosCalculado]);
+
+  const handleCobrarPos = async () => {
+    if (carritoPos.length === 0) {
+      return toast.error('Agrega al menos un producto al pedido de mostrador.');
+    }
+    if (metodoPagoPos === 'EFECTIVO' && montoEntregadoPos) {
+      const entrega = parseFloat(montoEntregadoPos) || 0;
+      if (entrega < totalPosCalculado) {
+        return toast.error(`El monto entregado (S/ ${entrega.toFixed(2)}) es menor al total a pagar (S/ ${totalPosCalculado.toFixed(2)}).`);
+      }
+    }
+
+    setCobrandoPos(true);
+    try {
+      const medioPagoMap = {
+        EFECTIVO: '008',
+        YAPE: '003',
+        TARJETA: '006'
+      };
+
+      const res = await api.post('/facturacion/emitir-manual', {
+        id_cliente: 'CLIENTES_VARIOS',
+        id_ubicacion: manualUbicacionId,
+        tipo_comprobante: '03',
+        forma_pago: 'CONTADO',
+        medio_pago_sunat: medioPagoMap[metodoPagoPos] || '008',
+        items: carritoPos.map(it => ({
+          id_producto: it.id_producto,
+          descripcion: it.descripcion,
+          cantidad: it.cantidad,
+          peso: it.peso || null,
+          precio_unitario: it.precio_unitario,
+          subtotal: it.subtotal,
+          sku: it.sku,
+          unidad_medida: it.unidad_medida,
+          codigo_unidad_sunat: it.codigo_unidad_sunat
+        }))
+      });
+
+      toast.success(res.data.mensaje || '¡Venta de mostrador registrada y stock descontado!');
+      setCarritoPos([]);
+      setMontoEntregadoPos('');
+      await cargarDatos();
+
+      if (res.data?.comprobante) {
+        const compId = res.data.comprobante.id_comprobante;
+        api.get(`/facturacion/${compId}/detalle`)
+          .then(det => {
+            setModalPdf({
+              comprobante: det.data.comprobante,
+              emisor: det.data.emisor,
+              items: det.data.items
+            });
+          })
+          .catch(() => {});
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo procesar la venta.');
+    } finally {
+      setCobrandoPos(false);
+    }
+  };
+
+  const categoriasDisponibles = useMemo(() => {
+    const cats = new Set();
+    productos.forEach(p => {
+      if (p.tipo_producto) cats.add(p.tipo_producto);
+      else if (p.categoria) cats.add(p.categoria);
+    });
+    return ['TODOS', ...Array.from(cats)];
+  }, [productos]);
+
+  const productosPosFiltrados = useMemo(() => {
+    return productos.filter(p => {
+      if (categoriaPos !== 'TODOS') {
+        const cat = p.tipo_producto || p.categoria;
+        if (cat !== categoriaPos) return false;
+      }
+      if (busquedaProdPos.trim()) {
+        const q = busquedaProdPos.toLowerCase();
+        const nom = (p.nombre || '').toLowerCase();
+        const sku = (p.sku || '').toLowerCase();
+        return nom.includes(q) || sku.includes(q);
+      }
+      return true;
+    });
+  }, [productos, categoriaPos, busquedaProdPos]);
+
+  // Handlers para Configuración SUNAT
+  const handleProbarConexion = async () => {
+    setProbandoConexion(true);
+    try {
+      const res = await api.post('/facturacion/probar-conexion', {
+        modo_integracion: formConfig.modo_integracion,
+        nubefact_ruta: formConfig.nubefact_ruta,
+        nubefact_token: formConfig.nubefact_token
+      });
+      if (res.data.exito) {
+        toast.success(res.data.mensaje || '¡Conexión verificada con éxito!');
+      } else {
+        toast.error(res.data.mensaje || 'No se pudo verificar la conexión.');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'Error al conectar con la API de NubeFact.');
+    } finally {
+      setProbandoConexion(false);
+    }
+  };
+
+  const handleGuardarConfig = async (e) => {
+    e.preventDefault();
+    setGuardandoConfig(true);
+    try {
+      const res = await api.put('/facturacion/configuracion', formConfig);
+      toast.success(res.data.mensaje || '¡Configuración guardada correctamente!');
+      if (res.data.configuracion) {
+        setConfigSunat(res.data.configuracion);
+      }
+      setModalConfig(false);
+      await cargarDatos();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo guardar la configuración.');
+    } finally {
+      setGuardandoConfig(false);
+    }
+  };
+
+  // Comprobantes visibles considerando Modo Emergencia
+  const comprobantesVisibles = useMemo(() => {
+    if (modoEmergencia) {
+      return comprobantes.filter(c => c.tipo_comprobante !== '07');
+    }
+    return comprobantes;
+  }, [comprobantes, modoEmergencia]);
+
+  // Filtros del historial
+  const comprobantesFiltrados = comprobantesVisibles.filter(c => {
     if (filtroTipo !== 'todos' && c.tipo_comprobante !== filtroTipo) return false;
     if (busqueda.trim() !== '') {
       const q = busqueda.toLowerCase();
@@ -531,33 +1186,51 @@ export default function Facturacion({ usuario }) {
     return true;
   });
 
-  // Validación preventiva en vivo en el modal de emisión
-  const clienteSeleccionadoTieneRuc = pedidoSeleccionado
-    ? (pedidoSeleccionado.tipo_documento_cliente === '6' && /^(10|15|16|17|20)\d{9}$/.test(String(pedidoSeleccionado.ruc_cliente || '').trim()))
-    : true;
+  const totalFacturas = comprobantesVisibles.filter(c => c.tipo_comprobante === '01').length;
+  const totalBoletas = comprobantesVisibles.filter(c => c.tipo_comprobante === '03').length;
+  const totalNotas = comprobantesVisibles.filter(c => c.tipo_comprobante === '07').length;
+  const totalMonto = comprobantesVisibles
+    .filter(c => c.estado_sunat === 'ACEPTADO' && c.tipo_comprobante !== '07')
+    .reduce((acc, c) => acc + parseFloat(c.monto_total || 0), 0);
+
+  // Múltiplos de 7 días por default (Req 6)
+  const opcionesMultiplos7 = [7, 14, 21, 28, 35, 42, 49, 56, 63, 70];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* CABECERA PRINCIPAL */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex items-start sm:items-center space-x-3">
-          <div className="p-3 bg-indigo-100 text-indigo-600 rounded-xl shadow-xs shrink-0">
+          <div
+            onClick={registrarClicSecreto}
+            className="p-3 bg-indigo-100 text-indigo-600 rounded-xl shadow-xs shrink-0 cursor-pointer select-none transition-transform hover:scale-105 active:scale-95"
+            title="Facturación Electrónica SUNAT"
+          >
             <Receipt size={24} />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-bold text-blue-950">Facturación Electrónica SUNAT</h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                <CheckCircle2 size={13} />
-                <span>
-                  {configSunat?.modo_integracion === 'NUBEFACT_REAL'
-                    ? 'Conectado a NubeFact API'
-                    : 'API Demo NubeFact v1 Activa'}
+              <h1
+                onClick={registrarClicSecreto}
+                className="text-2xl font-bold text-blue-950 cursor-pointer select-none"
+                title="Facturación y Notas de Pedido"
+              >
+                Facturación y Notas de Pedido
+              </h1>
+              {configSunat?.modo_integracion === 'NUBEFACT_REAL' ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Facturación Oficial SUNAT Activa</span>
                 </span>
-              </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs">
+                  <CheckCircle2 size={13} className="text-amber-600" />
+                  <span>API Demo NubeFact v1 Activa</span>
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
-              Emisor: <strong className="text-slate-700">{configSunat?.razon_social || 'EMPRESA DEMO ERP S.A.C.'}</strong> (RUC: <span className="font-mono font-bold">{configSunat?.ruc_emisor || '20600000001'}</span>) · UBL 2.1, QR y CDR listos
+              Empresa Emisora: <strong className="text-slate-700">{configSunat?.razon_social || 'PROCESOS CARNICOS S.A.C.'}</strong> (RUC: <span className="font-mono font-bold">{configSunat?.ruc_emisor || '20608725394'}</span>) · SUNAT UBL 2.1
             </p>
           </div>
         </div>
@@ -576,273 +1249,1726 @@ export default function Facturacion({ usuario }) {
             <button
               type="button"
               onClick={() => setModalConfig(true)}
-              className="flex items-center space-x-2 bg-slate-100 hover:bg-slate-200 text-slate-800 px-3.5 py-2.5 rounded-xl font-semibold text-xs border border-slate-200 transition-colors cursor-pointer"
+              className="flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 px-3 py-2 rounded-xl font-semibold text-xs border border-slate-200 transition-colors cursor-pointer"
             >
-              <Settings size={16} />
-              <span>Configurar SUNAT / NubeFact</span>
+              <Settings size={15} />
+              <span>Configuración Emisor</span>
+            </button>
+          )}
+
+          {/* BOTÓN DE EMERGENCIA (Oculto cuando está en modo emergencia) */}
+          {!modoEmergencia && puedeEditarFacturacion && (
+            <button
+              type="button"
+              onClick={() => setModalConfirmarEmergencia(true)}
+              className="flex items-center space-x-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-3 py-2 rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-2xs"
+              title="Descargar respaldo y ocultar secciones sensibles"
+            >
+              <ShieldAlert size={15} className="text-rose-600" />
+              <span>Modo Seguro</span>
+            </button>
+          )}
+
+          {/* BOTÓN AL LADO DE EMITIR FACTURA: EMITIR NOTA DE PEDIDO (Req 16 - Oculto en modo emergencia) */}
+          {!modoEmergencia && puedeEditarFacturacion && (
+            <button
+              onClick={abrirModalNotaPedido}
+              className="flex items-center space-x-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm transition-colors cursor-pointer"
+            >
+              <FileText size={17} />
+              <span>Emitir Nota de Pedido</span>
             </button>
           )}
 
           {puedeEditarFacturacion && (
             <button
-              onClick={abrirModalEmitir}
+              onClick={() => {
+                if (tieneAccesoPedidos && pedidosFacturables.length > 0) {
+                  abrirModalEmitirConPedido();
+                } else if (tieneAccesoManual) {
+                  abrirModalManual();
+                } else {
+                  abrirModalEmitirConPedido();
+                }
+              }}
               className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm transition-colors cursor-pointer"
             >
-              <Plus size={18} />
+              <Plus size={17} />
               <span>Emitir Factura o Boleta</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Tarjetas de Resumen */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* TARJETAS DE RESUMEN */}
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${modoEmergencia ? 'lg:grid-cols-3' : 'lg:grid-cols-4'} gap-4`}>
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Facturas (F001)</span>
-            <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FileText size={16} /></span>
+            <FileText size={18} className="text-indigo-600" />
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-blue-950">{totalFacturas}</span>
-            <span className="text-xs text-slate-400">Empresas (RUC)</span>
-          </div>
+          <div className="text-2xl font-black text-blue-950 mt-2">{totalFacturas}</div>
+          <span className="text-xs text-slate-500 font-medium">Empresas con RUC</span>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Boletas (B001)</span>
-            <span className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><Receipt size={16} /></span>
+            <Receipt size={18} className="text-emerald-600" />
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-blue-950">{totalBoletas}</span>
-            <span className="text-xs text-slate-400">Personas (DNI)</span>
-          </div>
+          <div className="text-2xl font-black text-blue-950 mt-2">{totalBoletas}</div>
+          <span className="text-xs text-slate-500 font-medium">Personas Naturales y Mostrador</span>
         </div>
 
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Notas de Crédito</span>
-            <span className="p-2 bg-purple-50 text-purple-600 rounded-lg"><AlertCircle size={16} /></span>
+        {!modoEmergencia && (
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Notas de Pedido</span>
+              <Tag size={18} className="text-amber-600" />
+            </div>
+            <div className="text-2xl font-black text-blue-950 mt-2">{notasPedido.length}</div>
+            <span className="text-xs text-slate-500 font-medium">Documentos Internos Imprimibles</span>
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-blue-950">{totalNotas}</span>
-            <span className="text-xs text-slate-400">FC01 / BC01</span>
-          </div>
-        </div>
+        )}
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Facturado</span>
-            <span className="p-2 bg-amber-50 text-amber-600 rounded-lg"><DollarSign size={16} /></span>
+            <DollarSign size={18} className="text-amber-500" />
           </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-blue-950">S/ {totalMonto.toFixed(2)}</span>
-            <span className="text-xs text-emerald-600 font-semibold">Aceptado SUNAT</span>
+          <div className="text-2xl font-black text-blue-950 mt-2">
+            S/ {totalMonto.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
+          <span className="text-xs text-emerald-600 font-bold">Aceptado SUNAT</span>
         </div>
       </div>
 
-      {/* Filtros y Búsqueda */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="flex flex-wrap gap-2">
+      {/* SELECTOR DE PESTAÑAS (SECCIONES FACTURACIÓN SEGÚN ASIGNACIÓN - Req 18 & 13) */}
+      <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-xs">
+        {tieneAccesoPedidos && (
           <button
-            onClick={() => setFiltroTipo('todos')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              filtroTipo === 'todos' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            type="button"
+            onClick={() => setTabActiva('pedidos')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              tabActiva === 'pedidos'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            Todos ({comprobantes.length})
+            <Layers size={14} />
+            <span>Facturación por Pedidos ({pedidosFacturables.length})</span>
           </button>
-          <button
-            onClick={() => setFiltroTipo('01')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              filtroTipo === '01' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Facturas ({totalFacturas})
-          </button>
-          <button
-            onClick={() => setFiltroTipo('03')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              filtroTipo === '03' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Boletas ({totalBoletas})
-          </button>
-          <button
-            onClick={() => setFiltroTipo('07')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-              filtroTipo === '07' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Notas de Crédito ({totalNotas})
-          </button>
-        </div>
+        )}
 
-        <div className="relative min-w-[260px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por serie, número o cliente..."
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-          />
-        </div>
+        {tieneAccesoManual && (
+          <button
+            type="button"
+            onClick={() => setTabActiva('manual')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              tabActiva === 'manual'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Plus size={14} />
+            <span>Facturación Manual / Mostrador</span>
+          </button>
+        )}
+
+        {!modoEmergencia && (
+          <button
+            type="button"
+            onClick={() => setTabActiva('notas')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              tabActiva === 'notas'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <FileText size={14} />
+            <span>Notas de Pedido ({notasPedido.length})</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setTabActiva('historial')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+            tabActiva === 'historial'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Receipt size={14} />
+          <span>Comprobantes Emitidos ({comprobantesVisibles.length})</span>
+        </button>
       </div>
 
-      {/* Tabla de Comprobantes */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        {cargando ? (
-          <div className="p-12 text-center text-slate-500 font-medium">Cargando comprobantes electrónicos...</div>
-        ) : comprobantesFiltrados.length === 0 ? (
-          <div className="p-12 text-center">
-            <Receipt size={40} className="mx-auto text-slate-300 mb-3" />
-            <p className="text-slate-600 font-medium">No hay comprobantes para mostrar.</p>
-            {puedeEditarFacturacion && (
-              <p className="text-slate-400 text-sm mt-1">Haz clic en "Emitir Factura o Boleta" arriba a la derecha para crear uno.</p>
-            )}
+      {/* PESTAÑA 1: FACTURACIÓN POR PEDIDOS */}
+      {tabActiva === 'pedidos' && tieneAccesoPedidos && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div>
+              <h3 className="text-base font-bold text-blue-950">Pedidos Pendientes de Facturación</h3>
+              <p className="text-xs text-slate-500">
+                Selecciona un pedido para emitir su factura o boleta electrónica SUNAT.
+              </p>
+            </div>
           </div>
-        ) : (
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-slate-50/75 border-b border-slate-200 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                  <th className="py-4 px-5">Tipo</th>
-                  <th className="py-4 px-5">Serie y Número</th>
-                  <th className="py-4 px-5">Cliente / Pedido</th>
-                  <th className="py-4 px-5 text-center">Condición</th>
-                  <th className="py-4 px-5">Emisión</th>
-                  <th className="py-4 px-5 text-right">Gravada</th>
-                  <th className="py-4 px-5 text-right">IGV (18%)</th>
-                  <th className="py-4 px-5 text-right">Total</th>
-                  <th className="py-4 px-5 text-center">Estado SUNAT</th>
-                  <th className="py-4 px-5 text-right">Comprobante / XML / CDR</th>
+                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4 font-semibold">Identificador Pedido</th>
+                  <th className="p-4 font-semibold">Cliente</th>
+                  <th className="p-4 font-semibold text-center">Estado Preparación</th>
+                  <th className="p-4 font-semibold text-center">Peso en Balanza</th>
+                  <th className="p-4 font-semibold text-right">Monto Total</th>
+                  <th className="p-4 font-semibold text-center">Acción</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {comprobantesFiltrados.map((comp) => {
-                  const serieCorr = `${comp.serie}-${String(comp.correlativo).padStart(8, '0')}`;
-                  const esAnulado = comp.estado_sunat === 'ANULADO';
-                  const esNotaCredito = comp.tipo_comprobante === '07';
+                {pedidosFacturables.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="p-8 text-center text-slate-400 text-xs">
+                      No hay pedidos pendientes de facturar en este momento.
+                    </td>
+                  </tr>
+                ) : (
+                  pedidosFacturables.map(p => {
+                    const etiquetaFormateada = formatearEtiquetaPedido(p.id_pedido, p.fecha_limite_despacho || p.creado_en);
+                    const estaListo = p.estado_pedido === 'LISTO_DESPACHO';
 
-                  return (
-                    <tr key={comp.id_comprobante} className={`hover:bg-slate-50/60 transition-colors ${esAnulado ? 'bg-red-50/30' : ''}`}>
-                      <td className="py-4 px-5">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${badgeTipo(comp.tipo_comprobante)}`}>
-                          {nombreTipo(comp.tipo_comprobante)}
-                        </span>
-                        {esNotaCredito && comp.ref_serie && (
-                          <div className="text-[11px] text-purple-700 font-mono mt-1">
-                            Modifica: {comp.ref_serie}-{String(comp.ref_correlativo).padStart(8, '0')}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-4 px-5">
-                        <div className="font-mono font-bold text-slate-900">{serieCorr}</div>
-                        {comp.codigo_hash && (
-                          <div className="text-[10px] font-mono text-slate-400 truncate max-w-[130px]" title={`Hash CPE: ${comp.codigo_hash}`}>
-                            Hash: {comp.codigo_hash}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-4 px-5">
-                        <div className="font-semibold text-slate-800">{comp.nombre_cliente || 'Cliente General'}</div>
-                        <div className="text-xs text-slate-400">
-                          {etiquetaTipoDocCliente(comp.tipo_documento_cliente)}: {comp.documento_cliente || '-'} · Pedido #{comp.id_pedido}
-                        </div>
-                      </td>
-                      <td className="py-4 px-5 text-center">
-                        {comp.forma_pago === 'CREDITO' ? (
-                          <div>
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                              Crédito ({comp.dias_credito || 30}d)
-                            </span>
-                            {comp.fecha_vencimiento_cuota && (
-                              <div className="text-[10px] text-purple-600 font-mono mt-0.5">
-                                Vence: {new Date(comp.fecha_vencimiento_cuota).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
-                            Contado
+                    return (
+                      <tr key={p.id_pedido} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-mono font-bold text-slate-900 text-xs">
+                          {etiquetaFormateada}
+                        </td>
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-900">{p.cliente}</div>
+                          <div className="text-[11px] text-slate-500 font-mono">Doc: {p.ruc_cliente || '-'}</div>
+                        </td>
+                        <td className="p-4 text-center">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                            estaListo
+                              ? 'bg-amber-300 text-amber-950 border-amber-500'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}>
+                            {estaListo ? 'Listo para Despacho' : 'En Preparación'}
                           </span>
-                        )}
-                      </td>
-                      <td className="py-4 px-5 text-slate-600 text-xs font-medium">
-                        {new Date(comp.fecha_emision).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td className="py-4 px-5 text-right text-slate-600 font-mono text-xs">
-                        S/ {parseFloat(comp.monto_subtotal || 0).toFixed(2)}
-                      </td>
-                      <td className="py-4 px-5 text-right text-slate-600 font-mono text-xs">
-                        S/ {parseFloat(comp.monto_igv || 0).toFixed(2)}
-                      </td>
-                      <td className="py-4 px-5 text-right font-bold text-slate-900 font-mono">
-                        S/ {parseFloat(comp.monto_total || 0).toFixed(2)}
-                      </td>
-                      <td className="py-4 px-5 text-center">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
-                          esAnulado ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
-                        }`}>
-                          {esAnulado ? <XCircle size={12} className="mr-1" /> : <ShieldCheck size={12} className="mr-1" />}
-                          {esAnulado ? 'Anulado (Baja/NC)' : 'Aceptado SUNAT'}
-                        </span>
-                      </td>
-                      <td className="py-4 px-5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            disabled={cargandoPdf}
-                            onClick={() => abrirVisorPdf(comp)}
-                            className="px-2.5 py-1.5 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors flex items-center space-x-1 text-xs font-bold cursor-pointer"
-                            title="Ver representación impresa A4 con Código QR oficial"
-                          >
-                            <Eye size={13} />
-                            <span>PDF / QR</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => descargarArchivoTributario(comp.id_comprobante, 'xml', comp.serie, comp.correlativo)}
-                            className="px-2 py-1.5 text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors text-[11px] font-bold cursor-pointer"
-                            title="Descargar XML UBL 2.1 firmado"
-                          >
-                            XML
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => descargarArchivoTributario(comp.id_comprobante, 'cdr', comp.serie, comp.correlativo)}
-                            className="px-2 py-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors text-[11px] font-bold cursor-pointer"
-                            title="Descargar Constancia de Recepción (CDR) de SUNAT"
-                          >
-                            CDR
-                          </button>
-
-                          {puedeEditarFacturacion && !esAnulado && !esNotaCredito && (
-                            <button
-                              type="button"
-                              onClick={() => abrirModalAnular(comp)}
-                              className="px-2.5 py-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg transition-colors text-xs font-bold cursor-pointer"
-                              title="Emitir Nota de Crédito y anular este comprobante"
-                            >
-                              Anular
-                            </button>
+                        </td>
+                        <td className="p-4 text-center">
+                          {p.peso_total ? (
+                            <span className="font-bold text-amber-900 font-mono text-xs bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                              ⚖️ {Number(p.peso_total).toFixed(2)} kg
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs italic">Por ingresar</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td className="p-4 text-right font-mono font-bold text-slate-900">
+                          S/ {parseFloat(p.monto_total || 0).toFixed(2)}
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalEmitirConPedido(p)}
+                            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <span>Facturar</span>
+                            <ChevronRight size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* MODAL VER / IMPRIMIR COMPROBANTE EN FORMATO A4 REGLAMENTARIO SUNAT */}
+      {/* PESTAÑA 2: FACTURACIÓN MANUAL / VENTA RÁPIDA DE MOSTRADOR */}
+      {tabActiva === 'manual' && tieneAccesoManual && (
+        <div className="space-y-4">
+          {/* Barra superior con selector de modo */}
+          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Modo de Venta:</span>
+              <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setSubmodoManual('CAFETERIA')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    submodoManual === 'CAFETERIA'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Zap size={14} className="text-amber-500" />
+                  <span>⚡ Venta Rápida de Mostrador / Cafetería</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubmodoManual('DETALLADO')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    submodoManual === 'DETALLADO'
+                      ? 'bg-white text-indigo-700 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <FileText size={14} className="text-indigo-600" />
+                  <span>🏢 Venta Detallada a Cliente (RUC / DNI)</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-slate-600 shrink-0">📍 Descontar Stock de:</label>
+              <select
+                value={manualUbicacionId}
+                onChange={(e) => setManualUbicacionId(e.target.value)}
+                className="bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800"
+              >
+                {ubicaciones.map(u => (
+                  <option key={u.id_ubicacion} value={u.id_ubicacion}>{u.nombre}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {submodoManual === 'CAFETERIA' ? (
+            /* INTERFAZ RÁPIDA DE MOSTRADOR / CAFETERÍA */
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* COLUMNA IZQUIERDA: CATÁLOGO DE PRODUCTOS (7 COLS) */}
+              <div className="lg:col-span-7 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-blue-950 flex items-center gap-2">
+                      <ShoppingBag size={18} className="text-indigo-600" />
+                      <span>Catálogo de Productos Disponibles</span>
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Toca cualquier producto para sumarlo a la boleta con un solo clic.
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-56">
+                    <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={busquedaProdPos}
+                      onChange={(e) => setBusquedaProdPos(e.target.value)}
+                      placeholder="Buscar producto o código..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Filtros de Categoría / Tipo de Producto */}
+                {categoriasDisponibles.length > 2 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                    {categoriasDisponibles.map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setCategoriaPos(cat)}
+                        className={`px-3 py-1 rounded-lg font-bold text-xs shrink-0 transition-colors cursor-pointer ${
+                          categoriaPos === cat
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Grilla de productos rápidos */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[520px] overflow-y-auto pr-1">
+                  {productosPosFiltrados.length === 0 ? (
+                    <div className="col-span-full py-12 text-center text-slate-400 text-xs">
+                      No se encontraron productos en esta categoría.
+                    </div>
+                  ) : (
+                    productosPosFiltrados.map(prod => {
+                      const yaEnCarrito = carritoPos.find(it => it.id_producto === prod.id_producto);
+                      return (
+                        <button
+                          key={prod.id_producto}
+                          type="button"
+                          onClick={() => agregarProductoAlPos(prod)}
+                          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between hover:shadow-md cursor-pointer ${
+                            yaEnCarrito
+                              ? 'border-indigo-500 bg-indigo-50/50 ring-2 ring-indigo-500/20'
+                              : 'border-slate-200 bg-white hover:border-indigo-300'
+                          }`}
+                        >
+                          {yaEnCarrito && (
+                            <span className="absolute top-2 right-2 bg-indigo-600 text-white font-extrabold text-[10px] w-5 h-5 rounded-full flex items-center justify-center">
+                              {yaEnCarrito.cantidad}
+                            </span>
+                          )}
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+                              {prod.tipo_producto || prod.categoria || 'Producto'}
+                            </span>
+                            <span className="font-bold text-slate-900 text-xs line-clamp-2 mt-0.5 leading-snug">
+                              {prod.nombre}
+                            </span>
+                          </div>
+                          <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
+                            <span className="text-xs font-mono font-black text-indigo-700">
+                              S/ {parseFloat(prod.precio_venta || 0).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold">
+                              + Agregar
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* COLUMNA DERECHA: ORDEN DE VENTA / COBRO DE CAJA (5 COLS) */}
+              <div className="lg:col-span-5 bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+                <div className="pb-3 border-b border-slate-100 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-blue-950 flex items-center gap-1.5">
+                      <Receipt size={17} className="text-emerald-600" />
+                      <span>Boleta de Venta Rápida (B001)</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Cliente: <strong className="text-slate-800">CLIENTES VARIOS / CONSUMIDOR FINAL</strong> (DNI: <span className="font-mono">00000000</span>)
+                    </p>
+                  </div>
+                  {carritoPos.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCarritoPos([])}
+                      className="text-[11px] text-rose-600 hover:underline font-bold cursor-pointer"
+                    >
+                      Vaciar
+                    </button>
+                  )}
+                </div>
+
+                {/* Lista de ítems en carrito */}
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {carritoPos.length === 0 ? (
+                    <div className="py-10 text-center text-slate-400 text-xs space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <ShoppingBag size={20} />
+                      </div>
+                      <p className="font-medium">El pedido está vacío.</p>
+                      <p className="text-[11px] text-slate-400">Haz clic en los productos para agregarlos al cobro.</p>
+                    </div>
+                  ) : (
+                    carritoPos.map((it, idx) => (
+                      <div key={idx} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between gap-2 text-xs">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-bold text-slate-800 truncate leading-tight">{it.descripcion}</p>
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            S/ {it.precio_unitario.toFixed(2)} c/u
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => modificarCantidadPos(idx, -1)}
+                            className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer font-bold"
+                          >
+                            <Minus size={12} />
+                          </button>
+                          <span className="w-6 text-center font-bold font-mono">{it.cantidad}</span>
+                          <button
+                            type="button"
+                            onClick={() => modificarCantidadPos(idx, 1)}
+                            className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer font-bold"
+                          >
+                            <Plus size={12} />
+                          </button>
+                        </div>
+                        <div className="text-right shrink-0 min-w-[60px]">
+                          <span className="font-mono font-bold text-slate-900 block">
+                            S/ {it.subtotal.toFixed(2)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => eliminarItemPos(idx)}
+                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer shrink-0"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Métodos de Pago Rápido */}
+                <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
+                  <span className="block font-bold text-slate-700 uppercase tracking-wider text-[11px]">
+                    Método de Pago
+                  </span>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPagoPos('EFECTIVO')}
+                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                        metodoPagoPos === 'EFECTIVO'
+                          ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Banknote size={15} />
+                      <span>Efectivo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPagoPos('YAPE')}
+                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                        metodoPagoPos === 'YAPE'
+                          ? 'border-purple-600 bg-purple-50 text-purple-900 ring-2 ring-purple-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Zap size={15} />
+                      <span>Yape / Plin</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPagoPos('TARJETA')}
+                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                        metodoPagoPos === 'TARJETA'
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-500/20'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <CreditCard size={15} />
+                      <span>Tarjeta</span>
+                    </button>
+                  </div>
+
+                  {/* Cálculo de vuelto si paga en efectivo */}
+                  {metodoPagoPos === 'EFECTIVO' && totalPosCalculado > 0 && (
+                    <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-emerald-900">Paga con billete:</span>
+                        <div className="flex gap-1">
+                          {[10, 20, 50, 100].map(billete => (
+                            <button
+                              key={billete}
+                              type="button"
+                              onClick={() => setMontoEntregadoPos(String(billete))}
+                              className="px-2 py-0.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded text-[10px] font-bold text-emerald-800 cursor-pointer"
+                            >
+                              S/ {billete}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setMontoEntregadoPos(String(totalPosCalculado))}
+                            className="px-2 py-0.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded text-[10px] font-bold text-emerald-800 cursor-pointer"
+                          >
+                            Exacto
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 items-center">
+                        <div>
+                          <input
+                            type="number"
+                            step="0.50"
+                            min="0"
+                            value={montoEntregadoPos}
+                            onChange={(e) => setMontoEntregadoPos(e.target.value)}
+                            placeholder="Monto entregado S/"
+                            className="w-full p-2 bg-white border border-emerald-300 rounded-lg text-xs font-mono font-bold text-slate-900"
+                          />
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-emerald-800 block">Vuelto a entregar:</span>
+                          <span className="text-sm font-mono font-black text-emerald-900">
+                            S/ {vueltoPosCalculado.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Resumen de totales */}
+                <div className="bg-slate-900 text-white p-4 rounded-xl space-y-1 text-xs">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Op. Gravada:</span>
+                    <span className="font-mono">S/ {(totalPosCalculado / 1.18).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>I.G.V. (18% SUNAT):</span>
+                    <span className="font-mono">S/ {(totalPosCalculado - (totalPosCalculado / 1.18)).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-700 text-base font-black">
+                    <span>TOTAL A PAGAR:</span>
+                    <span className="text-emerald-400 font-mono">
+                      S/ {totalPosCalculado.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Botón de cobro rápido */}
+                <button
+                  type="button"
+                  onClick={handleCobrarPos}
+                  disabled={cobrandoPos || carritoPos.length === 0}
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-black text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {cobrandoPos ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
+                  <span>{cobrandoPos ? 'Emitiendo Boleta SUNAT...' : `⚡ Cobrar e Imprimir Boleta (S/ ${totalPosCalculado.toFixed(2)})`}</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* MODO DETALLADO A CLIENTE ESPECÍFICO (RUC O DNI) */
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-base font-bold text-blue-950">Facturación Detallada por Cliente</h3>
+                  <p className="text-xs text-slate-500">
+                    Para clientes corporativos con RUC (Factura) o clientes que soliciten Boleta a su nombre con DNI.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={abrirModalManual}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Plus size={15} />
+                  <span>Abrir Formulario de Emisión Completo</span>
+                </button>
+              </div>
+              <p className="text-xs text-slate-600">
+                Haz clic en el botón superior para ingresar los datos del comprobante corporativo, plazos de crédito a 7, 14, 21 o 28 días, cuotas o detracciones tributarias.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PESTAÑA 3: NOTAS DE PEDIDO (Req 13, 16 - Solo si no está en Modo Emergencia) */}
+      {tabActiva === 'notas' && !modoEmergencia && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div>
+              <h3 className="text-base font-bold text-blue-950">Notas de Pedido Registradas</h3>
+              <p className="text-xs text-slate-500">
+                Documentos comerciales internos con formato oficial de Proceso Cárnicos para impresión rápida.
+              </p>
+            </div>
+            {puedeEditarFacturacion && (
+              <button
+                type="button"
+                onClick={abrirModalNotaPedido}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <Plus size={15} />
+                <span>+ Emitir Nota de Pedido</span>
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4 font-semibold">Número Documento</th>
+                  <th className="p-4 font-semibold">Cliente</th>
+                  <th className="p-4 font-semibold">Fecha de Venta</th>
+                  <th className="p-4 font-semibold">Sede / Emisor</th>
+                  <th className="p-4 font-semibold text-right">Importe Total</th>
+                  <th className="p-4 font-semibold text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {notasPedido.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="p-8 text-center text-slate-400 text-xs">
+                      No hay notas de pedido registradas todavía. Puedes crear una con el botón de arriba.
+                    </td>
+                  </tr>
+                ) : (
+                  notasPedido.map(np => (
+                    <tr key={np.id_nota_pedido} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4 font-mono font-bold text-slate-900 text-xs">
+                        {np.numero_correlativo || `NotaPedido#${np.id_nota_pedido}`}
+                      </td>
+                      <td className="p-4 font-semibold text-slate-900">
+                        {np.cliente_nombre}
+                      </td>
+                      <td className="p-4 text-slate-600 text-xs">
+                        {formatearFechaTextoEspanol(np.fecha_emision || np.creado_en)}
+                      </td>
+                      <td className="p-4 text-slate-600 text-xs">
+                        {np.nombre_ubicacion || 'Sede Principal'}
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-slate-900">
+                        S/ {parseFloat(np.monto_total || 0).toFixed(2)}
+                      </td>
+                      <td className="p-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => abrirDetalleNota(np)}
+                          className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Eye size={13} />
+                          <span>Ver / Imprimir</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* PESTAÑA 4: HISTORIAL DE COMPROBANTES EMITIDOS */}
+      {tabActiva === 'historial' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setFiltroTipo('todos')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  filtroTipo === 'todos' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                }`}
+              >
+                Todos ({comprobantesVisibles.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroTipo('01')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  filtroTipo === '01' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                }`}
+              >
+                Facturas ({totalFacturas})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroTipo('03')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  filtroTipo === '03' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                }`}
+              >
+                Boletas ({totalBoletas})
+              </button>
+              {!modoEmergencia && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroTipo('07')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                    filtroTipo === '07' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                  }`}
+                >
+                  Notas de Crédito ({totalNotas})
+                </button>
+              )}
+            </div>
+
+            <div className="relative w-full sm:w-64">
+              <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                value={busqueda}
+                onChange={(e) => handleCambioBusqueda(e.target.value)}
+                placeholder="Buscar por serie, número o cliente..."
+                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4 font-semibold">Comprobante</th>
+                  <th className="p-4 font-semibold">Cliente / Razón Social</th>
+                  <th className="p-4 font-semibold text-center">Fecha Emisión</th>
+                  <th className="p-4 font-semibold text-center">Peso</th>
+                  <th className="p-4 font-semibold text-right">Importe Total</th>
+                  <th className="p-4 font-semibold text-center">Estado SUNAT</th>
+                  <th className="p-4 font-semibold text-center">Archivos Tributarios</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {comprobantesFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="p-8 text-center text-slate-400 text-xs">
+                      No hay comprobantes para mostrar.
+                    </td>
+                  </tr>
+                ) : (
+                  comprobantesFiltrados.map(comp => (
+                    <tr key={comp.id_comprobante} className="hover:bg-slate-50 transition-colors">
+                      <td className="p-4">
+                        <div className="font-mono font-bold text-slate-900">
+                          {comp.serie}-{String(comp.correlativo).padStart(8, '0')}
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeTipo(comp.tipo_comprobante)}`}>
+                          {nombreTipo(comp.tipo_comprobante)}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="font-semibold text-slate-900">{comp.nombre_cliente}</div>
+                        <div className="text-[11px] text-slate-500 font-mono">{comp.documento_cliente}</div>
+                      </td>
+                      <td className="p-4 text-center text-xs text-slate-600">
+                        {new Date(comp.fecha_emision).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="p-4 text-center">
+                        {comp.peso_total ? (
+                          <span className="font-bold text-amber-900 text-xs font-mono bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                            ⚖️ {Number(comp.peso_total).toFixed(2)} kg
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs">-</span>
+                        )}
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-slate-900">
+                        S/ {parseFloat(comp.monto_total || 0).toFixed(2)}
+                      </td>
+                      <td className="p-4 text-center">
+                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                          <CheckCircle2 size={13} />
+                          <span>Aceptado</span>
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCargandoPdf(true);
+                              api.get(`/facturacion/${comp.id_comprobante}/detalle`)
+                                .then(res => setModalPdf({ comprobante: res.data.comprobante, emisor: res.data.emisor, items: res.data.items }))
+                                .catch(() => toast.error('No se pudo cargar el detalle.'))
+                                .finally(() => setCargandoPdf(false));
+                            }}
+                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <Eye size={12} />
+                            <span>PDF/A4</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: EMITIR FACTURA / BOLETA DESDE PEDIDO */}
+      {modalEmitir && pedidoSeleccionado && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => !procesando && setModalEmitir(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-100 overflow-hidden my-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <FileText size={18} className="text-indigo-400" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Emitir Comprobante Electrónico (SUNAT)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalEmitir(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEmitirComprobante} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+              {/* 1. Selector de Pedido Formateado (Req 1) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  1. Pedido a Facturar *
+                </label>
+                <select
+                  value={pedidoSeleccionado.id_pedido}
+                  onChange={(e) => {
+                    const sel = pedidosFacturables.find(p => String(p.id_pedido) === e.target.value);
+                    if (sel) seleccionarPedido(sel);
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500 font-mono"
+                >
+                  {pedidosFacturables.map(p => (
+                    <option key={p.id_pedido} value={p.id_pedido}>
+                      {formatearEtiquetaPedido(p.id_pedido, p.fecha_limite_despacho || p.creado_en)} - Cliente: {p.cliente} (S/ {parseFloat(p.monto_total).toFixed(2)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Tipo de Comprobante con Validación RUC/DNI (Req 17) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  2. Tipo de Comprobante Electrónico *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setTipoComprobante('01')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      tipoComprobante === '01'
+                        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-medium'
+                    }`}
+                  >
+                    <div className="text-sm">Factura (F001)</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Para empresas con RUC</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTipoComprobante('03')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      tipoComprobante === '03'
+                        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-medium'
+                    }`}
+                  >
+                    <div className="text-sm">Boleta de Venta (B001)</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Exclusivo personas con DNI</div>
+                  </button>
+                </div>
+
+                {/* Advertencia en vivo si Boleta tiene RUC (Req 17) */}
+                {tipoComprobante === '03' && (pedidoSeleccionado.tipo_documento_cliente === '6' || String(pedidoSeleccionado.ruc_cliente || '').length === 11) && (
+                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-900 font-bold flex items-center gap-2">
+                    <AlertCircle size={16} className="text-red-600 shrink-0" />
+                    <span>
+                      ⚠️ SUNAT prohíbe emitir Boletas de Venta a clientes con RUC. Debe usar DNI (8 dígitos) o cambiar a Factura (01).
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Ítems del Pedido: Precio y Peso Editables (Req 9 & 10) */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    3. Detalle de Ítems (Precios y Pesos Editables)
+                  </label>
+                  <span className="text-[11px] text-slate-500">Puedes corregir precios o pesos antes de emitir</span>
+                </div>
+
+                <div className="space-y-2">
+                  {itemsEditables.map((it, idx) => (
+                    <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center text-xs">
+                      <div className="sm:col-span-5 font-semibold text-slate-800 truncate">
+                        {it.descripcion}
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[10px] text-slate-500 mb-0.5">Peso (kg):</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={it.peso}
+                          onChange={(e) => actualizarItemEditable(idx, 'peso', e.target.value)}
+                          placeholder="Ej: 11.60"
+                          className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[10px] text-slate-500 mb-0.5">Precio (S/):</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={it.precio_unitario}
+                          onChange={(e) => actualizarItemEditable(idx, 'precio_unitario', e.target.value)}
+                          className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold"
+                        />
+                      </div>
+                      <div className="sm:col-span-3 text-right">
+                        <span className="text-[10px] text-slate-500 block">Subtotal:</span>
+                        <span className="font-mono font-bold text-indigo-700">
+                          S/ {parseFloat(it.subtotal || 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Peso Total General en Balanza (Req 10) */}
+                <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-700">Peso Total en Balanza (kg): </span>
+                    <span className="text-slate-500">
+                      {pedidoSeleccionado.estado_pedido === 'LISTO_DESPACHO'
+                        ? '(Pre-cargado desde balanza de despacho)'
+                        : '(Ingresar manualmente si el pedido aún no está listo)'}
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={pesoTotalFactura}
+                    onChange={(e) => setPesoTotalFactura(e.target.value)}
+                    placeholder="Ej: 11.60 kg"
+                    className="w-36 p-1.5 bg-white border border-amber-300 rounded-lg font-mono font-bold text-xs text-amber-950 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* 4. Condición de Pago, Plazos en múltiplos de 7 y Tarjeta Forzada (Req 6, 7, 8) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    4. Condición de Pago
+                  </label>
+                  <select
+                    value={formaPago}
+                    onChange={(e) => setFormaPago(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white"
+                  >
+                    <option value="CONTADO">💵 Al Contado</option>
+                    <option value="CREDITO">🗓️ Al Crédito (Obliga Tarjeta / Cuotas)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    5. Medio de Pago (Catálogo 59 SUNAT)
+                  </label>
+                  <select
+                    disabled={formaPago === 'CREDITO'}
+                    value={medioPagoSunat}
+                    onChange={(e) => setMedioPagoSunat(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    <option value="008">Transferencia Bancaria (008)</option>
+                    <option value="009">Efectivo (009)</option>
+                    <option value="005">Tarjeta de Crédito (005)</option>
+                    <option value="006">Tarjeta de Débito (006)</option>
+                    <option value="999">Billetera Digital Yape / Plin (999)</option>
+                  </select>
+                  {formaPago === 'CREDITO' && (
+                    <span className="text-[10px] text-purple-700 font-semibold mt-1 block">
+                      🔒 Por regla de Crédito, se fuerza a Tarjeta de Crédito.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Si es CRÉDITO: Plazo en múltiplos de 7 y Cantidad de Cuotas (Req 6 y 8) */}
+              {formaPago === 'CREDITO' && (
+                <div className="p-4 bg-purple-50/80 rounded-xl border border-purple-200 space-y-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold text-purple-950 uppercase mb-1">
+                        Plazo de Pago (Múltiplos de 7):
+                      </label>
+                      <select
+                        value={esPlazoPersonalizado ? 'otro' : diasCredito}
+                        onChange={(e) => {
+                          if (e.target.value === 'otro') {
+                            setEsPlazoPersonalizado(true);
+                          } else {
+                            setEsPlazoPersonalizado(false);
+                            setDiasCredito(Number(e.target.value));
+                          }
+                        }}
+                        className="w-full p-2 bg-white border border-purple-300 rounded-lg font-bold text-purple-950 text-xs"
+                      >
+                        {opcionesMultiplos7.map(d => (
+                          <option key={d} value={d}>
+                            {d} días ({d / 7} semana{d / 7 > 1 ? 's' : ''})
+                          </option>
+                        ))}
+                        <option value="otro">✍️ Escribir otro plazo...</option>
+                      </select>
+                      {esPlazoPersonalizado && (
+                        <input
+                          type="number"
+                          min="1"
+                          value={diasCredito}
+                          onChange={(e) => setDiasCredito(parseInt(e.target.value, 10) || 1)}
+                          placeholder="Número de días"
+                          className="w-full mt-1.5 p-1.5 bg-white border border-purple-300 rounded-lg text-xs font-bold"
+                        />
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-purple-950 uppercase mb-1">
+                        Cantidad de Cuotas (Req 8):
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="48"
+                        value={cantidadCuotas}
+                        onChange={(e) => setCantidadCuotas(parseInt(e.target.value, 10) || 1)}
+                        className="w-full p-2 bg-white border border-purple-300 rounded-lg font-bold text-purple-950 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. División de Pago entre Varios Clientes / Razones Sociales (Req 2 - Opción A) */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                <label className="flex items-center space-x-2.5 cursor-pointer font-bold text-xs text-slate-800">
+                  <input
+                    type="checkbox"
+                    checked={esPagoDividido}
+                    onChange={(e) => togglePagoDividido(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                  />
+                  <span>Dividir pago de este pedido entre varios clientes / razones sociales</span>
+                </label>
+
+                {esPagoDividido && (
+                  <div className="space-y-2 pt-2 border-t border-slate-200">
+                    <p className="text-[11px] text-slate-500">
+                      Asigna el porcentaje o monto que pagará cada cliente. El total debe sumar 100% (S/ {totalItemsCalculado.toFixed(2)}).
+                    </p>
+                    {pagosDivididos.map((pago, pIdx) => (
+                      <div key={pIdx} className="bg-white p-2.5 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
+                        <div className="sm:col-span-5">
+                          <select
+                            value={pago.id_cliente}
+                            onChange={(e) => actualizarPagoDividido(pIdx, 'id_cliente', e.target.value)}
+                            className="w-full p-1.5 border border-slate-300 rounded-lg font-medium text-xs bg-white"
+                          >
+                            <option value="">Selecciona Cliente...</option>
+                            {clientes.map(c => (
+                              <option key={c.id_cliente} value={c.id_cliente}>
+                                {c.nombre_comercial || c.razon_social_o_nombre} ({c.numero_documento})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <select
+                            value={pago.tipo_comprobante}
+                            onChange={(e) => actualizarPagoDividido(pIdx, 'tipo_comprobante', e.target.value)}
+                            className="w-full p-1.5 border border-slate-300 rounded-lg font-bold text-xs bg-white"
+                          >
+                            <option value="01">Factura</option>
+                            <option value="03">Boleta</option>
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="100"
+                            value={pago.porcentaje}
+                            onChange={(e) => actualizarPagoDividido(pIdx, 'porcentaje', e.target.value)}
+                            placeholder="%"
+                            className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs text-center"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={pago.monto}
+                            onChange={(e) => actualizarPagoDividido(pIdx, 'monto', e.target.value)}
+                            placeholder="S/"
+                            className="w-full p-1.5 border border-slate-300 rounded-lg font-mono font-bold text-xs"
+                          />
+                        </div>
+                        <div className="sm:col-span-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() => eliminarFilaPagoDividido(pIdx)}
+                            className="text-slate-400 hover:text-red-600 p-1 cursor-pointer"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={agregarFilaPagoDividido}
+                      className="text-xs text-indigo-600 font-bold hover:underline cursor-pointer pt-1"
+                    >
+                      + Agregar otro cliente a la división
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 6. Resumen de Precios y Peso (Req 11 & 12) */}
+              <div className="bg-slate-900 text-white p-4 rounded-xl space-y-1.5 text-xs shadow-md">
+                <div className="flex justify-between text-slate-300">
+                  <span>Cliente Principal:</span>
+                  <span className="font-bold text-white">{pedidoSeleccionado.cliente}</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Peso Total en Balanza (Req 11, 12):</span>
+                  <span className="font-mono font-bold text-amber-400">
+                    {pesoTotalFactura ? `${parseFloat(pesoTotalFactura).toFixed(2)} kg` : '(Sin registrar)'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>Subtotal Gravado (Sin IGV):</span>
+                  <span className="font-mono">S/ {(totalItemsCalculado / 1.18).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-slate-300">
+                  <span>I.G.V. (18% SUNAT):</span>
+                  <span className="font-mono">S/ {(totalItemsCalculado - (totalItemsCalculado / 1.18)).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between pt-2 border-t border-slate-700 text-sm font-black">
+                  <span>IMPORTE TOTAL:</span>
+                  <span className="text-emerald-400 font-mono">
+                    S/ {totalItemsCalculado.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalEmitir(false)}
+                  disabled={procesando}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={procesando}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {procesando && <Loader2 size={14} className="animate-spin" />}
+                  <span>{procesando ? 'Enviando a SUNAT...' : 'Emitir Comprobante Oficial'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: FACTURACIÓN MANUAL (Req 3 & 18) */}
+      {modalManual && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => !procesando && setModalManual(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-100 overflow-hidden my-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <Plus size={18} className="text-emerald-400" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Facturación Manual Directa (Descuenta Inventario)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalManual(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEmitirManual} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Cliente *
+                  </label>
+                  <select
+                    value={manualClienteId}
+                    onChange={(e) => {
+                      setManualClienteId(e.target.value);
+                      if (e.target.value === 'CLIENTES_VARIOS') {
+                        setManualTipoComp('03');
+                      }
+                    }}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                    required
+                  >
+                    <option value="CLIENTES_VARIOS">⚡ CLIENTES VARIOS / CONSUMIDOR FINAL (Doc: 00000000 - Mostrador)</option>
+                    {clientes.filter(c => c.numero_documento !== '00000000').map(c => (
+                      <option key={c.id_cliente} value={c.id_cliente}>
+                        {c.nombre_comercial || c.razon_social_o_nombre} ({c.numero_documento})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Sede / Almacén (Descuenta Stock) *
+                  </label>
+                  <select
+                    value={manualUbicacionId}
+                    onChange={(e) => setManualUbicacionId(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                    required
+                  >
+                    {ubicaciones.map(u => (
+                      <option key={u.id_ubicacion} value={u.id_ubicacion}>
+                        {u.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Tipo de Comprobante *
+                  </label>
+                  <select
+                    value={manualTipoComp}
+                    onChange={(e) => setManualTipoComp(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                  >
+                    <option value="01">Factura (01 - Empresas con RUC)</option>
+                    <option value="03">Boleta de Venta (03 - Personas con DNI)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Peso Total en Balanza (kg)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={manualPesoTotal}
+                    onChange={(e) => setManualPesoTotal(e.target.value)}
+                    placeholder="Ej: 11.60"
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* Filas de productos */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Productos a Facturar y Descontar
+                  </span>
+                  <button
+                    type="button"
+                    onClick={agregarFilaManual}
+                    className="text-xs text-indigo-600 font-bold hover:underline cursor-pointer"
+                  >
+                    + Agregar Producto
+                  </button>
+                </div>
+
+                {manualItems.map((it, idx) => (
+                  <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
+                    <div className="sm:col-span-4">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Producto:</label>
+                      <select
+                        value={it.id_producto}
+                        onChange={(e) => actualizarFilaManual(idx, 'id_producto', e.target.value)}
+                        className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-medium bg-white"
+                      >
+                        {productos.map(pr => (
+                          <option key={pr.id_producto} value={pr.id_producto}>
+                            {pr.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Cant:</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={it.cantidad}
+                        onChange={(e) => actualizarFilaManual(idx, 'cantidad', e.target.value)}
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Peso (kg):</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={it.peso}
+                        onChange={(e) => actualizarFilaManual(idx, 'peso', e.target.value)}
+                        placeholder="Ej: 11.60"
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Precio (S/):</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={it.precio_unitario}
+                        onChange={(e) => actualizarFilaManual(idx, 'precio_unitario', e.target.value)}
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono font-bold text-xs"
+                      />
+                    </div>
+                    <div className="sm:col-span-1 text-right">
+                      <span className="text-[10px] text-slate-400 block">Total:</span>
+                      <span className="font-mono font-bold text-indigo-700">
+                        {parseFloat(it.subtotal || 0).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="sm:col-span-1 text-center">
+                      <button
+                        type="button"
+                        onClick={() => eliminarFilaManual(idx)}
+                        className="text-slate-400 hover:text-red-600 p-1 cursor-pointer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Total y botones */}
+              <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-400 block">Total a Facturar:</span>
+                  <span className="text-xl font-black text-emerald-400 font-mono">
+                    S/ {totalManualCalculado.toFixed(2)}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-400 block">Peso Total:</span>
+                  <span className="font-mono font-bold text-amber-400">
+                    {manualPesoTotal ? `${parseFloat(manualPesoTotal).toFixed(2)} kg` : '-'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalManual(false)}
+                  disabled={procesando}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={procesando}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {procesando && <Loader2 size={14} className="animate-spin" />}
+                  <span>{procesando ? 'Emitiendo...' : 'Emitir Factura Manual'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: CREAR NOTA DE PEDIDO (Req 13, 16) */}
+      {modalNotaPedido && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => !guardandoNota && setModalNotaPedido(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-100 overflow-hidden my-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-amber-700 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <FileText size={18} className="text-amber-200" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Nueva Nota de Pedido (PROCESOS CÁRNICOS S.A.C.)
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalNotaPedido(false)}
+                className="text-amber-200 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCrearNotaPedido} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Cliente / Razón Social *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: Javier Daza"
+                    value={formNota.cliente_nombre}
+                    onChange={(e) => setFormNota({ ...formNota, cliente_nombre: e.target.value })}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    DNI / RUC (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: 10458796 o 2060..."
+                    value={formNota.cliente_documento}
+                    onChange={(e) => setFormNota({ ...formNota, cliente_documento: e.target.value })}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Filas de productos tipo ticket imagen */}
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Filas de la Nota (DESCRIPCIÓN | PESO | PRECIO | TOTAL)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={agregarFilaNota}
+                    className="text-xs text-amber-700 font-bold hover:underline cursor-pointer"
+                  >
+                    + Agregar otra fila
+                  </button>
+                </div>
+
+                {formNota.items.map((it, idx) => (
+                  <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
+                    <div className="sm:col-span-5">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Descripción:</label>
+                      <input
+                        type="text"
+                        required
+                        value={it.descripcion}
+                        onChange={(e) => actualizarFilaNota(idx, 'descripcion', e.target.value)}
+                        placeholder="Ej: Chuleta de cogote"
+                        className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Peso (kg):</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={it.peso}
+                        onChange={(e) => actualizarFilaNota(idx, 'peso', e.target.value)}
+                        placeholder="11.60"
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs font-bold text-center"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Precio:</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={it.precio_unitario}
+                        onChange={(e) => actualizarFilaNota(idx, 'precio_unitario', e.target.value)}
+                        placeholder="15.00"
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs font-bold text-center"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Total:</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={it.total}
+                        onChange={(e) => actualizarFilaNota(idx, 'total', e.target.value)}
+                        placeholder="174.00"
+                        className="w-full p-1.5 border border-slate-300 rounded-lg font-mono font-bold text-xs text-right"
+                      />
+                    </div>
+                    <div className="sm:col-span-1 text-center">
+                      <button
+                        type="button"
+                        onClick={() => eliminarFilaNota(idx)}
+                        className="text-slate-400 hover:text-red-600 p-1 cursor-pointer"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Total Row */}
+              <div className="p-4 bg-slate-900 text-white rounded-xl flex items-center justify-between text-xs">
+                <span className="font-bold uppercase tracking-wider text-slate-300">Total Nota de Pedido:</span>
+                <span className="text-2xl font-black text-amber-400 font-mono">
+                  S/ {totalNotaCalculado.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalNotaPedido(false)}
+                  disabled={guardandoNota}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoNota}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {guardandoNota && <Loader2 size={14} className="animate-spin" />}
+                  <span>{guardandoNota ? 'Guardando...' : 'Crear y Ver Nota'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: VER / IMPRIMIR NOTA DE PEDIDO (IDÉNTICA A LA IMAGEN) */}
+      {modalVerNota && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => setModalVerNota(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del modal */}
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <span className="text-xs font-bold font-mono">
+                {modalVerNota.nota?.numero_correlativo || 'Nota de Pedido'}
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={imprimirNotaPedidoActual}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer size={14} />
+                  <span>Imprimir Nota</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModalVerNota(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Hoja exacta matching media_1793686333240_9d08c5c0.jpg */}
+            <div className="p-8 bg-white text-slate-900 space-y-6">
+              <div className="flex items-center justify-between">
+                <LogoProcesosCarnicos className="h-20 w-auto" />
+                <h2 className="text-xl sm:text-2xl font-black text-black tracking-wide text-center flex-1">
+                  PROCESOS CÁRNICOS S.A.C.
+                </h2>
+                <div className="w-16"></div>
+              </div>
+
+              <div className="space-y-1 text-sm font-semibold">
+                <div>
+                  <strong>Cliente:</strong> {modalVerNota.nota?.cliente_nombre}
+                </div>
+                <div>
+                  <strong>Fecha de venta:</strong> {formatearFechaTextoEspanol(modalVerNota.nota?.fecha_emision || modalVerNota.nota?.creado_en)}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse border-[1.5px] border-black text-xs font-semibold">
+                  <thead>
+                    <tr className="border-b-[1.5px] border-black text-center font-black">
+                      <th className="p-3 border-r-[1.5px] border-black uppercase w-[45%] text-center">
+                        DESCRIPCIÓN
+                      </th>
+                      <th className="p-3 border-r-[1.5px] border-black uppercase w-[18%] text-center">
+                        PESO
+                      </th>
+                      <th className="p-3 border-r-[1.5px] border-black uppercase w-[18%] text-center">
+                        PRECIO
+                      </th>
+                      <th className="p-3 uppercase w-[19%] text-center">
+                        TOTAL
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(modalVerNota.items || []).map((it, idx) => (
+                      <tr key={idx} className="border-b-[1.5px] border-black">
+                        <td className="p-3 border-r-[1.5px] border-black text-left">
+                          {it.descripcion}
+                        </td>
+                        <td className="p-3 border-r-[1.5px] border-black text-center font-mono">
+                          {it.peso ? Number(it.peso).toFixed(2) : '-'}
+                        </td>
+                        <td className="p-3 border-r-[1.5px] border-black text-right font-mono">
+                          {Number(it.precio_unitario || 0).toFixed(2)}
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold">
+                          {Number(it.subtotal || (it.peso * it.precio_unitario) || 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="font-black text-sm">
+                      <td colSpan="3" className="p-3 border-r-[1.5px] border-black text-center tracking-widest">
+                        TOTAL
+                      </td>
+                      <td className="p-3 text-right font-mono">
+                        {Number(modalVerNota.nota?.monto_total || 0).toFixed(2)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: VER / IMPRIMIR COMPROBANTE SUNAT (A4 REGLAMENTARIO) */}
       {modalPdf?.comprobante && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
@@ -852,228 +2978,86 @@ export default function Facturacion({ usuario }) {
             className="bg-white rounded-2xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[94vh]"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Barra superior del visor */}
-            <div className="p-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <span className="text-sm font-bold">
+                {nombreTipo(modalPdf.comprobante.tipo_comprobante)} · {modalPdf.comprobante.serie}-{String(modalPdf.comprobante.correlativo).padStart(8, '0')}
+              </span>
               <div className="flex items-center space-x-2">
-                <FileText size={18} className="text-indigo-400" />
-                <span className="text-sm font-bold">
-                  {nombreTipo(modalPdf.comprobante.tipo_comprobante)} · {modalPdf.comprobante.serie}-{String(modalPdf.comprobante.correlativo).padStart(8, '0')}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => descargarArchivoTributario(modalPdf.comprobante.id_comprobante, 'xml', modalPdf.comprobante.serie, modalPdf.comprobante.correlativo)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download size={13} />
-                  <span>Descargar XML UBL 2.1</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => descargarArchivoTributario(modalPdf.comprobante.id_comprobante, 'cdr', modalPdf.comprobante.serie, modalPdf.comprobante.correlativo)}
-                  className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <ShieldCheck size={13} />
-                  <span>Descargar CDR SUNAT</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={imprimirComprobanteActual}
+                  onClick={() => window.print()}
                   className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Printer size={14} />
-                  <span>Imprimir / Guardar PDF A4</span>
+                  <span>Imprimir A4</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setModalPdf(null)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
                 >
-                  <X size={15} />
-                  <span>Cerrar</span>
+                  <X size={16} />
                 </button>
               </div>
             </div>
 
-            {/* Hoja del Comprobante A4 */}
-            <div className="p-6 sm:p-8 overflow-y-auto space-y-5 bg-white">
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b-2 border-blue-950">
+            <div className="p-8 overflow-y-auto space-y-5 bg-white text-xs">
+              <div className="flex justify-between items-start border-b-2 border-blue-950 pb-4">
                 <div>
-                  <h2 className="text-xl font-extrabold text-blue-950">
-                    {modalPdf.emisor?.razon_social || modalPdf.comprobante.nombre_ubicacion || 'EMPRESA DEMO ERP S.A.C.'}
-                  </h2>
-                  {modalPdf.emisor?.nombre_comercial && (
-                    <p className="text-xs font-bold text-indigo-700 mt-0.5">
-                      {modalPdf.emisor.nombre_comercial}
-                    </p>
-                  )}
-                  <p className="text-xs text-slate-600 mt-1">
-                    Dirección Fiscal: {modalPdf.emisor?.direccion_fiscal || modalPdf.comprobante.direccion_ubicacion || 'Lima - Perú'}
-                  </p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Sede Operativa: {modalPdf.comprobante.nombre_ubicacion || 'Sede Central'}
-                  </p>
+                  <h2 className="text-xl font-black text-blue-950">PROCESOS CARNICOS S.A.C.</h2>
+                  <p className="text-xs text-slate-500 mt-1">Dirección: Lima - Perú</p>
+                  <p className="text-xs text-slate-500">Sede: {modalPdf.comprobante.nombre_ubicacion || 'Principal'}</p>
                 </div>
-
-                <div className="border-2 border-blue-950 rounded-xl px-6 py-3 text-center shrink-0 min-w-[240px]">
-                  <p className="text-xs font-bold text-slate-800">
-                    R.U.C. N° {modalPdf.emisor?.ruc_emisor || '20600000001'}
-                  </p>
-                  <p className="text-xs font-extrabold text-blue-950 uppercase tracking-wider bg-indigo-50 py-1 px-2 rounded my-1">
-                    {nombreTipo(modalPdf.comprobante.tipo_comprobante)}
-                  </p>
-                  <p className="font-mono text-base font-black text-slate-900">
-                    {modalPdf.comprobante.serie}-{String(modalPdf.comprobante.correlativo).padStart(8, '0')}
-                  </p>
-                  {modalPdf.comprobante.estado_sunat === 'ANULADO' && (
-                    <span className="inline-block mt-1 px-2 py-0.5 bg-red-100 text-red-700 border border-red-300 rounded text-[10px] font-black">
-                      ANULADO
-                    </span>
-                  )}
+                <div className="border-2 border-blue-950 p-3 rounded-xl text-center min-w-[220px]">
+                  <p className="font-bold">R.U.C. N° 20608725394</p>
+                  <p className="font-extrabold text-blue-950 my-1">{nombreTipo(modalPdf.comprobante.tipo_comprobante).toUpperCase()}</p>
+                  <p className="font-mono text-base font-bold">{modalPdf.comprobante.serie}-{String(modalPdf.comprobante.correlativo).padStart(8, '0')}</p>
                 </div>
               </div>
 
-              {/* Datos del Cliente y Operación */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs">
-                <div>
-                  <span className="text-slate-500 font-semibold">Cliente / Razón Social: </span>
-                  <strong className="text-slate-900">{modalPdf.comprobante.nombre_cliente || 'Cliente General'}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-semibold">Fecha de Emisión: </span>
-                  <strong className="text-slate-900">
-                    {new Date(modalPdf.comprobante.fecha_emision).toLocaleDateString('es-PE', {
-                      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                    })}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-semibold">{etiquetaTipoDocCliente(modalPdf.comprobante.cliente_tipo_doc)}: </span>
-                  <strong className="text-slate-900 font-mono">{modalPdf.comprobante.cliente_documento || '-'}</strong>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-semibold">Condición de Pago: </span>
-                  <strong className="text-slate-900">
-                    {modalPdf.comprobante.forma_pago === 'CREDITO'
-                      ? `CRÉDITO (${modalPdf.comprobante.dias_credito || 30} días)`
-                      : 'CONTADO'}
-                  </strong>
-                </div>
-                {modalPdf.comprobante.cliente_direccion && (
-                  <div className="sm:col-span-2">
-                    <span className="text-slate-500 font-semibold">Dirección del Cliente: </span>
-                    <span className="text-slate-800">{modalPdf.comprobante.cliente_direccion}</span>
-                  </div>
-                )}
-                {modalPdf.comprobante.tipo_comprobante === '07' && modalPdf.comprobante.ref_serie && (
-                  <div className="sm:col-span-2 pt-2 border-t border-slate-200 flex flex-wrap justify-between gap-2 text-purple-900">
-                    <span>
-                      <strong>Comprobante que modifica:</strong> {modalPdf.comprobante.ref_serie}-{String(modalPdf.comprobante.ref_correlativo).padStart(8, '0')}
-                    </span>
-                    <span>
-                      <strong>Motivo SUNAT (Cat. 09):</strong> ({modalPdf.comprobante.codigo_motivo_nc || '01'}) {modalPdf.comprobante.descripcion_motivo_nc}
-                    </span>
-                  </div>
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div><strong>Cliente:</strong> {modalPdf.comprobante.nombre_cliente}</div>
+                <div><strong>Fecha:</strong> {new Date(modalPdf.comprobante.fecha_emision).toLocaleDateString('es-PE')}</div>
+                <div><strong>Doc:</strong> {modalPdf.comprobante.documento_cliente}</div>
+                <div><strong>Forma Pago:</strong> {modalPdf.comprobante.forma_pago || 'CONTADO'}</div>
+                {modalPdf.comprobante.peso_total && (
+                  <div><strong>Peso Total:</strong> {Number(modalPdf.comprobante.peso_total).toFixed(2)} kg</div>
                 )}
               </div>
 
-              {/* Tabla de Productos */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-blue-950 text-white uppercase">
-                      <th className="p-3">Código</th>
-                      <th className="p-3">Descripción</th>
-                      <th className="p-3 text-center">Cant. / Unidad</th>
-                      <th className="p-3 text-right">Precio Unit.</th>
-                      <th className="p-3 text-right">Importe</th>
+              <table className="w-full text-left border-collapse border border-slate-200">
+                <thead>
+                  <tr className="bg-slate-100 border-b border-slate-200">
+                    <th className="p-2 border-r border-slate-200">Descripción</th>
+                    <th className="p-2 text-center border-r border-slate-200">Cant / Peso</th>
+                    <th className="p-2 text-right border-r border-slate-200">P. Unit</th>
+                    <th className="p-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(modalPdf.items || []).map((it, i) => (
+                    <tr key={i} className="border-b border-slate-100">
+                      <td className="p-2 border-r border-slate-100">{it.descripcion}</td>
+                      <td className="p-2 text-center border-r border-slate-100">{it.peso ? `${it.peso} kg` : it.cantidad}</td>
+                      <td className="p-2 text-right border-r border-slate-100 font-mono">S/ {parseFloat(it.precio_unitario || 0).toFixed(2)}</td>
+                      <td className="p-2 text-right font-mono font-bold">S/ {parseFloat(it.subtotal || 0).toFixed(2)}</td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {modalPdf.items.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="p-4 text-center text-slate-400">
-                          Pedido #{modalPdf.comprobante.id_pedido}
-                        </td>
-                      </tr>
-                    ) : (
-                      modalPdf.items.map((it, idx) => (
-                        <tr key={idx}>
-                          <td className="p-3 font-mono text-slate-600">{it.sku || '-'}</td>
-                          <td className="p-3 font-semibold text-slate-900">{it.descripcion}</td>
-                          <td className="p-3 text-center font-bold text-slate-800">
-                            {it.cantidad} {it.codigo_unidad_sunat || it.unidad_medida}
-                          </td>
-                          <td className="p-3 text-right font-mono text-slate-600">
-                            S/ {parseFloat(it.precio_unitario || 0).toFixed(2)}
-                          </td>
-                          <td className="p-3 text-right font-mono font-bold text-slate-900">
-                            S/ {parseFloat(it.subtotal || (it.cantidad * it.precio_unitario) || 0).toFixed(2)}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
 
-              {/* Leyenda obligatoria de importe en letras */}
-              <div className="bg-slate-100 border border-slate-300 rounded-xl px-4 py-2.5 text-xs font-extrabold text-blue-950">
-                {modalPdf.comprobante.monto_en_letras || 'SON: SOLES'}
-              </div>
-
-              {/* Pie reglamentario: Código QR oficial SUNAT + Hash CPE + Totales */}
-              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                <div className="flex items-start gap-4 bg-slate-50 border border-slate-200 rounded-xl p-3.5 max-w-lg">
-                  <div
-                    className="shrink-0 bg-white p-1 rounded-lg border border-slate-200"
-                    dangerouslySetInnerHTML={{ __html: generarSvgQrString(modalPdf.comprobante.cadena_qr, 104) }}
-                  />
-                  <div className="text-[11px] text-slate-600 space-y-1 leading-snug">
-                    <p className="font-bold text-slate-900">
-                      Representación impresa de la {nombreTipo(modalPdf.comprobante.tipo_comprobante)}
-                    </p>
-                    <p>
-                      <span className="font-semibold">Código Hash CPE: </span>
-                      <span className="font-mono text-slate-800 break-all">{modalPdf.comprobante.codigo_hash || '-'}</span>
-                    </p>
-                    <p>
-                      <span className="font-semibold">Constancia CDR: </span>
-                      <span className="text-emerald-700 font-semibold">{modalPdf.comprobante.mensaje_cdr}</span>
-                    </p>
-                    {modalPdf.comprobante.aplica_detraccion && (
-                      <p className="text-indigo-900 bg-indigo-50 px-2 py-1 rounded border border-indigo-200 font-medium">
-                        Operación sujeta a Detracción ({modalPdf.comprobante.porcentaje_detraccion}%):{' '}
-                        <strong>S/ {parseFloat(modalPdf.comprobante.monto_detraccion || 0).toFixed(2)}</strong> · Cta. BN: {modalPdf.emisor?.detraccion_cuenta_bn || '00-000-000000'}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="w-full md:w-72 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs shrink-0">
-                  <div className="flex justify-between text-slate-600">
+              <div className="flex justify-end pt-2">
+                <div className="w-64 space-y-1 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div className="flex justify-between">
                     <span>Op. Gravada:</span>
-                    <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_gravada ?? modalPdf.comprobante.monto_subtotal ?? 0).toFixed(2)}</span>
+                    <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_gravada || (modalPdf.comprobante.monto_total / 1.18)).toFixed(2)}</span>
                   </div>
-                  {Number(modalPdf.comprobante.monto_exonerada) > 0 && (
-                    <div className="flex justify-between text-slate-600">
-                      <span>Op. Exonerada:</span>
-                      <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_exonerada).toFixed(2)}</span>
-                    </div>
-                  )}
-                  {Number(modalPdf.comprobante.monto_inafecta) > 0 && (
-                    <div className="flex justify-between text-slate-600">
-                      <span>Op. Inafecta:</span>
-                      <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_inafecta).toFixed(2)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between">
                     <span>I.G.V. (18%):</span>
                     <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_igv || 0).toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between pt-2 border-t border-slate-300 text-base font-extrabold text-blue-950">
-                    <span>IMPORTE TOTAL:</span>
+                  <div className="flex justify-between pt-1 border-t border-slate-300 font-bold text-sm text-blue-950">
+                    <span>TOTAL:</span>
                     <span className="font-mono">S/ {parseFloat(modalPdf.comprobante.monto_total || 0).toFixed(2)}</span>
                   </div>
                 </div>
@@ -1083,474 +3067,340 @@ export default function Facturacion({ usuario }) {
         </div>
       )}
 
-      {/* MODAL EMITIR COMPROBANTE */}
-      {modalEmitir && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden my-6">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div className="flex items-center space-x-2">
-                <Receipt className="text-indigo-600" size={20} />
-                <h3 className="text-lg font-bold text-blue-950">Emitir Factura o Boleta Electrónica</h3>
-              </div>
-              <button onClick={() => setModalEmitir(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleEmitir} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  1. Elige el Pedido a Facturar
-                </label>
-                <select
-                  value={pedidoSeleccionado?.id_pedido || ''}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    const encontrado = pedidosFacturables.find(p => p.id_pedido === id);
-                    seleccionarPedidoYTipoAuto(encontrado);
-                  }}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-indigo-500 bg-white"
-                >
-                  {pedidosFacturables.map((p) => (
-                    <option key={p.id_pedido} value={p.id_pedido}>
-                      Pedido #{p.id_pedido} · {p.cliente} ({p.ruc_cliente || 'Sin doc'}) · S/ {parseFloat(p.monto_total).toFixed(2)} ({etiquetaEstadoPedido(p.estado_pedido)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  2. ¿Qué comprobante necesitas?
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setTipoComprobante('01')}
-                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
-                      tipoComprobante === '01'
-                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <span className="block font-bold text-sm">Factura (F001)</span>
-                    <span className="text-xs text-slate-500">Para empresas con RUC (11 dígitos)</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTipoComprobante('03')}
-                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
-                      tipoComprobante === '03'
-                        ? 'border-indigo-600 bg-indigo-50/50 text-indigo-900'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <span className="block font-bold text-sm">Boleta de Venta (B001)</span>
-                    <span className="text-xs text-slate-500">Para personas con DNI o RUC</span>
-                  </button>
-                </div>
-
-                {tipoComprobante === '01' && !clienteSeleccionadoTieneRuc && (
-                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 font-medium">
-                    ⚠️ El cliente de este pedido tiene registrado <strong>{pedidoSeleccionado?.ruc_cliente || 'un DNI'}</strong> (no un RUC de 11 dígitos). Por regla de SUNAT, cámbialo a <strong>Boleta de Venta</strong> o actualiza el RUC del cliente en la pestaña Clientes.
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    3. Condición de Pago
-                  </label>
-                  <select
-                    value={formaPago}
-                    onChange={(e) => setFormaPago(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold bg-white"
-                  >
-                    <option value="CONTADO">💵 Al Contado</option>
-                    <option value="CREDITO">🗓️ Al Crédito (En cuotas / plazo)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    4. Medio de Pago (Cat. 59)
-                  </label>
-                  <select
-                    value={medioPagoSunat}
-                    onChange={(e) => setMedioPagoSunat(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold bg-white"
-                  >
-                    {(catalogos?.medios_pago || [
-                      { codigo: '008', nombre: 'Transferencia Bancaria' },
-                      { codigo: '009', nombre: 'Efectivo' },
-                      { codigo: '999', nombre: 'Billetera Digital (Yape / Plin)' },
-                      { codigo: '001', nombre: 'Depósito en Cuenta' },
-                      { codigo: '005', nombre: 'Tarjeta de Débito / Crédito' }
-                    ]).map(m => (
-                      <option key={m.codigo} value={m.codigo}>{m.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {formaPago === 'CREDITO' && (
-                <div className="bg-purple-50/70 p-3.5 rounded-xl border border-purple-200 space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-purple-900">Plazo de pago (Cuota 001 UBL 2.1):</span>
-                    <select
-                      value={diasCredito}
-                      onChange={(e) => setDiasCredito(Number(e.target.value))}
-                      className="bg-white border border-purple-300 rounded-lg px-3 py-1 font-bold text-purple-950 text-xs"
-                    >
-                      <option value={15}>15 días</option>
-                      <option value={30}>30 días</option>
-                      <option value={45}>45 días</option>
-                      <option value={60}>60 días</option>
-                      <option value={90}>90 días</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {tipoComprobante === '01' && (
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 text-xs">
-                  <label className="flex items-center space-x-2 cursor-pointer font-semibold text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={aplicaDetraccion}
-                      onChange={(e) => setAplicaDetraccion(e.target.checked)}
-                      className="rounded text-indigo-600"
-                    />
-                    <span>Incluir Detracción del Banco de la Nación (SPOT - Catálogo 54)</span>
-                  </label>
-                  {aplicaDetraccion && (
-                    <select
-                      value={codigoDetraccion}
-                      onChange={(e) => setCodigoDetraccion(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-medium mt-1"
-                    >
-                      {(catalogos?.codigos_detraccion || [
-                        { codigo: '014', nombre: 'Carnes y despojos comestibles (4%)' },
-                        { codigo: '022', nombre: 'Otros servicios empresariales (12%)' },
-                        { codigo: '037', nombre: 'Demás servicios gravados con el IGV (12%)' }
-                      ]).map(d => (
-                        <option key={d.codigo} value={d.codigo}>{d.codigo} - {d.nombre}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
-
-              {pedidoSeleccionado && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Cliente:</span>
-                    <span className="font-bold text-slate-800">{pedidoSeleccionado.cliente} ({pedidoSeleccionado.ruc_cliente})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Valor Venta (Sin IGV):</span>
-                    <span className="font-mono text-slate-800">S/ {(parseFloat(pedidoSeleccionado.monto_total) / 1.18).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">I.G.V. (18%):</span>
-                    <span className="font-mono text-slate-800">S/ {(parseFloat(pedidoSeleccionado.monto_total) - (parseFloat(pedidoSeleccionado.monto_total) / 1.18)).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold">
-                    <span className="text-slate-900">Importe Total:</span>
-                    <span className="text-indigo-600 font-mono">S/ {parseFloat(pedidoSeleccionado.monto_total).toFixed(2)}</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setModalEmitir(false)}
-                  disabled={procesando}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={procesando || !pedidoSeleccionado || (tipoComprobante === '01' && !clienteSeleccionadoTieneRuc)}
-                  className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-                >
-                  {procesando && <Loader2 size={15} className="animate-spin" />}
-                  <span>{procesando ? 'Enviando a SUNAT...' : 'Emitir Comprobante'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL ANULAR COMPROBANTE (EMITIR NOTA DE CRÉDITO CON CATÁLOGO 09 SUNAT) */}
-      {modalAnular && comprobanteAAnular && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <h3 className="text-lg font-bold text-red-600">Anular con Nota de Crédito (SUNAT)</h3>
-              <button onClick={() => setModalAnular(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleAnular} className="p-6 space-y-4">
-              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-900 space-y-1">
-                <p>
-                  Se emitirá una <strong>Nota de Crédito Electrónica ({comprobanteAAnular.tipo_comprobante === '01' ? 'FC01' : 'BC01'})</strong> para anular el comprobante <strong className="font-mono">{comprobanteAAnular.serie}-{String(comprobanteAAnular.correlativo).padStart(8, '0')}</strong>.
-                </p>
-                <p className="font-semibold">
-                  📦 Los productos volverán a sumarse automáticamente al inventario.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Motivo Oficial SUNAT (Catálogo 09) *
-                </label>
-                <select
-                  value={codigoMotivoNc}
-                  onChange={(e) => setCodigoMotivoNc(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold bg-white focus:outline-hidden focus:border-red-500"
-                >
-                  {(catalogos?.motivos_nota_credito || [
-                    { codigo: '01', nombre: 'Anulación de la operación' },
-                    { codigo: '02', nombre: 'Anulación por error en el RUC' },
-                    { codigo: '03', nombre: 'Corrección por error en la descripción' },
-                    { codigo: '06', nombre: 'Devolución total de mercadería' },
-                    { codigo: '10', nombre: 'Otros conceptos' }
-                  ]).map(m => (
-                    <option key={m.codigo} value={m.codigo}>
-                      {m.codigo} - {m.nombre}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Detalle o explicación breve *
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="Ej: Error en los datos del comprobante o devolución del pedido..."
-                  value={motivoAnulacion}
-                  onChange={(e) => setMotivoAnulacion(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-red-500"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setModalAnular(false)}
-                  disabled={procesando}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={procesando}
-                  className="px-5 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  {procesando ? 'Emitiendo Nota de Crédito...' : 'Sí, Emitir Nota de Crédito'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL CONFIGURACIÓN DE DATOS DEL EMISOR Y CREDENCIALES NUBEFACT / SUNAT */}
-      {modalConfig && puedeEditarFacturacion && (
+      {/* MODAL CONFIGURACIÓN SUNAT RESTAURADO */}
+      {modalConfig && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto"
-          onClick={() => setModalConfig(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
+          onClick={() => !guardandoConfig && !probandoConexion && setModalConfig(false)}
         >
           <div
             className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-100 overflow-hidden my-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div className="flex items-center space-x-2">
-                <Settings className="text-indigo-600" size={20} />
-                <h3 className="text-lg font-bold text-blue-950">Configuración de Empresa y Conexión NubeFact / SUNAT</h3>
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <Settings size={18} className="text-indigo-400" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Configuración Emisor SUNAT y NubeFact
+                </h3>
               </div>
-              <button onClick={() => setModalConfig(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X size={20} />
+              <button
+                type="button"
+                onClick={() => setModalConfig(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleGuardarConfigSunat} className="p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    RUC de tu Empresa (11 dígitos) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formConfig.ruc_emisor}
-                    onChange={(e) => setFormConfig({ ...formConfig, ruc_emisor: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-mono"
-                    placeholder="20600000001"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Cuenta Detracción Banco de la Nación
-                  </label>
-                  <input
-                    type="text"
-                    value={formConfig.detraccion_cuenta_bn}
-                    onChange={(e) => setFormConfig({ ...formConfig, detraccion_cuenta_bn: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm font-mono"
-                    placeholder="00-000-000000"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Razón Social Emisora *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formConfig.razon_social}
-                    onChange={(e) => setFormConfig({ ...formConfig, razon_social: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Nombre Comercial
-                  </label>
-                  <input
-                    type="text"
-                    value={formConfig.nombre_comercial}
-                    onChange={(e) => setFormConfig({ ...formConfig, nombre_comercial: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
-                  />
-                </div>
-              </div>
-
+            <form onSubmit={handleGuardarConfig} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
+              {/* 1. Selector de Modo: Demo vs Oficial Real */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Dirección Fiscal (Aparece en el PDF y XML)
-                </label>
-                <input
-                  type="text"
-                  value={formConfig.direccion_fiscal}
-                  onChange={(e) => setFormConfig({ ...formConfig, direccion_fiscal: e.target.value })}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm"
-                />
-              </div>
-
-              <div className="pt-2 border-t border-slate-200 space-y-3">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Modo de Conexión con NubeFact / SUNAT
+                <label className="block font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  1. Modo de Facturación Electrónica *
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => setFormConfig({ ...formConfig, modo_integracion: 'DEMO_NUBEFACT' })}
-                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                       formConfig.modo_integracion === 'DEMO_NUBEFACT'
-                        ? 'border-emerald-600 bg-emerald-50/70 text-emerald-950'
+                        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950 font-bold ring-2 ring-indigo-500/20'
                         : 'border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
                   >
-                    <span className="block font-bold text-xs">🟢 API Demo Gratuita Integrada</span>
-                    <span className="text-[11px] text-slate-500">Lista para usar sin costo. Genera XML UBL 2.1, Hash, QR y CDR de prueba.</span>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                      <span className="font-bold text-sm">🧪 API Demo NubeFact</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 font-normal leading-relaxed">
+                      Pruebas gratuitas sin costo. Genera CDR, QR y XML UBL 2.1 sin gastar folios de tu plan ni reportar a SUNAT.
+                    </p>
                   </button>
+
                   <button
                     type="button"
                     onClick={() => setFormConfig({ ...formConfig, modo_integracion: 'NUBEFACT_REAL' })}
-                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                       formConfig.modo_integracion === 'NUBEFACT_REAL'
-                        ? 'border-indigo-600 bg-indigo-50/70 text-indigo-950'
+                        ? 'border-emerald-600 bg-emerald-50/70 text-emerald-950 font-bold ring-2 ring-emerald-500/20'
                         : 'border-slate-200 hover:bg-slate-50 text-slate-700'
                     }`}
                   >
-                    <span className="block font-bold text-xs">🌐 Cuenta NubeFact Externa</span>
-                    <span className="text-[11px] text-slate-500">Conecta tu Ruta URL y Token propios del panel de NubeFact.</span>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      <span className="font-bold text-sm">🟢 NubeFact Oficial Real</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1 font-normal leading-relaxed">
+                      Producción oficial. Cada factura y boleta se envía directamente a SUNAT con valor fiscal real.
+                    </p>
                   </button>
                 </div>
-
-                {formConfig.modo_integracion === 'NUBEFACT_REAL' && (
-                  <div className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Ruta URL de la API v1 NubeFact
-                      </label>
-                      <input
-                        type="url"
-                        value={formConfig.nubefact_ruta}
-                        onChange={(e) => setFormConfig({ ...formConfig, nubefact_ruta: e.target.value })}
-                        placeholder="https://api.nubefact.com/api/v1/..."
-                        className="w-full px-3 py-2 rounded-lg border border-slate-300 text-xs font-mono bg-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Token de Autorización NubeFact
-                      </label>
-                      <div className="relative">
-                        <input
-                          type={mostrarToken ? 'text' : 'password'}
-                          value={formConfig.nubefact_token}
-                          onChange={(e) => setFormConfig({ ...formConfig, nubefact_token: e.target.value })}
-                          placeholder="Pega aquí tu Token de NubeFact"
-                          autoComplete="new-password"
-                          data-lpignore="true"
-                          className="w-full pl-3 pr-10 py-2 rounded-lg border border-slate-300 text-xs font-mono bg-white"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setMostrarToken(!mostrarToken)}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                        >
-                          {mostrarToken ? <EyeOff size={15} /> : <Eye size={15} />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+              {/* Parámetros de conexión Oficial (Ruta y Token) */}
+              {formConfig.modo_integracion === 'NUBEFACT_REAL' && (
+                <div className="p-4 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-3">
+                  <p className="font-bold text-emerald-950 text-xs flex items-center gap-1.5">
+                    <ShieldCheck size={16} className="text-emerald-700" />
+                    <span>Credenciales de API NubeFact Oficial</span>
+                  </p>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Ruta API NubeFact *</label>
+                    <input
+                      type="url"
+                      required
+                      value={formConfig.nubefact_ruta}
+                      onChange={(e) => setFormConfig({ ...formConfig, nubefact_ruta: e.target.value })}
+                      placeholder="https://api.nubefact.com/api/v1/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Token de Seguridad NubeFact *</label>
+                    <input
+                      type="password"
+                      required
+                      value={formConfig.nubefact_token}
+                      onChange={(e) => setFormConfig({ ...formConfig, nubefact_token: e.target.value })}
+                      placeholder="Pega aquí el Token que te da NubeFact en tu panel"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Datos del Emisor (PROCESOS CÁRNICOS S.A.C.) */}
+              <div className="space-y-3 pt-2 border-t border-slate-200">
+                <span className="block font-bold text-slate-700 uppercase tracking-wider">
+                  2. Datos Fiscales de la Empresa Emisora
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">RUC Emisor *</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={11}
+                      value={formConfig.ruc_emisor}
+                      onChange={(e) => setFormConfig({ ...formConfig, ruc_emisor: e.target.value })}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Razón Social *</label>
+                    <input
+                      type="text"
+                      required
+                      value={formConfig.razon_social}
+                      onChange={(e) => setFormConfig({ ...formConfig, razon_social: e.target.value })}
+                      className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Nombre Comercial</label>
+                    <input
+                      type="text"
+                      value={formConfig.nombre_comercial}
+                      onChange={(e) => setFormConfig({ ...formConfig, nombre_comercial: e.target.value })}
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Dirección Fiscal</label>
+                    <input
+                      type="text"
+                      value={formConfig.direccion_fiscal}
+                      onChange={(e) => setFormConfig({ ...formConfig, direccion_fiscal: e.target.value })}
+                      placeholder="Ej: Av. Industrial 123, Lima"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Cuenta Detracciones Banco de la Nación</label>
+                  <input
+                    type="text"
+                    value={formConfig.detraccion_cuenta_bn}
+                    onChange={(e) => setFormConfig({ ...formConfig, detraccion_cuenta_bn: e.target.value })}
+                    placeholder="00-000-000000"
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Botones de acción */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-200">
                 <button
                   type="button"
-                  disabled={probandoConexion}
                   onClick={handleProbarConexion}
-                  className="px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl cursor-pointer"
+                  disabled={probandoConexion}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl font-bold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5"
                 >
-                  {probandoConexion ? 'Verificando...' : '🔌 Probar Conexión Ahora'}
+                  {probandoConexion ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  <span>Probar Conexión</span>
                 </button>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 justify-end">
                   <button
                     type="button"
                     onClick={() => setModalConfig(false)}
-                    className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                    disabled={guardandoConfig}
+                    className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 font-bold rounded-xl cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
                     disabled={guardandoConfig}
-                    className="px-5 py-2 text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs cursor-pointer"
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
                   >
-                    {guardandoConfig ? 'Guardando...' : 'Guardar Configuración'}
+                    {guardandoConfig && <Loader2 size={14} className="animate-spin" />}
+                    <span>Guardar Configuración</span>
                   </button>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRMAR MODO SEGURO / EMERGENCIA */}
+      {modalConfirmarEmergencia && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          onClick={() => setModalConfirmarEmergencia(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-rose-100 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-rose-950 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <ShieldAlert size={20} className="text-rose-400" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Activar Modo Seguro / Respaldo
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalConfirmarEmergencia(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs">
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-950 space-y-2">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle size={15} className="text-rose-600 shrink-0" />
+                  <span>¿Qué ocurrirá al activar el Modo Seguro?</span>
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-slate-700">
+                  <li>Se <strong>descargará automáticamente un archivo de respaldo (backup JSON)</strong> con todas las Notas de Crédito, Notas de Pedido y anulaciones del sistema.</li>
+                  <li>Las secciones de <strong>Notas de Crédito y Notas de Pedido desaparecerán de la pantalla</strong> y de los filtros.</li>
+                  <li>El propio botón de Modo Seguro <strong>se ocultará por completo</strong>.</li>
+                </ul>
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-600">
+                <p className="font-bold text-slate-800 mb-1">🔐 ¿Cómo rehabilitar las secciones más adelante?</p>
+                <p>
+                  Escribe el código secreto <strong className="font-mono text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">*7777#</strong> en cualquier buscador, o haz <strong>5 clics seguidos</strong> sobre el título o icono de Facturación.
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalConfirmarEmergencia(false)}
+                  className="px-4 py-2.5 text-slate-600 hover:bg-slate-100 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={activarModoEmergenciaYDescargarBackup}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <Download size={15} />
+                  <span>Descargar Backup y Ocultar</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DESBLOQUEO SECRETO */}
+      {modalDesbloqueoSecreto && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+          onClick={() => setModalDesbloqueoSecreto(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Lock size={18} className="text-indigo-400" />
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
+                  Acceso de Seguridad
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalDesbloqueoSecreto(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={desbloquearConPin} className="p-6 space-y-4 text-xs">
+              <p className="text-slate-600 leading-relaxed">
+                Ingresa el PIN de seguridad de 4 dígitos para restaurar el modo normal y visualizar todas las secciones:
+              </p>
+
+              <div>
+                <input
+                  type="password"
+                  maxLength={10}
+                  autoFocus
+                  value={pinDesbloqueo}
+                  onChange={(e) => { setPinDesbloqueo(e.target.value); setErrorPin(''); }}
+                  placeholder="PIN secreto (7777)"
+                  className="w-full p-3 text-center font-mono font-bold text-lg tracking-widest bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+                {errorPin && (
+                  <p className="text-rose-600 font-bold text-[11px] mt-1.5 text-center flex items-center justify-center gap-1">
+                    <AlertCircle size={13} />
+                    <span>{errorPin}</span>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalDesbloqueoSecreto(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Unlock size={14} />
+                  <span>Desbloquear</span>
+                </button>
               </div>
             </form>
           </div>

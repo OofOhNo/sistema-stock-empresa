@@ -13,6 +13,8 @@ const Stock = {
                     p.precio_venta,
                     p.stock_minimo,
                     p.id_unidad,
+                    p.id_tipo_producto,
+                    COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
                     $1::int AS id_ubicacion,
@@ -27,6 +29,7 @@ const Stock = {
                 FROM productos p
                 LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.id_ubicacion = $1::int
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
                 ORDER BY p.nombre ASC;
             `;
@@ -48,6 +51,8 @@ const Stock = {
                     p.precio_venta,
                     p.stock_minimo,
                     p.id_unidad,
+                    p.id_tipo_producto,
+                    COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
                     COALESCE(SUM(i.cantidad_fisica), 0) AS total_fisico,
@@ -56,8 +61,9 @@ const Stock = {
                 FROM productos p
                 LEFT JOIN inventario i ON p.id_producto = i.id_producto
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
-                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.unidad_medida, um.nombre, um.simbolo
+                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.id_tipo_producto, tp.nombre, p.unidad_medida, um.nombre, um.simbolo
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query);
@@ -78,6 +84,8 @@ const Stock = {
                     p.precio_venta,
                     p.stock_minimo,
                     p.id_unidad,
+                    p.id_tipo_producto,
+                    COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
                     s.id_ubicacion,
@@ -93,6 +101,7 @@ const Stock = {
                 JOIN productos p ON i.id_producto = p.id_producto
                 JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
                 ORDER BY s.nombre ASC, p.nombre ASC;
             `;

@@ -269,6 +269,155 @@ const facturaController = {
                 });
             }
 
+            // Req 2: Pago dividido entre múltiples clientes / razones sociales (Opción A: por montos/porcentajes)
+            if (req.body.es_pago_dividido && Array.isArray(req.body.pagos) && req.body.pagos.length > 0) {
+                const comprobantesEmitidos = [];
+                for (const pago of req.body.pagos) {
+                    const resCli = await client.query('SELECT * FROM clientes WHERE id_cliente = $1', [pago.id_cliente]);
+                    if (resCli.rows.length === 0) throw new Error('Cliente del pago dividido no encontrado.');
+                    const cliDividido = resCli.rows[0];
+                    const tipoComp = pago.tipo_comprobante || '01';
+                    const montoPago = parseFloat(pago.monto || 0);
+                    const porcPago = parseFloat(pago.porcentaje || 0);
+
+                    if (montoPago <= 0) {
+                        throw new Error('El monto a pagar de cada cliente en el pago dividido debe ser mayor a 0.');
+                    }
+
+                    const valSunat = validarReglasTributarias({
+                        tipo_comprobante: tipoComp,
+                        cliente: cliDividido,
+                        monto_total: montoPago,
+                        fecha_emision: new Date()
+                    });
+                    if (!valSunat.valido) throw new Error(valSunat.mensaje);
+
+                    const serieDividida = tipoComp === '01' ? 'F001' : 'B001';
+                    const resS = await client.query('SELECT ultimo_correlativo FROM series_sunat WHERE serie = $1 FOR UPDATE', [serieDividida]);
+                    let correlativoDiv = 1;
+                    if (resS.rows.length === 0) {
+                        await client.query('INSERT INTO series_sunat (tipo_comprobante, serie, ultimo_correlativo) VALUES ($1, $2, 1)', [tipoComp, serieDividida]);
+                    } else {
+                        correlativoDiv = resS.rows[0].ultimo_correlativo + 1;
+                        await client.query('UPDATE series_sunat SET ultimo_correlativo = $1 WHERE serie = $2', [correlativoDiv, serieDividida]);
+                    }
+
+                    const itemDiv = [{
+                        id_producto: null,
+                        sku: 'PART-PEDIDO',
+                        descripcion: `Pago ${porcPago > 0 ? `(${porcPago}%) ` : ''}del Pedido #${id_pedido}`,
+                        unidad_medida: 'Unidad',
+                        codigo_unidad_sunat: 'NIU',
+                        tipo_afectacion_igv: '10',
+                        cantidad: 1,
+                        precio_unitario: montoPago,
+                        subtotal: montoPago
+                    }];
+                    const desgloseDiv = calcularDesgloseTributario(itemDiv, configEmisor.igv_porcentaje);
+                    const letrasDiv = numeroALetrasSoles(desgloseDiv.totales.monto_total);
+
+                    const payloadNube = construirPayloadNubefact({
+                        tipo_comprobante: tipoComp,
+                        serie: serieDividida,
+                        correlativo: correlativoDiv,
+                        cliente: cliDividido,
+                        itemsCalculados: desgloseDiv.itemsCalculados,
+                        totales: desgloseDiv.totales,
+                        forma_pago: pago.forma_pago || 'CONTADO',
+                        dias_credito: pago.forma_pago === 'CREDITO' ? (parseInt(pago.dias_credito, 10) || 7) : 0,
+                        medio_pago_sunat: pago.forma_pago === 'CREDITO' ? '006' : '008',
+                        configEmisor
+                    });
+
+                    const datosUblDiv = generarXmlUbl21YDatosSunat({
+                        tipo_comprobante: tipoComp,
+                        serie: serieDividida,
+                        correlativo: correlativoDiv,
+                        configEmisor,
+                        cliente: cliDividido,
+                        itemsCalculados: desgloseDiv.itemsCalculados,
+                        totales: desgloseDiv.totales,
+                        monto_en_letras: letrasDiv,
+                        forma_pago: pago.forma_pago || 'CONTADO'
+                    });
+
+                    const respOseDiv = await enviarAConectorNubefact({ payloadNubefact: payloadNube, configEmisor, datosUbl: datosUblDiv });
+
+                    const resC = await client.query(`
+                        INSERT INTO comprobantes (
+                            id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo,
+                            monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
+                            monto_igv, monto_total, forma_pago, dias_credito, medio_pago_sunat,
+                            estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
+                            enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, modo_emision,
+                            peso_total, es_pago_dividido, monto_dividido, porcentaje_dividido, items_json
+                        )
+                        VALUES (
+                            $1, $2, $3, $4, $5, $6,
+                            $7, $8, $9, $10,
+                            $11, $12, $13, $14, $15,
+                            $16, $17, $18, $19, $20,
+                            $21, $22, $23, $24, $25, $26,
+                            $27, TRUE, $28, $29, $30
+                        ) RETURNING *;
+                    `, [
+                        id_pedido,
+                        pago.id_cliente,
+                        pedido.id_ubicacion,
+                        tipoComp,
+                        serieDividida,
+                        correlativoDiv,
+                        desgloseDiv.totales.monto_subtotal.toFixed(2),
+                        desgloseDiv.totales.monto_gravada.toFixed(2),
+                        desgloseDiv.totales.monto_exonerada.toFixed(2),
+                        desgloseDiv.totales.monto_inafecta.toFixed(2),
+                        desgloseDiv.totales.monto_igv.toFixed(2),
+                        desgloseDiv.totales.monto_total.toFixed(2),
+                        pago.forma_pago || 'CONTADO',
+                        pago.forma_pago === 'CREDITO' ? (parseInt(pago.dias_credito, 10) || 7) : 0,
+                        pago.forma_pago === 'CREDITO' ? '006' : '008',
+                        respOseDiv.estado_sunat,
+                        respOseDiv.codigo_hash,
+                        respOseDiv.mensaje_cdr,
+                        respOseDiv.cadena_qr,
+                        letrasDiv,
+                        respOseDiv.enlace_pdf,
+                        respOseDiv.enlace_xml,
+                        respOseDiv.enlace_cdr,
+                        datosUblDiv.xmlFirmado,
+                        datosUblDiv.cdrXml,
+                        respOseDiv.modo_emision,
+                        req.body.peso_total || pedido.peso_total || null,
+                        montoPago,
+                        porcPago,
+                        JSON.stringify(itemDiv)
+                    ]);
+                    comprobantesEmitidos.push(resC.rows[0]);
+                }
+
+                if (!pedido.stock_descontado) {
+                    const resItemsPed = await client.query('SELECT * FROM detalle_pedidos WHERE id_pedido = $1', [id_pedido]);
+                    for (const item of resItemsPed.rows) {
+                        await client.query(`
+                            UPDATE inventario 
+                            SET cantidad_fisica = cantidad_fisica - $1,
+                                cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
+                                ultima_actualizacion = CURRENT_TIMESTAMP
+                            WHERE id_producto = $2 AND id_ubicacion = $3;
+                        `, [item.cantidad, item.id_producto, pedido.id_ubicacion]);
+                    }
+                }
+
+                await client.query("UPDATE pedidos SET estado_pedido = 'FACTURADO', stock_descontado = true WHERE id_pedido = $1", [id_pedido]);
+                await client.query('COMMIT');
+
+                return res.status(201).json({
+                    exito: true,
+                    mensaje: `¡Pago dividido emitido con éxito! Se generaron ${comprobantesEmitidos.length} comprobantes para este pedido.`,
+                    comprobantes: comprobantesEmitidos
+                });
+            }
+
             // Verificar que no tenga ya una factura o boleta vigente (no anulada)
             const resCompExistente = await client.query(`
                 SELECT serie, correlativo
@@ -322,7 +471,35 @@ const facturaController = {
                 WHERE dp.id_pedido = $1;
             `;
             const resDetalle = await client.query(queryDetalle, [id_pedido]);
-            const items = resDetalle.rows;
+            let items = resDetalle.rows;
+
+            // Req 9: Modificación de precios y pesos al elegir el pedido
+            if (req.body.items && Array.isArray(req.body.items) && req.body.items.length > 0) {
+                items = req.body.items.map(it => {
+                    const cant = Number(it.cantidad) || 1;
+                    const precio = Number(it.precio_unitario) || 0;
+                    return {
+                        id_producto: it.id_producto,
+                        sku: it.sku || 'PROD',
+                        descripcion: it.descripcion || 'Producto',
+                        unidad_medida: it.unidad_medida || 'Unidad',
+                        codigo_unidad_sunat: it.codigo_unidad_sunat || 'NIU',
+                        tipo_afectacion_igv: it.tipo_afectacion_igv || '10',
+                        codigo_producto_sunat: it.codigo_producto_sunat || null,
+                        cantidad: cant,
+                        peso: Number(it.peso) || 0,
+                        precio_unitario: precio,
+                        subtotal: +(cant * precio).toFixed(2)
+                    };
+                });
+            }
+
+            // Req 7 & 8: Tarjeta de crédito obligatoria en crédito, cuotas y peso
+            const medioPagoFinal = esCredito ? '006' : (medio_pago_sunat || '008');
+            const cantidadCuotasFinal = esCredito ? (parseInt(req.body.cantidad_cuotas, 10) || 1) : 1;
+            const pesoTotalFinal = req.body.peso_total !== undefined && req.body.peso_total !== null && req.body.peso_total !== '' 
+                ? parseFloat(req.body.peso_total) 
+                : (pedido.peso_total || null);
 
             // Calcular desglose tributario exacto según Catálogo 07 de cada ítem
             const { itemsCalculados, totales } = calcularDesgloseTributario(items, configEmisor.igv_porcentaje);
@@ -398,7 +575,7 @@ const facturaController = {
 
             const queryComprobante = `
                 INSERT INTO comprobantes (
-                    id_pedido, tipo_comprobante, serie, correlativo, 
+                    id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo, 
                     monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                     monto_igv, monto_total, 
                     forma_pago, dias_credito, fecha_vencimiento_cuota,
@@ -407,24 +584,28 @@ const facturaController = {
                     estado_sunat, codigo_hash, mensaje_cdr,
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
-                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision
+                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
+                    peso_total, cantidad_cuotas, items_json
                 )
                 VALUES (
-                    $1, $2, $3, $4,
-                    $5, $6, $7, $8,
-                    $9, $10,
-                    $11, $12, $13,
-                    $14, $15,
-                    $16, $17, $18, $19,
-                    $20, $21, $22,
-                    $23, $24,
-                    $25, $26, $27,
-                    $28, $29, $30, $31
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10,
+                    $11, $12,
+                    $13, $14, $15,
+                    $16, $17,
+                    $18, $19, $20, $21,
+                    $22, $23, $24,
+                    $25, $26,
+                    $27, $28, $29,
+                    $30, $31, $32, $33,
+                    $34, $35, $36
                 )
                 RETURNING *;
             `;
             const resComprobante = await client.query(queryComprobante, [
                 id_pedido,
+                pedido.id_cliente,
+                pedido.id_ubicacion,
                 tipo_comprobante,
                 serie,
                 correlativo,
@@ -437,7 +618,7 @@ const facturaController = {
                 formaPagoFinal,
                 diasCreditoFinal,
                 fechaVencimientoFinal,
-                medio_pago_sunat || '008',
+                medioPagoFinal,
                 tipoOperacionSunat,
                 aplicaDetFinal,
                 aplicaDetFinal ? detInfo.codigo : null,
@@ -454,7 +635,10 @@ const facturaController = {
                 datosUbl.xmlFirmado,
                 datosUbl.cdrXml,
                 JSON.stringify(respuestaOse.respuesta_ose_json || {}),
-                respuestaOse.modo_emision
+                respuestaOse.modo_emision,
+                pesoTotalFinal,
+                cantidadCuotasFinal,
+                JSON.stringify(items)
             ]);
 
             const compCreado = resComprobante.rows[0];
@@ -825,13 +1009,14 @@ const facturaController = {
             const params = [];
             let whereClause = '';
             if (!puedeVerTodas && req.usuario?.id_ubicacion) {
-                whereClause = 'WHERE p.id_ubicacion = $1';
+                whereClause = 'WHERE (p.id_ubicacion = $1 OR c.id_ubicacion = $1)';
                 params.push(req.usuario.id_ubicacion);
             }
 
             const query = `
                 SELECT 
-                    c.id_comprobante, c.id_pedido, c.tipo_comprobante, c.serie, c.correlativo,
+                    c.id_comprobante, c.id_pedido, c.id_cliente, c.id_ubicacion,
+                    c.tipo_comprobante, c.serie, c.correlativo,
                     c.monto_subtotal, c.monto_gravada, c.monto_exonerada, c.monto_inafecta,
                     c.monto_igv, c.monto_total,
                     c.forma_pago, c.dias_credito, c.fecha_vencimiento_cuota,
@@ -840,18 +1025,22 @@ const facturaController = {
                     c.id_comprobante_referencia, c.codigo_motivo_nc, c.descripcion_motivo_nc,
                     c.estado_sunat, c.codigo_hash, c.mensaje_cdr, c.cadena_qr, c.monto_en_letras,
                     c.enlace_pdf, c.enlace_xml, c.enlace_cdr, c.modo_emision, c.fecha_emision,
-                    p.id_ubicacion, 
-                    u.nombre AS nombre_ubicacion, 
-                    cl.razon_social_o_nombre AS nombre_cliente,
-                    cl.numero_documento AS documento_cliente,
-                    cl.tipo_documento AS tipo_documento_cliente,
-                    cl.direccion AS direccion_cliente,
+                    c.peso_total, c.cantidad_cuotas, c.origen_facturacion,
+                    c.es_pago_dividido, c.monto_dividido, c.porcentaje_dividido,
+                    COALESCE(c.id_ubicacion, p.id_ubicacion) AS id_ubicacion_final, 
+                    COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion, 
+                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
+                    COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente,
+                    COALESCE(cl_comp.tipo_documento, cl.tipo_documento, '6') AS tipo_documento_cliente,
+                    COALESCE(cl_comp.direccion, cl.direccion, '') AS direccion_cliente,
                     ref.serie AS ref_serie,
                     ref.correlativo AS ref_correlativo
                 FROM comprobantes c
                 LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
                 LEFT JOIN ubicaciones u ON p.id_ubicacion = u.id_ubicacion
+                LEFT JOIN ubicaciones u_comp ON c.id_ubicacion = u_comp.id_ubicacion
                 LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                LEFT JOIN clientes cl_comp ON c.id_cliente = cl_comp.id_cliente
                 LEFT JOIN comprobantes ref ON c.id_comprobante_referencia = ref.id_comprobante
                 ${whereClause}
                 ORDER BY c.id_comprobante DESC;
@@ -871,19 +1060,19 @@ const facturaController = {
                 pool.query(`
                     SELECT 
                         c.*,
-                        p.id_ubicacion,
+                        COALESCE(c.id_ubicacion, p.id_ubicacion) AS id_ubicacion,
                         p.solicitado_por,
                         p.etiquetado,
                         p.sellado_vacio,
-                        u.nombre AS nombre_ubicacion,
-                        u.direccion_completa AS direccion_ubicacion,
-                        u.telefono_contacto AS telefono_ubicacion,
-                        cl.tipo_documento AS cliente_tipo_doc,
-                        cl.numero_documento AS cliente_documento,
-                        cl.razon_social_o_nombre AS nombre_cliente,
-                        cl.nombre_comercial AS cliente_comercial,
-                        cl.direccion AS cliente_direccion,
-                        cl.email AS cliente_email,
+                        COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion,
+                        COALESCE(u.direccion_completa, u_comp.direccion_completa, '') AS direccion_ubicacion,
+                        COALESCE(u.telefono_contacto, u_comp.telefono_contacto, '') AS telefono_ubicacion,
+                        COALESCE(cl_comp.tipo_documento, cl.tipo_documento, '6') AS cliente_tipo_doc,
+                        COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS cliente_documento,
+                        COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'CLIENTE GENERAL') AS nombre_cliente,
+                        COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) AS cliente_comercial,
+                        COALESCE(cl_comp.direccion, cl.direccion, '') AS cliente_direccion,
+                        COALESCE(cl_comp.email, cl.email, '') AS cliente_email,
                         ref.tipo_comprobante AS ref_tipo_comprobante,
                         ref.serie AS ref_serie,
                         ref.correlativo AS ref_correlativo,
@@ -891,7 +1080,9 @@ const facturaController = {
                     FROM comprobantes c
                     LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
                     LEFT JOIN ubicaciones u ON p.id_ubicacion = u.id_ubicacion
+                    LEFT JOIN ubicaciones u_comp ON c.id_ubicacion = u_comp.id_ubicacion
                     LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                    LEFT JOIN clientes cl_comp ON c.id_cliente = cl_comp.id_cliente
                     LEFT JOIN comprobantes ref ON c.id_comprobante_referencia = ref.id_comprobante
                     WHERE c.id_comprobante = $1;
                 `, [id]),
@@ -912,7 +1103,9 @@ const facturaController = {
             }
 
             let items = [];
-            if (comprobante.id_pedido) {
+            if (comprobante.items_json && Array.isArray(comprobante.items_json) && comprobante.items_json.length > 0) {
+                items = comprobante.items_json;
+            } else if (comprobante.id_pedido) {
                 const resItems = await pool.query(`
                     SELECT 
                         dp.id_producto,
@@ -1204,7 +1397,502 @@ const facturaController = {
             console.error('Error al generar gráficos de facturación:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al generar métricas de facturación', error: error.message });
         }
-    }
+    },
+
+    emitirComprobanteManual: async (req, res) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const {
+                id_cliente,
+                tipo_comprobante,
+                forma_pago,
+                dias_credito,
+                cantidad_cuotas,
+                fecha_vencimiento_cuota,
+                medio_pago_sunat = '008',
+                aplica_detraccion = false,
+                codigo_detraccion = '014',
+                peso_total,
+                items
+            } = req.body;
+
+            if (!tipo_comprobante) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Selecciona el tipo de comprobante (Factura o Boleta).' });
+            }
+            if (tipo_comprobante !== '01' && tipo_comprobante !== '03') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Selecciona Factura (01) o Boleta de Venta (03).' });
+            }
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Debes agregar al menos un producto para emitir el comprobante.' });
+            }
+
+            let cliente;
+            if (id_cliente === 'CLIENTES_VARIOS' || id_cliente === 'VARIOS' || id_cliente === '0' || !id_cliente) {
+                const resVarios = await client.query("SELECT * FROM clientes WHERE numero_documento = '00000000' OR razon_social_o_nombre ILIKE '%CLIENTES VARIOS%' LIMIT 1");
+                if (resVarios.rows.length > 0) {
+                    cliente = resVarios.rows[0];
+                } else {
+                    const insertVarios = await client.query(`
+                        INSERT INTO clientes (razon_social_o_nombre, nombre_comercial, tipo_documento, numero_documento, direccion)
+                        VALUES ('CLIENTES VARIOS', 'CONSUMIDOR FINAL', '0', '00000000', 'Venta en Mostrador')
+                        RETURNING *
+                    `);
+                    cliente = insertVarios.rows[0];
+                }
+            } else {
+                const resCliente = await client.query('SELECT * FROM clientes WHERE id_cliente = $1', [id_cliente]);
+                if (resCliente.rows.length === 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(404).json({ exito: false, mensaje: 'Cliente no encontrado.' });
+                }
+                cliente = resCliente.rows[0];
+            }
+
+            const montoCalculadoTotal = items.reduce((sum, it) => sum + (Number(it.cantidad || 1) * Number(it.precio_unitario || 0)), 0);
+
+            // Validar reglas tributarias (DNI obligatorio en Boletas, RUC en Facturas)
+            const validacionSunat = validarReglasTributarias({
+                tipo_comprobante,
+                cliente,
+                monto_total: montoCalculadoTotal,
+                fecha_emision: new Date()
+            });
+            if (!validacionSunat.valido) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: validacionSunat.mensaje });
+            }
+
+            const configEmisor = await obtenerConfigEmisor(client);
+            const esCredito = forma_pago === 'CREDITO';
+            const formaPagoFinal = esCredito ? 'CREDITO' : 'CONTADO';
+            const diasCreditoFinal = esCredito ? (parseInt(dias_credito, 10) || 7) : 0;
+            const cuotasFinal = esCredito ? (parseInt(cantidad_cuotas, 10) || 1) : 1;
+            const medioPagoFinal = esCredito ? '006' : (medio_pago_sunat || '008');
+
+            let fechaVencimientoFinal = null;
+            if (esCredito) {
+                if (fecha_vencimiento_cuota) {
+                    fechaVencimientoFinal = fecha_vencimiento_cuota;
+                } else {
+                    const f = new Date();
+                    f.setDate(f.getDate() + diasCreditoFinal);
+                    fechaVencimientoFinal = f.toISOString().split('T')[0];
+                }
+            }
+
+            const idUbicacionUsuario = req.body?.id_ubicacion || req.usuario?.id_ubicacion || 1;
+
+            // Procesar ítems y descontar stock automáticamente (Req 3)
+            const itemsValidados = [];
+            for (const item of items) {
+                const cant = Number(item.cantidad) || 1;
+                const precio = Number(item.precio_unitario) || 0;
+                const peso = Number(item.peso) || 0;
+                const subtotal = +(cant * precio).toFixed(2);
+
+                if (item.id_producto) {
+                    const resInv = await client.query(
+                        'SELECT cantidad_fisica, cantidad_reservada FROM inventario WHERE id_producto = $1 AND id_ubicacion = $2 FOR UPDATE',
+                        [item.id_producto, idUbicacionUsuario]
+                    );
+                    if (resInv.rows.length === 0) {
+                        await client.query(
+                            'INSERT INTO inventario (id_producto, id_ubicacion, cantidad_fisica, cantidad_reservada) VALUES ($1, $2, 0, 0)',
+                            [item.id_producto, idUbicacionUsuario]
+                        );
+                    }
+                    await client.query(`
+                        UPDATE inventario 
+                        SET cantidad_fisica = cantidad_fisica - $1,
+                            ultima_actualizacion = CURRENT_TIMESTAMP
+                        WHERE id_producto = $2 AND id_ubicacion = $3;
+                    `, [cant, item.id_producto, idUbicacionUsuario]);
+
+                    await client.query(`
+                        INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                        VALUES ($1, $2, $3, 'SALIDA', $4, $5);
+                    `, [
+                        item.id_producto,
+                        idUbicacionUsuario,
+                        req.usuario?.id_usuario || null,
+                        cant,
+                        `Venta Manual Directa (${item.descripcion || 'Producto'})`
+                    ]);
+                }
+
+                itemsValidados.push({
+                    id_producto: item.id_producto || null,
+                    sku: item.sku || 'PROD',
+                    descripcion: item.descripcion || 'Producto / Servicio',
+                    unidad_medida: item.unidad_medida || 'Unidad',
+                    codigo_unidad_sunat: item.codigo_unidad_sunat || 'NIU',
+                    tipo_afectacion_igv: item.tipo_afectacion_igv || '10',
+                    cantidad: cant,
+                    precio_unitario: precio,
+                    peso: peso,
+                    subtotal: subtotal
+                });
+            }
+
+            const { itemsCalculados, totales } = calcularDesgloseTributario(itemsValidados, configEmisor.igv_porcentaje);
+            const montoEnLetras = numeroALetrasSoles(totales.monto_total);
+
+            const serie = tipo_comprobante === '01' ? 'F001' : 'B001';
+            const resSerie = await client.query('SELECT ultimo_correlativo FROM series_sunat WHERE serie = $1 FOR UPDATE', [serie]);
+            let correlativo = 1;
+            if (resSerie.rows.length === 0) {
+                await client.query('INSERT INTO series_sunat (tipo_comprobante, serie, ultimo_correlativo) VALUES ($1, $2, 1)', [tipo_comprobante, serie]);
+            } else {
+                correlativo = resSerie.rows[0].ultimo_correlativo + 1;
+                await client.query('UPDATE series_sunat SET ultimo_correlativo = $1 WHERE serie = $2', [correlativo, serie]);
+            }
+
+            const pesoFinal = peso_total !== undefined && peso_total !== null && peso_total !== '' 
+                ? parseFloat(peso_total) 
+                : itemsValidados.reduce((acc, it) => acc + (Number(it.peso) || 0), 0);
+
+            const payloadNubefact = construirPayloadNubefact({
+                tipo_comprobante,
+                serie,
+                correlativo,
+                cliente,
+                itemsCalculados,
+                totales,
+                forma_pago: formaPagoFinal,
+                dias_credito: diasCreditoFinal,
+                fecha_vencimiento_cuota: fechaVencimientoFinal,
+                medio_pago_sunat: medioPagoFinal,
+                aplica_detraccion: false,
+                configEmisor
+            });
+
+            const datosUbl = generarXmlUbl21YDatosSunat({
+                tipo_comprobante,
+                serie,
+                correlativo,
+                configEmisor,
+                cliente,
+                itemsCalculados,
+                totales,
+                monto_en_letras: montoEnLetras,
+                forma_pago: formaPagoFinal,
+                fecha_vencimiento_cuota: fechaVencimientoFinal
+            });
+
+            const respuestaOse = await enviarAConectorNubefact({
+                payloadNubefact,
+                configEmisor,
+                datosUbl
+            });
+
+            const queryComprobante = `
+                INSERT INTO comprobantes (
+                    id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo, 
+                    monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
+                    monto_igv, monto_total, 
+                    forma_pago, dias_credito, fecha_vencimiento_cuota,
+                    medio_pago_sunat, tipo_operacion_sunat,
+                    aplica_detraccion, estado_sunat, codigo_hash, mensaje_cdr,
+                    cadena_qr, monto_en_letras,
+                    enlace_pdf, enlace_xml, enlace_cdr,
+                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
+                    peso_total, cantidad_cuotas, origen_facturacion, items_json
+                )
+                VALUES (
+                    NULL, $1, $2, $3, $4, $5,
+                    $6, $7, $8, $9,
+                    $10, $11,
+                    $12, $13, $14,
+                    $15, '0101',
+                    FALSE, $16, $17, $18,
+                    $19, $20,
+                    $21, $22, $23,
+                    $24, $25, $26, $27,
+                    $28, $29, 'MANUAL', $30
+                )
+                RETURNING *;
+            `;
+
+            const resComp = await client.query(queryComprobante, [
+                id_cliente,
+                idUbicacionUsuario,
+                tipo_comprobante,
+                serie,
+                correlativo,
+                totales.monto_subtotal.toFixed(2),
+                totales.monto_gravada.toFixed(2),
+                totales.monto_exonerada.toFixed(2),
+                totales.monto_inafecta.toFixed(2),
+                totales.monto_igv.toFixed(2),
+                totales.monto_total.toFixed(2),
+                formaPagoFinal,
+                diasCreditoFinal,
+                fechaVencimientoFinal,
+                medioPagoFinal,
+                respuestaOse.estado_sunat,
+                respuestaOse.codigo_hash,
+                respuestaOse.mensaje_cdr,
+                respuestaOse.cadena_qr,
+                montoEnLetras,
+                respuestaOse.enlace_pdf,
+                respuestaOse.enlace_xml,
+                respuestaOse.enlace_cdr,
+                datosUbl.xmlFirmado,
+                datosUbl.cdrXml,
+                JSON.stringify(respuestaOse.respuesta_ose_json || {}),
+                respuestaOse.modo_emision,
+                pesoFinal,
+                cuotasFinal,
+                JSON.stringify(itemsValidados)
+            ]);
+
+            const compCreado = resComp.rows[0];
+
+            await registrarAuditoria(
+                client,
+                req.usuario?.id_usuario || null,
+                'EMITIR_FACTURA_MANUAL',
+                'comprobantes',
+                compCreado.id_comprobante,
+                null,
+                compCreado
+            );
+
+            await client.query('COMMIT');
+            res.status(201).json({
+                exito: true,
+                mensaje: `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y stock descontado con éxito!`,
+                comprobante: compCreado
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error al emitir factura manual:', error);
+            res.status(500).json({ exito: false, mensaje: error.message || 'Error al emitir factura manual' });
+        } finally {
+            client.release();
+        }
+    },
+
+    listarNotasPedido: async (req, res) => {
+        try {
+            const query = `
+                SELECT 
+                    np.*,
+                    u.nombre AS nombre_ubicacion,
+                    usr.nombre_completo AS nombre_usuario,
+                    cl.numero_documento AS cliente_documento_bd,
+                    cl.direccion AS cliente_direccion_bd
+                FROM notas_pedido np
+                LEFT JOIN ubicaciones u ON np.id_ubicacion = u.id_ubicacion
+                LEFT JOIN usuarios usr ON np.id_usuario = usr.id_usuario
+                LEFT JOIN clientes cl ON np.id_cliente = cl.id_cliente
+                ORDER BY np.id_nota_pedido DESC;
+            `;
+            const { rows } = await pool.query(query);
+            res.json({ exito: true, notas: rows });
+        } catch (error) {
+            console.error('Error al listar notas de pedido:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al listar notas de pedido', error: error.message });
+        }
+    },
+
+    crearNotaPedido: async (req, res) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const {
+                id_cliente,
+                cliente_nombre,
+                cliente_documento,
+                id_pedido,
+                observaciones,
+                items
+            } = req.body;
+
+            if (!cliente_nombre || !cliente_nombre.trim()) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Por favor indica el nombre del cliente para la nota de pedido.' });
+            }
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: 'Debes agregar al menos un producto a la nota de pedido.' });
+            }
+
+            const idUbicacion = req.usuario?.id_ubicacion || 1;
+            const idUsuario = req.usuario?.id_usuario || null;
+
+            const resCorr = await client.query(`
+                UPDATE correlativos_internos 
+                SET ultimo_correlativo = ultimo_correlativo + 1 
+                WHERE tipo_documento = 'NOTA_PEDIDO' 
+                RETURNING ultimo_correlativo;
+            `);
+            const correlativo = resCorr.rows[0].ultimo_correlativo;
+
+            const ahora = new Date();
+            const diaStr = String(ahora.getDate()).padStart(2, '0');
+            const mesStr = String(ahora.getMonth() + 1).padStart(2, '0');
+            const anioStr = ahora.getFullYear();
+            const numeroNota = `NotaPedido-${diaStr}/${mesStr}/${anioStr}#${correlativo}`;
+
+            const meses = [
+                'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+            ];
+            const fechaTexto = `${ahora.getDate()} de ${meses[ahora.getMonth()]} del ${ahora.getFullYear()}`;
+
+            let montoTotal = 0;
+            let pesoTotal = 0;
+
+            const itemsValidados = items.map(it => {
+                const cant = Number(it.cantidad) || 1;
+                const peso = Number(it.peso) || 0;
+                const precio = Number(it.precio_unitario || it.precio) || 0;
+                const totalItem = +(peso > 0 ? (peso * precio) : (cant * precio)).toFixed(2);
+                montoTotal += totalItem;
+                pesoTotal += peso;
+
+                return {
+                    id_producto: it.id_producto || null,
+                    descripcion: it.descripcion || 'Producto',
+                    peso: peso,
+                    cantidad: cant,
+                    precio_unitario: precio,
+                    total: totalItem
+                };
+            });
+
+            // Descontar inventario de la sede si no proviene de un pedido con stock reservado (Req 3)
+            for (const it of itemsValidados) {
+                if (it.id_producto && !id_pedido) {
+                    await client.query(`
+                        UPDATE inventario 
+                        SET cantidad_fisica = cantidad_fisica - $1,
+                            ultima_actualizacion = CURRENT_TIMESTAMP
+                        WHERE id_producto = $2 AND id_ubicacion = $3;
+                    `, [it.cantidad, it.id_producto, idUbicacion]);
+
+                    await client.query(`
+                        INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                        VALUES ($1, $2, $3, 'SALIDA', $4, $5);
+                    `, [
+                        it.id_producto,
+                        idUbicacion,
+                        idUsuario,
+                        it.cantidad,
+                        `Emisión de ${numeroNota}`
+                    ]);
+                }
+            }
+
+            const queryNota = `
+                INSERT INTO notas_pedido (
+                    correlativo, numero_nota, id_pedido, id_cliente,
+                    cliente_nombre, cliente_documento, fecha_emision, fecha_texto,
+                    id_ubicacion, id_usuario, peso_total, monto_total, observaciones
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE, $7, $8, $9, $10, $11, $12)
+                RETURNING *;
+            `;
+            const resNota = await client.query(queryNota, [
+                correlativo,
+                numeroNota,
+                id_pedido || null,
+                id_cliente || null,
+                cliente_nombre.trim(),
+                cliente_documento || null,
+                fechaTexto,
+                idUbicacion,
+                idUsuario,
+                pesoTotal.toFixed(2),
+                montoTotal.toFixed(2),
+                observaciones || null
+            ]);
+            const notaCreada = resNota.rows[0];
+
+            for (const it of itemsValidados) {
+                await client.query(`
+                    INSERT INTO detalle_notas_pedido (
+                        id_nota_pedido, id_producto, descripcion, peso, cantidad, precio_unitario, total
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7);
+                `, [
+                    notaCreada.id_nota_pedido,
+                    it.id_producto,
+                    it.descripcion,
+                    it.peso,
+                    it.cantidad,
+                    it.precio_unitario,
+                    it.total
+                ]);
+            }
+
+            await registrarAuditoria(
+                client,
+                idUsuario,
+                'CREAR_NOTA_PEDIDO',
+                'notas_pedido',
+                notaCreada.id_nota_pedido,
+                null,
+                notaCreada
+            );
+
+            await client.query('COMMIT');
+            res.status(201).json({
+                exito: true,
+                mensaje: `¡${numeroNota} creada exitosamente!`,
+                nota: notaCreada
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error al crear nota de pedido:', error);
+            res.status(500).json({ exito: false, mensaje: error.message || 'Error al crear nota de pedido' });
+        } finally {
+            client.release();
+        }
+    },
+
+    obtenerDetalleNotaPedido: async (req, res) => {
+        try {
+            const { id } = req.params;
+            const resNota = await pool.query(`
+                SELECT 
+                    np.*,
+                    u.nombre AS nombre_ubicacion,
+                    usr.nombre_completo AS nombre_usuario
+                FROM notas_pedido np
+                LEFT JOIN ubicaciones u ON np.id_ubicacion = u.id_ubicacion
+                LEFT JOIN usuarios usr ON np.id_usuario = usr.id_usuario
+                WHERE np.id_nota_pedido = $1;
+            `, [id]);
+
+            if (resNota.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Nota de pedido no encontrada.' });
+            }
+
+            const nota = resNota.rows[0];
+            const resDetalles = await pool.query(`
+                SELECT * FROM detalle_notas_pedido WHERE id_nota_pedido = $1 ORDER BY id_detalle ASC;
+            `, [id]);
+
+            res.json({
+                exito: true,
+                nota,
+                items: resDetalles.rows,
+                emisor: {
+                    ruc: '20608725394',
+                    razon_social: 'PROCESOS CÁRNICOS S.A.C.'
+                }
+            });
+        } catch (error) {
+            console.error('Error al obtener detalle de nota de pedido:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al obtener detalle de nota de pedido', error: error.message });
+        }
+    },
 
 };
 

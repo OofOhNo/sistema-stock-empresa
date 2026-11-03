@@ -16,6 +16,7 @@ const Usuario = {
                     r.nombre AS nombre_rol,
                     u.puede_ver_celulares,
                     u.area,
+                    COALESCE(u.seccion_facturacion, 'AMBAS') AS seccion_facturacion,
                     COALESCE(u.activo, true) AS activo,
                     u.creado_en,
                     (SELECT COUNT(*) FROM permisos_celulares_clientes pcc WHERE pcc.id_usuario = u.id_usuario)::int AS total_clientes_autorizados
@@ -52,17 +53,18 @@ const Usuario = {
         }
     },
 
-    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area) => {
+    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area, seccion_facturacion = null) => {
         try {
             const query = `
                 UPDATE usuarios 
                 SET 
                     puede_ver_celulares = COALESCE($1, puede_ver_celulares),
-                    area = COALESCE($2, area)
-                WHERE id_usuario = $3 
-                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares;
+                    area = COALESCE($2, area),
+                    seccion_facturacion = COALESCE($3, seccion_facturacion)
+                WHERE id_usuario = $4 
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion;
             `;
-            const res = await pool.query(query, [puede_ver_celulares, area, id_usuario]);
+            const res = await pool.query(query, [puede_ver_celulares, area, seccion_facturacion, id_usuario]);
             return res.rows[0];
         } catch (error) {
             throw error;
@@ -212,15 +214,15 @@ const Usuario = {
         }
     },
 
-    crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares }) => {
+    crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion = 'AMBAS' }) => {
         try {
             const query = `
                 INSERT INTO usuarios (
                     nombre_completo, email, password_hash, rol_id, id_ubicacion, 
-                    area, puede_ver_celulares, activo
+                    area, puede_ver_celulares, seccion_facturacion, activo
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, activo, creado_en;
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, activo, creado_en;
             `;
             const res = await pool.query(query, [
                 nombre_completo,
@@ -229,7 +231,8 @@ const Usuario = {
                 rol_id,
                 id_ubicacion,
                 area || 'ADMINISTRACION',
-                puede_ver_celulares === true
+                puede_ver_celulares === true,
+                ['AMBAS', 'PEDIDOS', 'MANUAL'].includes(String(seccion_facturacion).toUpperCase()) ? String(seccion_facturacion).toUpperCase() : 'AMBAS'
             ]);
             return res.rows[0];
         } catch (error) {

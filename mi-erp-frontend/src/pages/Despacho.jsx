@@ -12,6 +12,7 @@ export default function Despacho({ usuario }) {
   const [filtroEstado, setFiltroEstado] = useState('LISTO_DESPACHO');
   const [busqueda, setBusqueda] = useState('');
   const [procesando, setProcesando] = useState(null);
+  const [modalPesoListo, setModalPesoListo] = useState({ abierto: false, idPedido: null, peso: '' });
 
   const esAdminCentral = usuario?.rol === 'Admin Central';
   const puedeEditarPedidos =
@@ -34,11 +35,17 @@ export default function Despacho({ usuario }) {
     }
   };
 
-  const marcarListo = async (idPedido) => {
-    setProcesando(idPedido);
+  const confirmarListoDespacho = async (e) => {
+    e?.preventDefault();
+    if (!modalPesoListo.idPedido) return;
+    setProcesando(modalPesoListo.idPedido);
     try {
-      const res = await api.put(`/pedidos/${idPedido}/listo-despacho`);
+      const pesoVal = modalPesoListo.peso ? parseFloat(modalPesoListo.peso) : null;
+      const res = await api.put(`/pedidos/${modalPesoListo.idPedido}/listo-despacho`, {
+        peso_total: pesoVal
+      });
       toast.success(res.data.mensaje || '¡Pedido marcado como listo para salir!');
+      setModalPesoListo({ abierto: false, idPedido: null, peso: '' });
       cargarPedidos();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo cambiar el estado.');
@@ -345,7 +352,12 @@ export default function Despacho({ usuario }) {
                       </td>
 
                       <td className="py-4 px-5 text-right font-mono font-bold text-slate-900">
-                        S/ {parseFloat(pedido.monto_total || 0).toFixed(2)}
+                        <div>S/ {parseFloat(pedido.monto_total || 0).toFixed(2)}</div>
+                        {pedido.peso_total && (
+                          <div className="text-[11px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-1 inline-block">
+                            ⚖️ {Number(pedido.peso_total).toFixed(2)} kg
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-4 px-5 text-center">
@@ -371,7 +383,7 @@ export default function Despacho({ usuario }) {
                         <td className="py-4 px-5 text-right">
                           {pedido.estado_pedido === 'PENDIENTE' && (
                             <button
-                              onClick={() => marcarListo(pedido.id_pedido)}
+                              onClick={() => setModalPesoListo({ abierto: true, idPedido: pedido.id_pedido, peso: '' })}
                               disabled={procesando === pedido.id_pedido}
                               className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-xs transition-colors inline-flex items-center space-x-1 cursor-pointer"
                             >

@@ -8,9 +8,11 @@ class ProductoModel {
                 (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen,
                 u.codigo AS codigo_unidad,
                 u.simbolo AS simbolo_unidad,
-                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre
+                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre,
+                COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre
             FROM productos p
             LEFT JOIN unidades_medida u ON p.id_unidad = u.id_unidad
+            LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
         `;
         if (!incluirInactivos) {
             query += ` WHERE p.activo = true`;
@@ -28,9 +30,11 @@ class ProductoModel {
                 (p.precio_venta - COALESCE(p.precio_costo, 0)) AS margen,
                 u.codigo AS codigo_unidad,
                 u.simbolo AS simbolo_unidad,
-                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre
+                COALESCE(p.unidad_medida, u.nombre, 'Unidad') AS unidad_medida_nombre,
+                COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre
             FROM productos p
             LEFT JOIN unidades_medida u ON p.id_unidad = u.id_unidad
+            LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
             WHERE p.id_producto = $1
         `;
         const { rows } = await pool.query(query, [id]);
@@ -42,6 +46,7 @@ class ProductoModel {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo,
             id_unidad, unidad_medida,
+            id_tipo_producto,
             tipo_afectacion_igv, codigo_producto_sunat
         } = data;
         
@@ -49,14 +54,15 @@ class ProductoModel {
             INSERT INTO productos (
                 sku, nombre, descripcion, id_categoria, 
                 precio_venta, precio_costo, stock_minimo, 
-                id_unidad, unidad_medida, tipo_afectacion_igv, codigo_producto_sunat, activo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
+                id_unidad, unidad_medida, id_tipo_producto, tipo_afectacion_igv, codigo_producto_sunat, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
             RETURNING *
         `;
         const values = [
             sku, nombre, descripcion, id_categoria || null,
             precio_venta, precio_costo || 0, stock_minimo || 5,
             id_unidad || null, unidad_medida || 'Unidad',
+            id_tipo_producto ? parseInt(id_tipo_producto, 10) : 1,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : '10',
             codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null
         ];
@@ -69,7 +75,7 @@ class ProductoModel {
         const {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo, activo,
-            id_unidad, unidad_medida,
+            id_unidad, unidad_medida, id_tipo_producto,
             tipo_afectacion_igv, codigo_producto_sunat
         } = data;
 
@@ -86,15 +92,17 @@ class ProductoModel {
                 activo = COALESCE($8, activo),
                 id_unidad = COALESCE($9, id_unidad),
                 unidad_medida = COALESCE($10, unidad_medida),
-                tipo_afectacion_igv = COALESCE($11, tipo_afectacion_igv),
-                codigo_producto_sunat = COALESCE($12, codigo_producto_sunat)
-            WHERE id_producto = $13
+                id_tipo_producto = COALESCE($11, id_tipo_producto),
+                tipo_afectacion_igv = COALESCE($12, tipo_afectacion_igv),
+                codigo_producto_sunat = COALESCE($13, codigo_producto_sunat)
+            WHERE id_producto = $14
             RETURNING *
         `;
         const values = [
             sku, nombre, descripcion, id_categoria,
             precio_venta, precio_costo, stock_minimo, activo,
             id_unidad || null, unidad_medida || null,
+            id_tipo_producto ? parseInt(id_tipo_producto, 10) : null,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : null,
             codigo_producto_sunat !== undefined ? (codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null) : null,
             id
@@ -138,6 +146,37 @@ class ProductoModel {
             return rows[0];
         }
         const query = 'DELETE FROM unidades_medida WHERE id_unidad = $1 RETURNING *';
+        const { rows } = await pool.query(query, [id]);
+        return rows[0];
+    }
+
+    static async getTipos() {
+        const query = 'SELECT * FROM tipos_producto WHERE activo = true ORDER BY id_tipo_producto ASC';
+        const { rows } = await pool.query(query);
+        return rows;
+    }
+
+    static async createTipo({ nombre, descripcion }) {
+        const query = `
+            INSERT INTO tipos_producto (nombre, descripcion, activo)
+            VALUES ($1, $2, true)
+            RETURNING *
+        `;
+        const { rows } = await pool.query(query, [
+            nombre.trim(),
+            descripcion ? descripcion.trim() : null
+        ]);
+        return rows[0];
+    }
+
+    static async deleteTipo(id) {
+        const resCheck = await pool.query('SELECT COUNT(*) FROM productos WHERE id_tipo_producto = $1 AND activo = true', [id]);
+        if (parseInt(resCheck.rows[0].count, 10) > 0) {
+            const query = 'UPDATE tipos_producto SET activo = false WHERE id_tipo_producto = $1 RETURNING *';
+            const { rows } = await pool.query(query, [id]);
+            return rows[0];
+        }
+        const query = 'DELETE FROM tipos_producto WHERE id_tipo_producto = $1 RETURNING *';
         const { rows } = await pool.query(query, [id]);
         return rows[0];
     }

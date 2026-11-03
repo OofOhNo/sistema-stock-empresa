@@ -25,6 +25,14 @@ router.get('/:id/cdr', verificarToken, requierePermiso('facturacion', 'ver'), fa
 // Emitir comprobante electrónico (Factura '01' o Boleta '03')
 router.post('/emitir', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.emitirComprobante);
 
+// Emitir comprobante electrónico manual sin pedido previo (Venta directa con descuento de stock)
+router.post('/emitir-manual', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.emitirComprobanteManual);
+
+// Notas de Pedido (Documento comercial interno imprimible con formato específico)
+router.get('/notas-pedido', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarNotasPedido);
+router.post('/notas-pedido', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.crearNotaPedido);
+router.get('/notas-pedido/:id', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerDetalleNotaPedido);
+
 // Anular comprobante emitiendo Nota de Crédito ('07' con Catálogo 09) y devolviendo stock
 router.post('/anular', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.anularComprobante);
 

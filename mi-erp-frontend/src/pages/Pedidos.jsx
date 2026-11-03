@@ -13,7 +13,7 @@ export default function Pedidos({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
-  const [facturando, setFacturando] = useState(null);
+  const [modalPesoListo, setModalPesoListo] = useState({ abierto: false, idPedido: null, peso: '' });
   const [cancelando, setCancelando] = useState(null);
   const [procesandoDespacho, setProcesandoDespacho] = useState(null);
 
@@ -346,31 +346,26 @@ export default function Pedidos({ usuario }) {
     }
   };
 
-  const marcarListoDespacho = async (idPedido) => {
-    setProcesandoDespacho(idPedido);
+  const abrirModalPesoListo = (idPedido) => {
+    setModalPesoListo({ abierto: true, idPedido, peso: '' });
+  };
+
+  const confirmarListoDespacho = async (e) => {
+    e?.preventDefault();
+    if (!modalPesoListo.idPedido) return;
+    setProcesandoDespacho(modalPesoListo.idPedido);
     try {
-      await api.put(`/pedidos/${idPedido}/listo-despacho`);
+      const pesoVal = modalPesoListo.peso ? parseFloat(modalPesoListo.peso) : null;
+      await api.put(`/pedidos/${modalPesoListo.idPedido}/listo-despacho`, {
+        peso_total: pesoVal
+      });
       toast.success('¡Pedido marcado como listo para despacho!');
+      setModalPesoListo({ abierto: false, idPedido: null, peso: '' });
       cargarPedidos();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el pedido.');
     } finally {
       setProcesandoDespacho(null);
-    }
-  };
-
-  const emitirFacturaRapida = async (idPedido) => {
-    setFacturando(idPedido);
-    try {
-      const respuesta = await api.post('/facturacion/emitir', { id_pedido: idPedido, tipo_comprobante: '01' });
-      if (respuesta.data.exito) {
-        toast.success(respuesta.data.mensaje || '¡Factura emitida con éxito!');
-        cargarPedidos();
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'No se pudo emitir la factura.');
-    } finally {
-      setFacturando(null);
     }
   };
 
@@ -1017,8 +1012,10 @@ export default function Pedidos({ usuario }) {
 
                                     <div>
                                       <div className="font-bold text-slate-800 line-clamp-1" title={pedido.cliente}>{pedido.cliente}</div>
-                                      {pedido.nombre_comercial && (
-                                        <div className="text-[11px] text-indigo-600 line-clamp-1">{pedido.nombre_comercial}</div>
+                                      {pedido.peso_total && (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200 mt-1">
+                                          ⚖️ {Number(pedido.peso_total).toFixed(2)} kg
+                                        </span>
                                       )}
                                     </div>
 
@@ -1067,37 +1064,16 @@ export default function Pedidos({ usuario }) {
                                       <span>📷 Fotos ({pedido.total_fotos || 0})</span>
                                     </button>
 
-                                    {pedido.estado_pedido === 'PENDIENTE' && (puedeEditarPedidos || (puedeEditarFacturacion && !yaFacturado)) && (
+                                    {pedido.estado_pedido === 'PENDIENTE' && puedeEditarPedidos && (
                                       <div className="flex gap-1 pt-1">
-                                        {puedeEditarPedidos && (
-                                          <button
-                                            onClick={() => marcarListoDespacho(pedido.id_pedido)}
-                                            disabled={procesandoDespacho === pedido.id_pedido}
-                                            className="flex-1 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-bold transition-colors text-center cursor-pointer"
-                                          >
-                                            {procesandoDespacho === pedido.id_pedido ? '...' : 'Listo'}
-                                          </button>
-                                        )}
-                                        {puedeEditarFacturacion && !yaFacturado && (
-                                          <button
-                                            onClick={() => emitirFacturaRapida(pedido.id_pedido)}
-                                            disabled={facturando === pedido.id_pedido}
-                                            className="flex-1 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition-colors text-center cursor-pointer"
-                                          >
-                                            {facturando === pedido.id_pedido ? '...' : 'Facturar'}
-                                          </button>
-                                        )}
+                                        <button
+                                          onClick={() => abrirModalPesoListo(pedido.id_pedido)}
+                                          disabled={procesandoDespacho === pedido.id_pedido}
+                                          className="w-full py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-bold transition-colors text-center cursor-pointer"
+                                        >
+                                          {procesandoDespacho === pedido.id_pedido ? '...' : 'Listo'}
+                                        </button>
                                       </div>
-                                    )}
-
-                                    {esListoDespacho && puedeEditarFacturacion && !yaFacturado && (
-                                      <button
-                                        onClick={() => emitirFacturaRapida(pedido.id_pedido)}
-                                        disabled={facturando === pedido.id_pedido}
-                                        className="w-full py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition-colors text-center cursor-pointer"
-                                      >
-                                        {facturando === pedido.id_pedido ? '...' : 'Facturar'}
-                                      </button>
                                     )}
                                   </div>
                                 );
@@ -1222,8 +1198,10 @@ export default function Pedidos({ usuario }) {
 
                               <td className="p-4 font-medium text-slate-800">
                                 <div>{pedido.cliente}</div>
-                                {pedido.nombre_comercial && (
-                                  <div className="text-xs text-indigo-600 font-normal">{pedido.nombre_comercial}</div>
+                                {pedido.peso_total && (
+                                  <span className="inline-block text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-200 mt-1">
+                                    ⚖️ {Number(pedido.peso_total).toFixed(2)} kg
+                                  </span>
                                 )}
                               </td>
 
@@ -1324,25 +1302,13 @@ export default function Pedidos({ usuario }) {
                                   <div className="flex items-center justify-center space-x-1.5">
                                     {pedido.estado_pedido === 'PENDIENTE' && puedeEditarPedidos && (
                                       <button
-                                        onClick={() => marcarListoDespacho(pedido.id_pedido)}
+                                        onClick={() => abrirModalPesoListo(pedido.id_pedido)}
                                         disabled={procesandoDespacho === pedido.id_pedido}
                                         className="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors inline-flex items-center space-x-1 cursor-pointer"
                                         title="Marcar como listo para despacho"
                                       >
                                         <PackageCheck size={13} />
                                         <span>{procesandoDespacho === pedido.id_pedido ? '...' : 'Listo'}</span>
-                                      </button>
-                                    )}
-
-                                    {pedido.estado_pedido !== 'CANCELADO' && !yaFacturado && puedeEditarFacturacion && (
-                                      <button
-                                        onClick={() => emitirFacturaRapida(pedido.id_pedido)}
-                                        disabled={facturando === pedido.id_pedido}
-                                        className="inline-flex items-center space-x-1 bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                                        title="Emitir factura rápida"
-                                      >
-                                        <FileText size={13} />
-                                        <span>{facturando === pedido.id_pedido ? '...' : 'Facturar'}</span>
                                       </button>
                                     )}
 

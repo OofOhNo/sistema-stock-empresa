@@ -196,10 +196,10 @@ const usuarioController = {
 
     actualizarConfiguracion: async (req, res) => {
         const { id_usuario } = req.params;
-        const { puede_ver_celulares, area } = req.body;
+        const { puede_ver_celulares, area, seccion_facturacion } = req.body;
 
         try {
-            const actualizado = await Usuario.actualizarConfiguracion(id_usuario, puede_ver_celulares, area);
+            const actualizado = await Usuario.actualizarConfiguracion(id_usuario, puede_ver_celulares, area, seccion_facturacion);
             res.status(200).json({
                 exito: true,
                 mensaje: 'Configuración de empleado actualizada correctamente.',
@@ -262,7 +262,7 @@ const usuarioController = {
     },
 
     crearUsuario: async (req, res) => {
-        const { nombre_completo, email, password, id_ubicacion, area, puede_ver_celulares } = req.body;
+        const { nombre_completo, email, password, id_ubicacion, area, puede_ver_celulares, seccion_facturacion } = req.body;
         const rol_id = req.body.rol_id ?? req.body.id_rol;
         const usuarioSolicitante = req.usuario;
         const esAdminCentral = usuarioSolicitante.nombre_rol === 'Admin Central';
@@ -313,7 +313,8 @@ const usuarioController = {
                 rol_id: Number(rol_id),
                 id_ubicacion: Number(id_ubicacion),
                 area: area || 'ADMINISTRACION',
-                puede_ver_celulares: puede_ver_celulares === true
+                puede_ver_celulares: puede_ver_celulares === true,
+                seccion_facturacion: seccion_facturacion || 'AMBAS'
             });
 
             await registrarAuditoria(
