@@ -273,7 +273,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       {/* MENÚ LATERAL */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
         <div className="p-6 pb-4">
-          <h2 className="text-2xl font-bold text-white tracking-tight">Mi ERP</h2>
+          <h2 className="text-2xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h2>
           <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
             <span className="text-xs text-indigo-400 font-semibold">{usuario.rol}</span>
             <span className="text-slate-600">·</span>
@@ -290,7 +290,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
           )}
         </div>
 
-        <nav className="flex-1 px-4 space-y-1.5 mt-1 overflow-y-auto">
+        <nav className="flex-1 px-4 space-y-1.5 mt-1 overflow-y-auto pb-4">
           {menu.map((item) => (
             <button
               key={item.id}
@@ -313,27 +313,6 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
             </button>
           ))}
         </nav>
-
-        <div className="p-4 border-t border-slate-800 space-y-2">
-          <div className="px-2">
-            <span className="text-sm font-semibold text-white block truncate">{usuario.nombre}</span>
-            <span className="text-[11px] text-slate-400 block truncate">{usuario.email}</span>
-          </div>
-          <button
-            onClick={abrirModalCambiarPassword}
-            className="w-full flex items-center justify-center space-x-2 bg-slate-800 hover:bg-indigo-600 hover:text-white text-slate-300 py-2 rounded-lg transition-colors text-xs font-semibold cursor-pointer"
-          >
-            <KeyRound size={14} />
-            <span>Cambiar mi contraseña</span>
-          </button>
-          <button
-            onClick={cerrarSesion}
-            className="w-full flex items-center justify-center space-x-2 bg-slate-800/70 hover:bg-red-600 hover:text-white text-slate-400 py-2 rounded-lg transition-colors text-xs font-semibold cursor-pointer"
-          >
-            <LogOut size={14} />
-            <span>Cerrar sesión</span>
-          </button>
-        </div>
       </aside>
 
       {/* CONTENIDO PRINCIPAL */}
@@ -547,7 +526,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <KeyRound size={18} className="text-indigo-400" />
-                <h3 className="text-base font-bold text-white">Cambiar mi contraseña</h3>
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>Cambiar mi contraseña</h3>
               </div>
               <button
                 type="button"
@@ -917,7 +896,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Bug size={18} className="text-red-400" />
-                <h3 className="text-base font-bold text-white">¿Algo no funcionó bien?</h3>
+                <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>¿Algo no funcionó bien?</h3>
               </div>
               <button
                 onClick={() => setModalBug(false)}

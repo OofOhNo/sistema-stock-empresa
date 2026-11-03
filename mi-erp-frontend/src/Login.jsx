@@ -92,7 +92,7 @@ export default function Login({ onLoginExitoso }) {
         {modo === 'login' ? (
           <>
             <div className="text-center mb-7">
-              <h1 className="text-3xl font-bold text-white tracking-tight">Mi ERP</h1>
+              <h1 className="text-3xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h1>
               <p className="text-slate-300 text-sm mt-2">
                 Escribe tu correo y contraseña para entrar
               </p>
@@ -191,7 +191,7 @@ export default function Login({ onLoginExitoso }) {
             </button>
 
             <div className="mb-6">
-              <h2 className="text-2xl font-bold text-white">¿Olvidaste tu contraseña?</h2>
+              <h2 className="text-2xl font-bold !text-white" style={{ color: '#ffffff' }}>¿Olvidaste tu contraseña?</h2>
               <p className="text-slate-300 text-sm mt-2 leading-relaxed">
                 No te preocupes. Escribe abajo tu correo o tu nombre completo y le enviaremos un aviso al encargado de <strong>Personal y Roles</strong> para que te ponga una contraseña nueva.
               </p>
@@ -207,7 +207,7 @@ export default function Login({ onLoginExitoso }) {
               <div className="space-y-5">
                 <div className="bg-emerald-500/15 border border-emerald-500/40 rounded-2xl p-5 text-center space-y-2">
                   <CheckCircle2 size={38} className="text-emerald-400 mx-auto" />
-                  <h3 className="text-base font-bold text-white">¡Aviso enviado con éxito!</h3>
+                  <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>¡Aviso enviado con éxito!</h3>
                   <p className="text-sm text-emerald-200 leading-relaxed">
                     {mensajeExitoRecuperacion}
                   </p>
