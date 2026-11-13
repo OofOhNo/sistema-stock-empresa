@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api';
 import { Truck, Plus, Edit2, Trash2, RefreshCw, X, ShieldCheck } from 'lucide-react';
@@ -29,7 +29,13 @@ export default function PanelVehiculosTransporte({ puedeEditar = false }) {
   }, []);
 
   useEffect(() => {
-    cargarVehiculos();
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarVehiculos();
+    });
+    return () => {
+      alive = false;
+    };
   }, [cargarVehiculos]);
 
   const abrirNuevo = () => {

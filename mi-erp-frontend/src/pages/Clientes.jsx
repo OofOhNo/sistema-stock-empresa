@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
@@ -51,22 +51,7 @@ export default function Clientes({ usuario }) {
     id_carpeta: ''
   });
 
-  useEffect(() => {
-    cargarClientes();
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setModalAbierto(false);
-        setModalCarpetaAbierto(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  const cargarClientes = async () => {
+  const cargarClientes = useCallback(async () => {
     setCargando(true);
     try {
       const [resClientes, resCarpetas] = await Promise.all([
@@ -83,7 +68,28 @@ export default function Clientes({ usuario }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, [usuario]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarClientes();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarClientes]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setModalAbierto(false);
+        setModalCarpetaAbierto(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const abrirCrearCarpeta = () => {
     setEditandoCarpeta(null);

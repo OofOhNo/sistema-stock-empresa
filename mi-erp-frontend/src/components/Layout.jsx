@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import {
   LayoutDashboard, Package, ShoppingCart, FileText, Calendar, CalendarDays,
@@ -100,11 +100,15 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   }, [puedeUsarMensajes, puedeEditarUsuarios, puedeVerErrores]);
 
   useEffect(() => {
-    cargarContadores();
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarContadores();
+    });
     const intervalo = setInterval(cargarContadores, 25000);
     const listener = () => cargarContadores();
     window.addEventListener('actualizar_alertas_layout', listener);
     return () => {
+      alive = false;
       clearInterval(intervalo);
       window.removeEventListener('actualizar_alertas_layout', listener);
     };

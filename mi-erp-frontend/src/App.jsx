@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Login from './Login';
 import Layout from './components/Layout';
 import Stock from './pages/Stock';
@@ -69,9 +69,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
     if (localStorage.getItem('token_erp')) {
-      sincronizarPerfil();
+      Promise.resolve().then(() => {
+        if (alive) void sincronizarPerfil();
+      });
     }
+    return () => {
+      alive = false;
+    };
   }, [sincronizarPerfil]);
 
   // Refrescar permisos al volver a la pestaña del navegador para aplicar cambios de rol al instante

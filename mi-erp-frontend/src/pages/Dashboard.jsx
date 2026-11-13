@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import {
   DollarSign, ShoppingCart, Package, ArrowUpRight, Clock,
@@ -141,21 +141,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
   const puedeVerStock = esAdmin || usuario?.permisos?.stock?.puede_ver !== false;
   const puedeVerFacturacion = esAdmin || usuario?.permisos?.facturacion?.puede_ver !== false;
 
-  useEffect(() => {
-    cargarResumen();
-  }, [puedeVerPedidos, puedeVerStock, esAdmin]);
-
-  useEffect(() => {
-    if (subTab === 'graficos' && !puedeVerFacturacion) {
-      setSubTab('resumen');
-      return;
-    }
-    if (subTab === 'graficos' && puedeVerFacturacion) {
-      cargarGraficos();
-    }
-  }, [subTab, puedeVerFacturacion]);
-
-  const cargarResumen = async () => {
+  const cargarResumen = useCallback(async () => {
     try {
       const [resPedidos, resAlertas, resPagos] = await Promise.all([
         puedeVerPedidos
@@ -218,9 +204,9 @@ export default function Dashboard({ usuario, setVistaActual }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, [puedeVerPedidos, puedeVerStock, esAdmin]);
 
-  const cargarGraficos = async () => {
+  const cargarGraficos = useCallback(async () => {
     setCargandoGraficos(true);
     try {
       const res = await api.get('/facturacion/graficos');
@@ -230,7 +216,34 @@ export default function Dashboard({ usuario, setVistaActual }) {
     } finally {
       setCargandoGraficos(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarResumen();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarResumen]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (!alive) return;
+      if (subTab === 'graficos' && !puedeVerFacturacion) {
+        setSubTab('resumen');
+        return;
+      }
+      if (subTab === 'graficos' && puedeVerFacturacion) {
+        void cargarGraficos();
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [subTab, puedeVerFacturacion, cargarGraficos]);
 
   const marcarPagoPagado = async (idPago) => {
     try {

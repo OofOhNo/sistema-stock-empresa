@@ -1,95 +1,19 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
-  FileText, Plus, AlertCircle, RefreshCw, XCircle,
+  FileText, Plus, AlertCircle, RefreshCw,
   Search, ShieldCheck, DollarSign, Receipt,
   X, Printer, Eye, Loader2, Settings, Download, CheckCircle2,
-  Trash2, Calendar, Scale, Users, Layers, Tag, CreditCard, ChevronRight,
-  ShieldAlert, Lock, Unlock, Coffee, ShoppingBag, Zap, Banknote, Minus,
+  Trash2, Layers, Tag, CreditCard, ChevronRight,
+  ShieldAlert, Lock, Unlock, ShoppingBag, Zap, Banknote, Minus,
   Truck, Bot
 } from 'lucide-react';
-import SeccionGreFactura, { crearEstadoGreInicial } from '../components/facturacion/SeccionGreFactura';
+import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
+import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
-
-// Generador determinístico de matriz QR en SVG SUNAT
-function construirMatrizQr(cadena = '') {
-  const N = 25;
-  const matriz = Array.from({ length: N }, () => Array(N).fill(false));
-  const reservado = Array.from({ length: N }, () => Array(N).fill(false));
-
-  const colocarFinder = (r0, c0) => {
-    for (let r = -1; r <= 7; r++) {
-      for (let c = -1; c <= 7; c++) {
-        const rr = r0 + r;
-        const cc = c0 + c;
-        if (rr >= 0 && rr < N && cc >= 0 && cc < N) {
-          reservado[rr][cc] = true;
-          const enBorde7 = r >= 0 && r <= 6 && c >= 0 && c <= 6 && (r === 0 || r === 6 || c === 0 || c === 6);
-          const enCentro3 = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-          matriz[rr][cc] = enBorde7 || enCentro3;
-        }
-      }
-    }
-  };
-
-  colocarFinder(0, 0);
-  colocarFinder(0, N - 7);
-  colocarFinder(N - 7, 0);
-
-  for (let i = 8; i < N - 8; i++) {
-    reservado[6][i] = true;
-    matriz[6][i] = i % 2 === 0;
-    reservado[i][6] = true;
-    matriz[i][6] = i % 2 === 0;
-  }
-
-  const ar = N - 9;
-  const ac = N - 9;
-  for (let r = 0; r < 5; r++) {
-    for (let c = 0; c < 5; c++) {
-      reservado[ar + r][ac + c] = true;
-      matriz[ar + r][ac + c] = r === 0 || r === 4 || c === 0 || c === 4 || (r === 2 && c === 2);
-    }
-  }
-
-  const texto = String(cadena || 'SUNAT-CPE');
-  const bytes = [];
-  for (let i = 0; i < texto.length; i++) {
-    bytes.push(texto.charCodeAt(i) & 0xff);
-  }
-  if (bytes.length === 0) bytes.push(83, 85, 78, 65, 84);
-
-  let bitIdx = 0;
-  for (let r = 0; r < N; r++) {
-    for (let c = 0; c < N; c++) {
-      if (!reservado[r][c]) {
-        const byteVal = bytes[Math.floor(bitIdx / 8) % bytes.length];
-        const shift = 7 - (bitIdx / 8);
-        const mask = (r * 3 + c * 5 + bitIdx) % 2 === 0;
-        const bit = ((byteVal >> shift) & 1) === 1;
-        matriz[r][c] = bit !== mask;
-        bitIdx++;
-      }
-    }
-  }
-  return matriz;
-}
-
-function generarSvgQrString(cadena = '', size = 110) {
-  const matriz = construirMatrizQr(cadena);
-  const N = matriz.length;
-  let rects = '';
-  for (let r = 0; r < N; r++) {
-    for (let c = 0; c < N; c++) {
-      if (matriz[r][c]) {
-        rects += `<rect x="${c + 2}" y="${r + 2}" width="1" height="1" fill="#0f172a" />`;
-      }
-    }
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N + 4} ${N + 4}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${N + 4}" height="${N + 4}" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.5"/>${rects}</svg>`;
-}
+import { escaparHtml } from '../utils/htmlPrint';
 
 // Logo oficial PROCESOS CÁRNICOS S.A.C.
 function LogoProcesosCarnicos({ className = "h-20 w-auto" }) {
@@ -131,7 +55,6 @@ export default function Facturacion({ usuario }) {
   const [productos, setProductos] = useState([]);
   const [ubicaciones, setUbicaciones] = useState([]);
   const [configSunat, setConfigSunat] = useState(null);
-  const [catalogos, setCatalogos] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
@@ -160,7 +83,6 @@ export default function Facturacion({ usuario }) {
   const [cantidadCuotas, setCantidadCuotas] = useState(1);
   const [medioPagoSunat, setMedioPagoSunat] = useState('008');
   const [aplicaDetraccion, setAplicaDetraccion] = useState(false);
-  const [codigoDetraccion, setCodigoDetraccion] = useState('014');
   const [pesoTotalFactura, setPesoTotalFactura] = useState('');
   const [itemsEditables, setItemsEditables] = useState([]);
   const [procesando, setProcesando] = useState(false);
@@ -176,11 +98,9 @@ export default function Facturacion({ usuario }) {
   const [manualTipoComp, setManualTipoComp] = useState('01');
   const [manualFormaPago, setManualFormaPago] = useState('CONTADO');
   const [manualDiasCredito, setManualDiasCredito] = useState(28);
-  const [manualPlazoCustom, setManualPlazoCustom] = useState(false);
   const [manualCuotas, setManualCuotas] = useState(1);
   const [manualMedioPago, setManualMedioPago] = useState('008');
   const [manualAplicaDetraccion, setManualAplicaDetraccion] = useState(false);
-  const [manualCodigoDetraccion, setManualCodigoDetraccion] = useState('014');
   const [manualPesoTotal, setManualPesoTotal] = useState('');
   const [manualItems, setManualItems] = useState([
     { id_producto: '', descripcion: '', cantidad: 1, peso: '', precio_unitario: 0, subtotal: 0 }
@@ -201,12 +121,6 @@ export default function Facturacion({ usuario }) {
 
   // Modal Ver / Imprimir Nota de Pedido
   const [modalVerNota, setModalVerNota] = useState(null); // { nota, items }
-
-  // Modal Anular Comprobante
-  const [modalAnular, setModalAnular] = useState(false);
-  const [comprobanteAAnular, setComprobanteAAnular] = useState(null);
-  const [codigoMotivoNc, setCodigoMotivoNc] = useState('01');
-  const [motivoAnulacion, setMotivoAnulacion] = useState('');
 
   // Modal Ver / Imprimir Comprobante A4
   const [modalPdf, setModalPdf] = useState(null);
@@ -252,124 +166,9 @@ export default function Facturacion({ usuario }) {
   const [greFormPedido, setGreFormPedido] = useState(() => crearEstadoGreInicial());
   const [greFormManual, setGreFormManual] = useState(() => crearEstadoGreInicial());
   const [guiaPreview, setGuiaPreview] = useState(null);
+  const yaSeleccionoPedidoRef = useRef(false);
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  useEffect(() => {
-    const onRestaurar = () => setModoEmergencia(false);
-    window.addEventListener('restaurar_modo_emergencia', onRestaurar);
-    return () => window.removeEventListener('restaurar_modo_emergencia', onRestaurar);
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setModalPdf(null);
-        setGuiaPreview(null);
-        setModalEmitir(false);
-        setModalManual(false);
-        setModalNotaPedido(false);
-        setModalVerNota(null);
-        setModalAnular(false);
-        setModalConfig(false);
-        setModalConfirmarEmergencia(false);
-        setModalDesbloqueoSecreto(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  // Forzar Tarjeta de Crédito si forma de pago es CRÉDITO (Req 7)
-  useEffect(() => {
-    if (formaPago === 'CREDITO') {
-      setMedioPagoSunat('005'); // Tarjeta de crédito
-    }
-  }, [formaPago]);
-
-  useEffect(() => {
-    if (manualFormaPago === 'CREDITO') {
-      setManualMedioPago('005');
-    }
-  }, [manualFormaPago]);
-
-  const recargarCatalogosGre = async () => {
-    try {
-      const resCat = await api.get('/facturacion/gre/catalogos');
-      if (resCat.data?.exito) setCatalogosGre(resCat.data);
-    } catch {
-      // Silencioso
-    }
-  };
-
-  const cargarDatos = async () => {
-    setCargando(true);
-    try {
-      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic, resGreCat, resGres] = await Promise.all([
-        api.get('/facturacion'),
-        api.get('/facturacion/notas-pedido').catch(() => ({ data: { notas: [] } })),
-        api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } })),
-        api.get('/facturacion/configuracion').catch(() => ({ data: {} })),
-        api.get('/clientes').catch(() => ({ data: { datos: [] } })),
-        api.get('/productos').catch(() => ({ data: { datos: [] } })),
-        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
-        api.get('/facturacion/gre/catalogos').catch(() => ({ data: {} })),
-        api.get('/facturacion/gre').catch(() => ({ data: { guias: [] } }))
-      ]);
-
-      setComprobantes(resComp.data.comprobantes || []);
-      setNotasPedido(resNotas.data.notas || []);
-      if (resGreCat.data?.puntos_partida) {
-        setCatalogosGre(resGreCat.data);
-        setGreFormPedido((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
-        setGreFormManual((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
-      }
-      setGuiasRemision(resGres.data?.guias || []);
-      const listaCli = resCli.data.datos || resCli.data.clientes || [];
-      setClientes(listaCli);
-      const listaProd = resProd.data.datos || resProd.data.productos || [];
-      setProductos(listaProd);
-      const listaUbic = resUbic.data.datos || resUbic.data.ubicaciones || [];
-      setUbicaciones(listaUbic);
-      if (listaUbic.length > 0 && !manualUbicacionId) {
-        setManualUbicacionId(usuario?.id_ubicacion || listaUbic[0].id_ubicacion);
-      }
-
-      if (resConf.data?.configuracion) {
-        setConfigSunat(resConf.data.configuracion);
-        setFormConfig({
-          ruc_emisor: resConf.data.configuracion.ruc_emisor || '20608725394',
-          razon_social: resConf.data.configuracion.razon_social || 'PROCESOS CARNICOS S.A.C.',
-          nombre_comercial: resConf.data.configuracion.nombre_comercial || 'PROCESOS CÁRNICOS S.A.C.',
-          direccion_fiscal: resConf.data.configuracion.direccion_fiscal || '',
-          modo_integracion: resConf.data.configuracion.modo_integracion || 'DEMO_NUBEFACT',
-          nubefact_ruta: resConf.data.configuracion.nubefact_ruta || '',
-          nubefact_token: resConf.data.configuracion.nubefact_token || '',
-          detraccion_cuenta_bn: resConf.data.configuracion.detraccion_cuenta_bn || '00-000-000000'
-        });
-      }
-      if (resConf.data?.catalogos) {
-        setCatalogos(resConf.data.catalogos);
-      }
-
-      const disponibles = (resPed.data.eventos || []).filter(
-        p => p.estado_pedido !== 'CANCELADO' && !p.tiene_factura && p.estado_pedido !== 'FACTURADO'
-      );
-      setPedidosFacturables(disponibles);
-      if (disponibles.length > 0 && !pedidoSeleccionado) {
-        seleccionarPedido(disponibles[0]);
-      }
-    } catch (error) {
-      toast.error('No se pudieron cargar los comprobantes: ' + (error.response?.data?.mensaje || error.message));
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  // Seleccionar Pedido y cargar ítems editables y peso
-  const seleccionarPedido = (ped) => {
+  const seleccionarPedido = useCallback((ped, catGre = null) => {
     setPedidoSeleccionado(ped);
     if (!ped) return;
 
@@ -406,7 +205,112 @@ export default function Facturacion({ usuario }) {
     // Resetear pagos divididos
     setEsPagoDividido(false);
     setPagosDivididos([]);
-    setGreFormPedido(crearEstadoGreInicial(catalogosGre, ped.direccion_cliente || ''));
+    setGreFormPedido(crearEstadoGreInicial(catGre || catalogosGre, ped.direccion_cliente || ''));
+  }, [catalogosGre]);
+
+  const cargarDatos = useCallback(async () => {
+    setCargando(true);
+    try {
+      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic, resGreCat, resGres] = await Promise.all([
+        api.get('/facturacion'),
+        api.get('/facturacion/notas-pedido').catch(() => ({ data: { notas: [] } })),
+        api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } })),
+        api.get('/facturacion/configuracion').catch(() => ({ data: {} })),
+        api.get('/clientes').catch(() => ({ data: { datos: [] } })),
+        api.get('/productos').catch(() => ({ data: { datos: [] } })),
+        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
+        api.get('/facturacion/gre/catalogos').catch(() => ({ data: {} })),
+        api.get('/facturacion/gre').catch(() => ({ data: { guias: [] } }))
+      ]);
+
+      setComprobantes(resComp.data.comprobantes || []);
+      setNotasPedido(resNotas.data.notas || []);
+      if (resGreCat.data?.puntos_partida) {
+        setCatalogosGre(resGreCat.data);
+        setGreFormPedido((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
+        setGreFormManual((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
+      }
+      setGuiasRemision(resGres.data?.guias || []);
+      const listaCli = resCli.data.datos || resCli.data.clientes || [];
+      setClientes(listaCli);
+      const listaProd = resProd.data.datos || resProd.data.productos || [];
+      setProductos(listaProd);
+      const listaUbic = resUbic.data.datos || resUbic.data.ubicaciones || [];
+      setUbicaciones(listaUbic);
+      if (listaUbic.length > 0) {
+        setManualUbicacionId((prev) => prev || usuario?.id_ubicacion || listaUbic[0].id_ubicacion);
+      }
+
+      if (resConf.data?.configuracion) {
+        setConfigSunat(resConf.data.configuracion);
+        setFormConfig({
+          ruc_emisor: resConf.data.configuracion.ruc_emisor || '20608725394',
+          razon_social: resConf.data.configuracion.razon_social || 'PROCESOS CARNICOS S.A.C.',
+          nombre_comercial: resConf.data.configuracion.nombre_comercial || 'PROCESOS CÁRNICOS S.A.C.',
+          direccion_fiscal: resConf.data.configuracion.direccion_fiscal || '',
+          modo_integracion: resConf.data.configuracion.modo_integracion || 'DEMO_NUBEFACT',
+          nubefact_ruta: resConf.data.configuracion.nubefact_ruta || '',
+          nubefact_token: resConf.data.configuracion.nubefact_token || '',
+          detraccion_cuenta_bn: resConf.data.configuracion.detraccion_cuenta_bn || '00-000-000000'
+        });
+      }
+
+      const disponibles = (resPed.data.eventos || []).filter(
+        p => p.estado_pedido !== 'CANCELADO' && !p.tiene_factura && p.estado_pedido !== 'FACTURADO'
+      );
+      setPedidosFacturables(disponibles);
+      if (disponibles.length > 0 && !yaSeleccionoPedidoRef.current) {
+        yaSeleccionoPedidoRef.current = true;
+        seleccionarPedido(disponibles[0], resGreCat.data?.puntos_partida ? resGreCat.data : null);
+      }
+    } catch (error) {
+      toast.error('No se pudieron cargar los comprobantes: ' + (error.response?.data?.mensaje || error.message));
+    } finally {
+      setCargando(false);
+    }
+  }, [usuario?.id_ubicacion, seleccionarPedido]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
+
+  useEffect(() => {
+    const onRestaurar = () => setModoEmergencia(false);
+    window.addEventListener('restaurar_modo_emergencia', onRestaurar);
+    return () => window.removeEventListener('restaurar_modo_emergencia', onRestaurar);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setModalPdf(null);
+        setGuiaPreview(null);
+        setModalEmitir(false);
+        setModalManual(false);
+        setModalNotaPedido(false);
+        setModalVerNota(null);
+        setModalConfig(false);
+        setModalConfirmarEmergencia(false);
+        setModalDesbloqueoSecreto(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const recargarCatalogosGre = async () => {
+    try {
+      const resCat = await api.get('/facturacion/gre/catalogos');
+      if (resCat.data?.exito) setCatalogosGre(resCat.data);
+    } catch {
+      // Silencioso
+    }
   };
 
   // Recalcular subtotal de un ítem editable
@@ -590,9 +494,9 @@ export default function Facturacion({ usuario }) {
         forma_pago: formaPago,
         dias_credito: formaPago === 'CREDITO' ? parseInt(diasCredito, 10) : 0,
         cantidad_cuotas: formaPago === 'CREDITO' ? parseInt(cantidadCuotas, 10) : 1,
-        medio_pago_sunat: formaPago === 'CREDITO' ? '005' : medioPagoSunat,
+        medio_pago_sunat: formaPago === 'CREDITO' ? '006' : medioPagoSunat,
         aplica_detraccion: tipoComprobante === '01' ? aplicaDetraccion : false,
-        codigo_detraccion: codigoDetraccion,
+        codigo_detraccion: '014',
         peso_total: pesoTotalFactura ? parseFloat(pesoTotalFactura) : null,
         items: itemsEditables,
         es_pago_dividido: esPagoDividido,
@@ -618,7 +522,6 @@ export default function Facturacion({ usuario }) {
     setManualTipoComp('03');
     setManualFormaPago('CONTADO');
     setManualDiasCredito(28);
-    setManualPlazoCustom(false);
     setManualCuotas(1);
     setManualMedioPago('008');
     setManualAplicaDetraccion(false);
@@ -690,9 +593,9 @@ export default function Facturacion({ usuario }) {
         forma_pago: manualFormaPago,
         dias_credito: manualFormaPago === 'CREDITO' ? parseInt(manualDiasCredito, 10) : 0,
         cantidad_cuotas: manualFormaPago === 'CREDITO' ? parseInt(manualCuotas, 10) : 1,
-        medio_pago_sunat: manualFormaPago === 'CREDITO' ? '005' : manualMedioPago,
+        medio_pago_sunat: manualFormaPago === 'CREDITO' ? '006' : manualMedioPago,
         aplica_detraccion: manualTipoComp === '01' ? manualAplicaDetraccion : false,
-        codigo_detraccion: manualCodigoDetraccion,
+        codigo_detraccion: '014',
         peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
         items: manualItems,
         gre: manualTipoComp === '01' ? greFormManual : null
@@ -735,11 +638,16 @@ export default function Facturacion({ usuario }) {
 
   const actualizarFilaNota = (idx, campo, valor) => {
     const items = [...formNota.items];
-    items[idx] = { ...items[idx], [campo]: valor };
+    const anterior = items[idx];
+    items[idx] = { ...anterior, [campo]: valor };
     if (campo === 'peso' || campo === 'precio_unitario') {
       const p = parseFloat(items[idx].peso) || 0;
       const pu = parseFloat(items[idx].precio_unitario) || 0;
-      items[idx].total = p > 0 && pu > 0 ? (p * pu).toFixed(2) : items[idx].total;
+      if (p > 0 && pu > 0) {
+        items[idx].total = (p * pu).toFixed(2);
+      } else if (Number(anterior.peso) > 0 && Number(anterior.precio_unitario) > 0) {
+        items[idx].total = '';
+      }
     } else if (campo === 'id_producto') {
       const prod = productos.find(pr => String(pr.id_producto) === String(valor));
       if (prod) {
@@ -814,7 +722,7 @@ export default function Facturacion({ usuario }) {
         nota: res.data.nota || np,
         items: res.data.items || []
       });
-    } catch (err) {
+    } catch {
       toast.error('No se pudo abrir el detalle de la nota.');
     }
   };
@@ -824,17 +732,23 @@ export default function Facturacion({ usuario }) {
     if (!modalVerNota?.nota) return;
     const n = modalVerNota.nota;
     const items = modalVerNota.items || [];
+    const numeroNotaMostrar = n.numero_nota || n.numero_correlativo || n.id_nota_pedido;
     const fechaTexto = formatearFechaTextoEspanol(n.fecha_emision || n.creado_en);
     const total = parseFloat(n.monto_total || 0).toFixed(2);
 
-    const filasHtml = items.map(it => `
+    const filasHtml = items.map(it => {
+      const importeItem = Number(
+        it.total ?? it.subtotal ?? ((Number(it.peso) > 0 ? Number(it.peso) : Number(it.cantidad || 1)) * Number(it.precio_unitario || 0))
+      );
+      return `
       <tr>
-        <td style="padding:10px 14px;border:1.5px solid #000;font-weight:600;font-size:13px;">${it.descripcion}</td>
+        <td style="padding:10px 14px;border:1.5px solid #000;font-weight:600;font-size:13px;">${escaparHtml(it.descripcion)}</td>
         <td style="padding:10px 14px;border:1.5px solid #000;text-align:center;font-weight:600;font-size:13px;">${it.peso ? Number(it.peso).toFixed(2) : '-'}</td>
         <td style="padding:10px 14px;border:1.5px solid #000;text-align:right;font-weight:600;font-size:13px;">${Number(it.precio_unitario || 0).toFixed(2)}</td>
-        <td style="padding:10px 14px;border:1.5px solid #000;text-align:right;font-weight:bold;font-size:13px;">${Number(it.subtotal || (it.peso * it.precio_unitario) || 0).toFixed(2)}</td>
+        <td style="padding:10px 14px;border:1.5px solid #000;text-align:right;font-weight:bold;font-size:13px;">${importeItem.toFixed(2)}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
 
     const ventana = window.open('', '_blank', 'width=850,height=900');
     if (!ventana) return window.print();
@@ -845,7 +759,7 @@ export default function Facturacion({ usuario }) {
       <html lang="es">
       <head>
         <meta charset="UTF-8" />
-        <title>Nota de Pedido - ${n.numero_correlativo || n.id_nota_pedido}</title>
+        <title>Nota de Pedido - ${escaparHtml(numeroNotaMostrar)}</title>
         <style>
           @font-face {
             font-family: 'Berg Regular';
@@ -875,13 +789,13 @@ export default function Facturacion({ usuario }) {
             PROCESOS CÁRNICOS S.A.C.
           </div>
           <div style="width: 150px; text-align: right; font-size: 11px; font-weight: bold; color: #555;">
-            ${n.numero_correlativo || ''}
+            ${escaparHtml(n.numero_nota || n.numero_correlativo || '')}
           </div>
         </div>
 
         <div class="datos-cliente">
-          <div><strong>Cliente:</strong> ${n.cliente_nombre}</div>
-          <div style="margin-top: 6px;"><strong>Fecha de venta:</strong> ${fechaTexto}</div>
+          <div><strong>Cliente:</strong> ${escaparHtml(n.cliente_nombre)}</div>
+          <div style="margin-top: 6px;"><strong>Fecha de venta:</strong> ${escaparHtml(fechaTexto)}</div>
         </div>
 
         <table>
@@ -897,12 +811,12 @@ export default function Facturacion({ usuario }) {
             ${filasHtml}
             <tr class="total-row">
               <td colspan="3" style="text-align:center;font-weight:900;letter-spacing:1px;">TOTAL</td>
-              <td style="text-align:right;font-weight:900;">${total}</td>
+              <td style="text-align:right;font-weight:900;">${escaparHtml(total)}</td>
             </tr>
           </tbody>
         </table>
 
-        ${n.observaciones ? `<div style="margin-top:20px;font-size:11px;color:#555;"><strong>Obs:</strong> ${n.observaciones}</div>` : ''}
+        ${n.observaciones ? `<div style="margin-top:20px;font-size:11px;color:#555;"><strong>Obs:</strong> ${escaparHtml(n.observaciones)}</div>` : ''}
         <script>window.onload = async function() { try { await document.fonts.ready; } catch(e) {} window.print(); };</script>
       </body>
       </html>
@@ -1973,7 +1887,7 @@ export default function Facturacion({ usuario }) {
                   notasPedido.map(np => (
                     <tr key={np.id_nota_pedido} className="hover:bg-slate-50 transition-colors">
                       <td className="p-4 font-mono font-bold text-slate-900 text-xs">
-                        {np.numero_correlativo || `NotaPedido#${np.id_nota_pedido}`}
+                        {np.numero_nota || np.numero_correlativo || `NotaPedido#${np.id_nota_pedido}`}
                       </td>
                       <td className="p-4 font-semibold text-slate-900">
                         {np.cliente_nombre}
@@ -2205,6 +2119,7 @@ export default function Facturacion({ usuario }) {
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             type="button"
+                            disabled={cargandoPdf}
                             onClick={() => {
                               setCargandoPdf(true);
                               api.get(`/facturacion/${comp.id_comprobante}/detalle`)
@@ -2212,7 +2127,7 @@ export default function Facturacion({ usuario }) {
                                 .catch(() => toast.error('No se pudo cargar el detalle.'))
                                 .finally(() => setCargandoPdf(false));
                             }}
-                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
                           >
                             <Eye size={12} />
                             <span>PDF/A4</span>
@@ -2398,7 +2313,13 @@ export default function Facturacion({ usuario }) {
                   </label>
                   <select
                     value={formaPago}
-                    onChange={(e) => setFormaPago(e.target.value)}
+                    onChange={(e) => {
+                      const nuevaForma = e.target.value;
+                      setFormaPago(nuevaForma);
+                      if (nuevaForma === 'CREDITO') {
+                        setMedioPagoSunat('006');
+                      }
+                    }}
                     className="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-bold bg-white"
                   >
                     <option value="CONTADO">💵 Al Contado</option>
@@ -2418,8 +2339,8 @@ export default function Facturacion({ usuario }) {
                   >
                     <option value="008">Transferencia Bancaria (008)</option>
                     <option value="009">Efectivo (009)</option>
-                    <option value="005">Tarjeta de Crédito (005)</option>
-                    <option value="006">Tarjeta de Débito (006)</option>
+                    <option value="005">Tarjeta de Débito (005)</option>
+                    <option value="006">Tarjeta de Crédito (006)</option>
                     <option value="999">Billetera Digital Yape / Plin (999)</option>
                   </select>
                   {formaPago === 'CREDITO' && (
@@ -3067,7 +2988,7 @@ export default function Facturacion({ usuario }) {
             {/* Header del modal */}
             <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
               <span className="text-xs font-bold font-mono">
-                {modalVerNota.nota?.numero_correlativo || 'Nota de Pedido'}
+                {modalVerNota.nota?.numero_nota || modalVerNota.nota?.numero_correlativo || 'Nota de Pedido'}
               </span>
               <div className="flex items-center space-x-2">
                 <button
@@ -3138,7 +3059,7 @@ export default function Facturacion({ usuario }) {
                           {Number(it.precio_unitario || 0).toFixed(2)}
                         </td>
                         <td className="p-3 text-right font-mono font-bold">
-                          {Number(it.subtotal || (it.peso * it.precio_unitario) || 0).toFixed(2)}
+                          {Number(it.total ?? it.subtotal ?? ((Number(it.peso) > 0 ? Number(it.peso) : Number(it.cantidad || 1)) * Number(it.precio_unitario || 0))).toFixed(2)}
                         </td>
                       </tr>
                     ))}
@@ -3211,7 +3132,7 @@ export default function Facturacion({ usuario }) {
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div><strong>Cliente:</strong> {modalPdf.comprobante.nombre_cliente}</div>
                 <div><strong>Fecha:</strong> {new Date(modalPdf.comprobante.fecha_emision).toLocaleDateString('es-PE')}</div>
-                <div><strong>Doc:</strong> {modalPdf.comprobante.documento_cliente}</div>
+                <div><strong>Doc:</strong> {modalPdf.comprobante.cliente_documento || modalPdf.comprobante.documento_cliente || '-'}</div>
                 <div><strong>Forma Pago:</strong> {modalPdf.comprobante.forma_pago || 'CONTADO'}</div>
                 {modalPdf.comprobante.peso_total && (
                   <div><strong>Peso Total:</strong> {Number(modalPdf.comprobante.peso_total).toFixed(2)} kg</div>

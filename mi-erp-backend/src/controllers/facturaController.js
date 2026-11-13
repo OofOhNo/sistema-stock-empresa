@@ -1896,7 +1896,8 @@ const facturaController = {
             res.status(201).json({
                 exito: true,
                 mensaje: `¡${numeroNota} creada exitosamente!`,
-                nota: notaCreada
+                nota: notaCreada,
+                items: itemsValidados
             });
         } catch (error) {
             await client.query('ROLLBACK');

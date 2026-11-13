@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import {
   Building2, Users, MapPin, Phone, UserCheck,
@@ -24,7 +24,7 @@ export default function Organizacion({ usuario }) {
     direccion_completa: ''
   });
 
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
       const res = await api.get('/organizacion');
@@ -36,11 +36,17 @@ export default function Organizacion({ usuario }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   useEffect(() => {
     const onKeyDown = (e) => {

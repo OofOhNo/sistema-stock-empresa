@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X, AlertTriangle, Truck } from 'lucide-react';
@@ -24,9 +24,36 @@ export default function Ubicaciones({ usuario }) {
     id_division: ''
   });
 
-  useEffect(() => {
-    cargarDatos();
+  const cargarDatos = useCallback(async () => {
+    setCargando(true);
+    try {
+      const [resUbicaciones, resDivisiones] = await Promise.all([
+        api.get('/ubicaciones'),
+        api.get('/ubicaciones/divisiones')
+      ]);
+
+      setUbicaciones(resUbicaciones.data.datos || []);
+      const divs = resDivisiones.data.datos || [];
+      setDivisiones(divs);
+      if (divs.length > 0) {
+        setForm(f => (f.id_division ? f : { ...f, id_division: divs[0].id_division }));
+      }
+    } catch {
+      toast.error('No se pudieron cargar las ubicaciones.');
+    } finally {
+      setCargando(false);
+    }
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -38,27 +65,6 @@ export default function Ubicaciones({ usuario }) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
-
-  const cargarDatos = async () => {
-    setCargando(true);
-    try {
-      const [resUbicaciones, resDivisiones] = await Promise.all([
-        api.get('/ubicaciones'),
-        api.get('/ubicaciones/divisiones')
-      ]);
-
-      setUbicaciones(resUbicaciones.data.datos || []);
-      const divs = resDivisiones.data.datos || [];
-      setDivisiones(divs);
-      if (divs.length > 0 && !form.id_division) {
-        setForm(f => ({ ...f, id_division: divs[0].id_division }));
-      }
-    } catch (error) {
-      toast.error('No se pudieron cargar las ubicaciones: ' + (error.response?.data?.mensaje || error.message));
-    } finally {
-      setCargando(false);
-    }
-  };
 
   const abrirModalCrear = () => {
     setEditandoId(null);

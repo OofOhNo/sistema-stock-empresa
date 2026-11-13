@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api';
 import {
@@ -29,9 +29,15 @@ export default function PanelBoletasAutomaticas({ ubicaciones = [], onBoletaGene
   }, []);
 
   useEffect(() => {
-    cargarTodo();
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarTodo();
+    });
     const t = setInterval(cargarTodo, 20000);
-    return () => clearInterval(t);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, [cargarTodo]);
 
   const guardarConfiguracion = async (e) => {

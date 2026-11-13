@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import {
@@ -31,48 +31,158 @@ export default function Mensajes({ usuario }) {
 
   const chatScrollRef = useRef(null);
   const supervisionScrollRef = useRef(null);
+  const yaSeleccionoContactoRef = useRef(false);
+  const yaSeleccionoParRef = useRef(false);
 
-  useEffect(() => {
-    if (!esAdminCentral && tabActual !== 'chat') {
-      setTabActual('chat');
+  const cargarContactosSilencioso = useCallback(async () => {
+    try {
+      const res = await api.get('/mensajes/contactos');
+      setContactos(res.data.datos || []);
+    } catch {
+      /* silencioso en polling */
     }
-  }, [esAdminCentral, tabActual]);
+  }, []);
 
-  useEffect(() => {
-    cargarContactos();
-    const interval = setInterval(() => {
+  const cargarContactos = useCallback(async () => {
+    try {
+      const res = await api.get('/mensajes/contactos');
+      const list = res.data.datos || [];
+      setContactos(list);
+      if (list.length > 0 && !yaSeleccionoContactoRef.current) {
+        yaSeleccionoContactoRef.current = true;
+        setContactoActivo(list[0]);
+      }
+    } catch (err) {
+      console.error('Error al cargar contactos:', err);
+    }
+  }, []);
+
+  const cargarHistorialChat = useCallback(async (idOtro) => {
+    setCargandoChat(true);
+    try {
+      const res = await api.get(`/mensajes/chat/${idOtro}`);
+      setMensajesChat(res.data.datos || []);
       cargarContactosSilencioso();
-    }, 4500);
-    return () => clearInterval(interval);
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+    } catch {
+      toast.error('No se pudo cargar la conversación.');
+    } finally {
+      setCargandoChat(false);
+    }
+  }, [cargarContactosSilencioso]);
+
+  const cargarHistorialSilencioso = useCallback(async (idOtro) => {
+    try {
+      const res = await api.get(`/mensajes/chat/${idOtro}`);
+      setMensajesChat(res.data.datos || []);
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+    } catch {
+      /* silencioso en polling */
+    }
+  }, []);
+
+  const seleccionarParSupervision = useCallback(async (par) => {
+    setParActivo(par);
+    try {
+      const res = await api.get(`/mensajes/supervision/${par.u1_id}/${par.u2_id}`);
+      setMensajesSupervision(res.data.datos || []);
+    } catch {
+      toast.error('No se pudo abrir la conversación seleccionada.');
+    }
+  }, []);
+
+  const cargarParesSupervision = useCallback(async () => {
+    if (!esAdminCentral) return;
+    setCargandoSupervision(true);
+    try {
+      const res = await api.get('/mensajes/supervision');
+      const pares = res.data.datos || [];
+      setParesSupervision(pares);
+      if (pares.length > 0 && !yaSeleccionoParRef.current) {
+        yaSeleccionoParRef.current = true;
+        seleccionarParSupervision(pares[0]);
+      }
+    } catch {
+      toast.error('No se pudo cargar la lista de conversaciones.');
+    } finally {
+      setCargandoSupervision(false);
+    }
+  }, [esAdminCentral, seleccionarParSupervision]);
+
+  const cargarChatSupervisionSilencioso = useCallback(async (u1, u2) => {
+    try {
+      const res = await api.get(`/mensajes/supervision/${u1}/${u2}`);
+      setMensajesSupervision(res.data.datos || []);
+    } catch {
+      /* silencioso en polling */
+    }
   }, []);
 
   useEffect(() => {
-    if (contactoActivo && tabActual === 'chat') {
-      cargarHistorialChat(contactoActivo.id_usuario);
+    let alive = true;
+    if (!esAdminCentral && tabActual !== 'chat') {
+      Promise.resolve().then(() => {
+        if (alive) setTabActual('chat');
+      });
     }
-  }, [contactoActivo, tabActual]);
+    return () => {
+      alive = false;
+    };
+  }, [esAdminCentral, tabActual]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarContactos();
+    });
+    const interval = setInterval(() => {
+      void cargarContactosSilencioso();
+    }, 4500);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
+  }, [cargarContactos, cargarContactosSilencioso]);
+
+  useEffect(() => {
+    let alive = true;
+    if (contactoActivo && tabActual === 'chat') {
+      Promise.resolve().then(() => {
+        if (alive) void cargarHistorialChat(contactoActivo.id_usuario);
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [contactoActivo, tabActual, cargarHistorialChat]);
 
   useEffect(() => {
     if (!contactoActivo || tabActual !== 'chat') return;
     const interval = setInterval(() => {
-      cargarHistorialSilencioso(contactoActivo.id_usuario);
+      void cargarHistorialSilencioso(contactoActivo.id_usuario);
     }, 3500);
     return () => clearInterval(interval);
-  }, [contactoActivo, tabActual]);
+  }, [contactoActivo, tabActual, cargarHistorialSilencioso]);
 
   useEffect(() => {
+    let alive = true;
     if (tabActual === 'supervision' && esAdminCentral) {
-      cargarParesSupervision();
+      Promise.resolve().then(() => {
+        if (alive) void cargarParesSupervision();
+      });
     }
-  }, [tabActual, esAdminCentral]);
+    return () => {
+      alive = false;
+    };
+  }, [tabActual, esAdminCentral, cargarParesSupervision]);
 
   useEffect(() => {
     if (tabActual !== 'supervision' || !esAdminCentral || !parActivo) return;
     const interval = setInterval(() => {
-      cargarChatSupervisionSilencioso(parActivo.u1_id, parActivo.u2_id);
+      void cargarChatSupervisionSilencioso(parActivo.u1_id, parActivo.u2_id);
     }, 4500);
     return () => clearInterval(interval);
-  }, [parActivo, tabActual, esAdminCentral]);
+  }, [parActivo, tabActual, esAdminCentral, cargarChatSupervisionSilencioso]);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -85,48 +195,6 @@ export default function Mensajes({ usuario }) {
       supervisionScrollRef.current.scrollTop = supervisionScrollRef.current.scrollHeight;
     }
   }, [mensajesSupervision]);
-
-  const cargarContactos = async () => {
-    try {
-      const res = await api.get('/mensajes/contactos');
-      const list = res.data.datos || [];
-      setContactos(list);
-      if (list.length > 0 && !contactoActivo) {
-        setContactoActivo(list[0]);
-      }
-    } catch (err) {
-      console.error('Error al cargar contactos:', err);
-    }
-  };
-
-  const cargarContactosSilencioso = async () => {
-    try {
-      const res = await api.get('/mensajes/contactos');
-      setContactos(res.data.datos || []);
-    } catch {}
-  };
-
-  const cargarHistorialChat = async (idOtro) => {
-    setCargandoChat(true);
-    try {
-      const res = await api.get(`/mensajes/chat/${idOtro}`);
-      setMensajesChat(res.data.datos || []);
-      cargarContactosSilencioso();
-      window.dispatchEvent(new Event('actualizar_alertas_layout'));
-    } catch {
-      toast.error('No se pudo cargar la conversación.');
-    } finally {
-      setCargandoChat(false);
-    }
-  };
-
-  const cargarHistorialSilencioso = async (idOtro) => {
-    try {
-      const res = await api.get(`/mensajes/chat/${idOtro}`);
-      setMensajesChat(res.data.datos || []);
-      window.dispatchEvent(new Event('actualizar_alertas_layout'));
-    } catch {}
-  };
 
   const handleEnviarMensaje = async (e) => {
     e.preventDefault();
@@ -150,41 +218,6 @@ export default function Mensajes({ usuario }) {
     } finally {
       setEnviando(false);
     }
-  };
-
-  // Funciones exclusivas para Admin Central
-  const cargarParesSupervision = async () => {
-    if (!esAdminCentral) return;
-    setCargandoSupervision(true);
-    try {
-      const res = await api.get('/mensajes/supervision');
-      const pares = res.data.datos || [];
-      setParesSupervision(pares);
-      if (pares.length > 0 && !parActivo) {
-        seleccionarParSupervision(pares[0]);
-      }
-    } catch {
-      toast.error('No se pudo cargar la lista de conversaciones.');
-    } finally {
-      setCargandoSupervision(false);
-    }
-  };
-
-  const seleccionarParSupervision = async (par) => {
-    setParActivo(par);
-    try {
-      const res = await api.get(`/mensajes/supervision/${par.u1_id}/${par.u2_id}`);
-      setMensajesSupervision(res.data.datos || []);
-    } catch {
-      toast.error('No se pudo abrir la conversación seleccionada.');
-    }
-  };
-
-  const cargarChatSupervisionSilencioso = async (u1, u2) => {
-    try {
-      const res = await api.get(`/mensajes/supervision/${u1}/${u2}`);
-      setMensajesSupervision(res.data.datos || []);
-    } catch {}
   };
 
   const formatearHoraMensaje = (fechaISO) => {

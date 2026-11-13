@@ -52,7 +52,7 @@ const createProducto = async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const nuevoProducto = await ProductoModel.create(req.body);
+        const nuevoProducto = await ProductoModel.create(req.body, client);
         
         await registrarAuditoria(
             client, 
@@ -69,6 +69,9 @@ const createProducto = async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error creating producto:', error);
+        if (error.code === '23505') {
+            return res.status(400).json({ message: 'Ya existe un producto con ese SKU.', error: error.message });
+        }
         res.status(500).json({ message: 'Error creating producto', error: error.message });
     } finally {
         client.release();
@@ -81,13 +84,13 @@ const updateProducto = async (req, res) => {
         const { id } = req.params;
         await client.query('BEGIN');
 
-        const anterior = await ProductoModel.getById(id);
+        const anterior = await ProductoModel.getById(id, client);
         if (!anterior) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
 
-        const productoActualizado = await ProductoModel.update(id, req.body);
+        const productoActualizado = await ProductoModel.update(id, req.body, client);
         
         await registrarAuditoria(
             client, 
@@ -104,6 +107,9 @@ const updateProducto = async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error updating producto:', error);
+        if (error.code === '23505') {
+            return res.status(400).json({ message: 'Ya existe otro producto con ese SKU.', error: error.message });
+        }
         res.status(500).json({ message: 'Error updating producto', error: error.message });
     } finally {
         client.release();
@@ -116,14 +122,14 @@ const deleteProducto = async (req, res) => {
         const { id } = req.params;
         await client.query('BEGIN');
 
-        const anterior = await ProductoModel.getById(id);
+        const anterior = await ProductoModel.getById(id, client);
         if (!anterior) {
             await client.query('ROLLBACK');
             return res.status(404).json({ message: 'Producto no encontrado' });
         }
 
         // Baja lógica
-        const productoEliminado = await ProductoModel.delete(id);
+        const productoEliminado = await ProductoModel.delete(id, client);
         
         await registrarAuditoria(
             client, 

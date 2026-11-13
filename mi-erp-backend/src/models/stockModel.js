@@ -1,5 +1,26 @@
 const pool = require('../config/db');
 
+const CAMPOS_NUMERICOS_STOCK = [
+    'precio_venta',
+    'stock_minimo',
+    'cantidad_fisica',
+    'cantidad_reservada',
+    'cantidad_disponible',
+    'total_fisico',
+    'total_reservado',
+    'total_disponible'
+];
+
+const normalizarStockRow = (row) => {
+    const normalizada = { ...row };
+    for (const campo of CAMPOS_NUMERICOS_STOCK) {
+        if (row[campo] !== undefined && row[campo] !== null) {
+            normalizada[campo] = Number(row[campo]);
+        }
+    }
+    return normalizada;
+};
+
 const Stock = {
 
     // Ver el stock de una ubicación específica
@@ -34,7 +55,7 @@ const Stock = {
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query, [idUbicacion]);
-            return resultado.rows;
+            return resultado.rows.map(normalizarStockRow);
         } catch (error) {
             throw error;
         }
@@ -67,7 +88,7 @@ const Stock = {
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query);
-            return resultado.rows;
+            return resultado.rows.map(normalizarStockRow);
         } catch (error) {
             throw error;
         }
@@ -106,7 +127,7 @@ const Stock = {
                 ORDER BY s.nombre ASC, p.nombre ASC;
             `;
             const resultado = await pool.query(query);
-            return resultado.rows;
+            return resultado.rows.map(normalizarStockRow);
         } catch (error) {
             throw error;
         }
@@ -141,7 +162,7 @@ const Stock = {
                     ORDER BY cantidad_disponible ASC, p.nombre ASC;
                 `;
                 const resultado = await pool.query(query, [idUbicacion]);
-                return resultado.rows;
+                return resultado.rows.map(normalizarStockRow);
             } else {
                 const query = `
                     SELECT 
@@ -188,7 +209,7 @@ const Stock = {
                     ORDER BY cantidad_disponible ASC, nombre_producto ASC;
                 `;
                 const resultado = await pool.query(query);
-                return resultado.rows;
+                return resultado.rows.map(normalizarStockRow);
             }
         } catch (error) {
             throw error;

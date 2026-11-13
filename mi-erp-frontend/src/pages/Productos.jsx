@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import { Package, Edit, Trash, Plus, Ruler, Search, AlertTriangle, X, Check } from 'lucide-react';
@@ -9,9 +9,10 @@ export default function Productos({ usuario }) {
   const [tiposProducto, setTiposProducto] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
-  const [puedeEditar, setPuedeEditar] = useState(
-    usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true
-  );
+  const [puedeEditarBackend, setPuedeEditarBackend] = useState(null);
+  const puedeEditar =
+    puedeEditarBackend ??
+    (usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true);
 
   const [form, setForm] = useState({
     sku: '',
@@ -46,15 +47,45 @@ export default function Productos({ usuario }) {
   const [unidadAEliminar, setUnidadAEliminar] = useState(null);
   const [eliminando, setEliminando] = useState(false);
 
-  useEffect(() => {
-    setPuedeEditar(
-      usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true
-    );
-  }, [usuario?.rol, usuario?.permisos?.productos?.puede_editar]);
+  const cargarDatos = useCallback(async () => {
+    setCargando(true);
+    try {
+      const [resProd, resUni, resTipos] = await Promise.all([
+        api.get('/productos'),
+        api.get('/productos/unidades'),
+        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } }))
+      ]);
+      const listaProds = Array.isArray(resProd.data)
+        ? resProd.data
+        : (resProd.data?.datos || resProd.data?.productos || []);
+      setProductos(listaProds);
+
+      if (resProd.data?.puede_editar !== undefined) {
+        setPuedeEditarBackend(Boolean(resProd.data.puede_editar));
+      }
+
+      const listaUnidades = resUni.data?.unidades || [];
+      setUnidades(listaUnidades);
+      setTiposProducto(resTipos.data?.tipos || []);
+      if (listaUnidades.length > 0) {
+        setForm((f) => (f.id_unidad ? f : { ...f, id_unidad: listaUnidades[0].id_unidad }));
+      }
+    } catch {
+      toast.error('No se pudo cargar la lista de productos.');
+    } finally {
+      setCargando(false);
+    }
+  }, []);
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -70,36 +101,6 @@ export default function Productos({ usuario }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const cargarDatos = async () => {
-    setCargando(true);
-    try {
-      const [resProd, resUni, resTipos] = await Promise.all([
-        api.get('/productos'),
-        api.get('/productos/unidades'),
-        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } }))
-      ]);
-      const listaProds = Array.isArray(resProd.data)
-        ? resProd.data
-        : (resProd.data?.datos || resProd.data?.productos || []);
-      setProductos(listaProds);
-
-      if (resProd.data?.puede_editar !== undefined) {
-        setPuedeEditar(Boolean(resProd.data.puede_editar));
-      }
-
-      const listaUnidades = resUni.data?.unidades || [];
-      setUnidades(listaUnidades);
-      setTiposProducto(resTipos.data?.tipos || []);
-      if (listaUnidades.length > 0 && !form.id_unidad) {
-        setForm(f => ({ ...f, id_unidad: listaUnidades[0].id_unidad }));
-      }
-    } catch (err) {
-      toast.error('No se pudo cargar la lista de productos.');
-    } finally {
-      setCargando(false);
-    }
-  };
-
   const cargarProductos = async () => {
     try {
       const res = await api.get('/productos');
@@ -108,9 +109,9 @@ export default function Productos({ usuario }) {
         : (res.data?.datos || res.data?.productos || []);
       setProductos(listaProds);
       if (res.data?.puede_editar !== undefined) {
-        setPuedeEditar(Boolean(res.data.puede_editar));
+        setPuedeEditarBackend(Boolean(res.data.puede_editar));
       }
-    } catch (err) {
+    } catch {
       toast.error('No se pudo actualizar la lista de productos.');
     }
   };
@@ -878,6 +879,153 @@ export default function Productos({ usuario }) {
                 type="button"
                 disabled={eliminando}
                 onClick={confirmarRetirarUnidad}
+                className="px-4 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl disabled:opacity-50 cursor-pointer"
+              >
+                {eliminando ? 'Retirando...' : 'Sí, retirar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL GESTIÓN DE TIPOS DE PRODUCTO */}
+      {modalTipo && (
+        <div
+          onClick={() => !guardandoTipo && setModalTipo(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="p-6 pb-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Package size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-blue-950">Tipos de Producto</h3>
+                  <p className="text-xs text-slate-500">Agrupa tus productos por categoría</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalTipo(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleGuardarTipo} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Nombre del Tipo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Carnes Rojas, Pollo, Embutidos"
+                  value={formTipo.nombre}
+                  onChange={(e) => setFormTipo({ ...formTipo, nombre: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Descripción (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Cortes de res y cerdo"
+                  value={formTipo.descripcion}
+                  onChange={(e) => setFormTipo({ ...formTipo, descripcion: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={guardandoTipo}
+                  className="w-full py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <Check size={16} />
+                  <span>{guardandoTipo ? 'Guardando...' : '+ Agregar Tipo de Producto'}</span>
+                </button>
+              </div>
+            </form>
+
+            <div className="p-6 pt-3 border-t border-slate-100 bg-slate-50">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                Tipos Registrados ({tiposProducto.length})
+              </h4>
+              <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                {tiposProducto.map((t) => (
+                  <div
+                    key={t.id_tipo_producto}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 shadow-2xs"
+                  >
+                    <span className="font-semibold">{t.nombre}</span>
+                    <button
+                      type="button"
+                      onClick={() => setTipoAEliminar(t)}
+                      className="text-slate-400 hover:text-red-600 p-0.5 rounded cursor-pointer transition-colors ml-1"
+                      title={`Retirar "${t.nombre}"`}
+                    >
+                      <Trash size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end pt-4">
+                <button
+                  type="button"
+                  onClick={() => setModalTipo(false)}
+                  className="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRMAR RETIRO DE TIPO DE PRODUCTO */}
+      {tipoAEliminar && (
+        <div
+          onClick={() => !eliminando && setTipoAEliminar(null)}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 bg-red-100 text-red-600 rounded-xl shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <h3 className="text-base font-bold text-blue-950">¿Retirar tipo "{tipoAEliminar.nombre}"?</h3>
+            </div>
+            <p className="text-xs text-slate-600">
+              Dejará de aparecer en la lista para nuevos productos.
+            </p>
+            <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={() => setTipoAEliminar(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={eliminando}
+                onClick={confirmarRetirarTipo}
                 className="px-4 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl disabled:opacity-50 cursor-pointer"
               >
                 {eliminando ? 'Retirando...' : 'Sí, retirar'}

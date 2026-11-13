@@ -21,28 +21,28 @@ const UbicacionModel = {
         return rows;
     },
 
-    getById: async (id) => {
+    getById: async (id, db = pool) => {
         const query = `
             SELECT u.*, d.nombre AS nombre_division
             FROM ubicaciones u
             LEFT JOIN divisiones d ON u.id_division = d.id_division
             WHERE u.id_ubicacion = $1;
         `;
-        const { rows } = await pool.query(query, [id]);
+        const { rows } = await db.query(query, [id]);
         return rows[0];
     },
 
-    create: async ({ nombre, id_division }) => {
+    create: async ({ nombre, id_division }, db = pool) => {
         const query = `
             INSERT INTO ubicaciones (nombre, id_division)
             VALUES ($1, $2)
             RETURNING *;
         `;
-        const { rows } = await pool.query(query, [nombre, id_division || 1]);
+        const { rows } = await db.query(query, [nombre, id_division || 1]);
         return rows[0];
     },
 
-    update: async (id, { nombre, id_division }) => {
+    update: async (id, { nombre, id_division }, db = pool) => {
         const query = `
             UPDATE ubicaciones
             SET nombre = COALESCE($1, nombre),
@@ -50,13 +50,13 @@ const UbicacionModel = {
             WHERE id_ubicacion = $3
             RETURNING *;
         `;
-        const { rows } = await pool.query(query, [nombre, id_division, id]);
+        const { rows } = await db.query(query, [nombre, id_division, id]);
         return rows[0];
     },
 
-    delete: async (id) => {
+    delete: async (id, db = pool) => {
         // Verificar si tiene dependencias críticas
-        const check = await pool.query(`
+        const check = await db.query(`
             SELECT 
                 (SELECT COUNT(*) FROM usuarios WHERE id_ubicacion = $1) AS usuarios,
                 (SELECT COUNT(*) FROM pedidos WHERE id_ubicacion = $1) AS pedidos,
@@ -64,12 +64,12 @@ const UbicacionModel = {
         `, [id]);
 
         const counts = check.rows[0];
-        if (counts.usuarios > 0 || counts.pedidos > 0 || counts.inventario > 0) {
+        if (Number(counts.usuarios) > 0 || Number(counts.pedidos) > 0 || Number(counts.inventario) > 0) {
             throw new Error(`No se puede eliminar la ubicación: tiene ${counts.usuarios} usuarios, ${counts.pedidos} pedidos o stock físico activo asociado.`);
         }
 
         const query = 'DELETE FROM ubicaciones WHERE id_ubicacion = $1 RETURNING *;';
-        const { rows } = await pool.query(query, [id]);
+        const { rows } = await db.query(query, [id]);
         return rows[0];
     },
 

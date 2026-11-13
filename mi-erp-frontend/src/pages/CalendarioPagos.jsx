@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
@@ -67,7 +67,13 @@ export default function CalendarioPagos({ usuario }) {
   }, [esAdminCentral, mes, anio]);
 
   useEffect(() => {
-    cargarPagos();
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarPagos();
+    });
+    return () => {
+      alive = false;
+    };
   }, [cargarPagos]);
 
   if (!esAdminCentral) {

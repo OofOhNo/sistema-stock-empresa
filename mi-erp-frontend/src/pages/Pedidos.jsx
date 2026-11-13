@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
-  ShoppingCart, Calendar, CheckCircle, FileText, Plus, ArrowLeft,
+  ShoppingCart, Calendar, CheckCircle, Plus, ArrowLeft,
   Trash2, XCircle, User, Filter, Tag, ShieldCheck, PackageCheck, Truck, Clock, Info,
   Camera, Image, Upload, Eye, X, Loader2, CalendarDays, List,
   ChevronLeft, ChevronRight, AlertTriangle
 } from 'lucide-react';
 import Despacho from './Despacho';
+import ModalPesoListoDespacho from '../components/ModalPesoListoDespacho';
 
 export default function Pedidos({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -62,9 +63,27 @@ export default function Pedidos({ usuario }) {
     esAdminCentral || Boolean(usuario?.puede_ver_otras_ubicaciones);
   const esProduccion = usuario?.area === 'PRODUCCION';
 
-  useEffect(() => {
-    cargarPedidos();
+  const cargarPedidos = useCallback(async () => {
+    setCargando(true);
+    try {
+      const respuesta = await api.get('/pedidos/calendario');
+      setPedidos(respuesta.data.eventos || []);
+    } catch {
+      setError('No se pudieron cargar los pedidos.');
+    } finally {
+      setCargando(false);
+    }
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarPedidos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarPedidos]);
 
   useEffect(() => {
     const onEsc = (e) => {
@@ -78,18 +97,6 @@ export default function Pedidos({ usuario }) {
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
   }, [fotoEnGrande, fotoAEliminar, pedidoFotosModal, pedidoACancelar]);
-
-  const cargarPedidos = async () => {
-    setCargando(true);
-    try {
-      const respuesta = await api.get('/pedidos/calendario');
-      setPedidos(respuesta.data.eventos || []);
-    } catch {
-      setError('No se pudieron cargar los pedidos.');
-    } finally {
-      setCargando(false);
-    }
-  };
 
   // Fotos / Evidencias
   const abrirModalFotos = async (pedido) => {
@@ -976,7 +983,6 @@ export default function Pedidos({ usuario }) {
                                 const { horaStr } = formatearFechaYHoraDespacho(pedido.fecha_limite_despacho);
                                 const esRealizado = pedido.estado_pedido === 'DESPACHADO' || pedido.estado_pedido === 'FACTURADO';
                                 const esListoDespacho = pedido.estado_pedido === 'LISTO_DESPACHO';
-                                const yaFacturado = Boolean(pedido.tiene_factura || pedido.estado_pedido === 'FACTURADO');
 
                                 return (
                                   <div
@@ -1680,6 +1686,13 @@ export default function Pedidos({ usuario }) {
           )}
         </>
       )}
+
+      <ModalPesoListoDespacho
+        modalPesoListo={modalPesoListo}
+        setModalPesoListo={setModalPesoListo}
+        onConfirmar={confirmarListoDespacho}
+        procesando={procesandoDespacho === modalPesoListo.idPedido}
+      />
     </div>
   );
 }

@@ -45,7 +45,7 @@ const Pedido = {
                     throw new Error(`No hay stock registrado para "${prodDB.nombre}" en esta sede.`);
                 }
                 const inv = resStock.rows[0];
-                const disponible = inv.cantidad_fisica - inv.cantidad_reservada;
+                const disponible = Number(inv.cantidad_fisica) - Number(inv.cantidad_reservada);
                 if (disponible < cant) {
                     throw new Error(`Stock insuficiente para "${prodDB.nombre}" en esta sede. Disponible: ${disponible}, Pedido: ${cant}.`);
                 }

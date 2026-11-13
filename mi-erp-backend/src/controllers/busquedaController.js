@@ -93,7 +93,7 @@ const busquedaController = {
             let pIdxComp = 1;
 
             if (!puedeVerTodas && idUbicacionUsuario) {
-                whereComprobantes.push(`p.id_ubicacion = $${pIdxComp++}`);
+                whereComprobantes.push(`COALESCE(c.id_ubicacion, p.id_ubicacion) = $${pIdxComp++}`);
                 paramsComp.push(idUbicacionUsuario);
             }
             if (dia) {
@@ -109,7 +109,11 @@ const busquedaController = {
                 paramsComp.push(anio);
             }
             if (cliente) {
-                whereComprobantes.push(`(cl.razon_social_o_nombre ILIKE $${pIdxComp} OR cl.nombre_comercial ILIKE $${pIdxComp} OR cl.numero_documento ILIKE $${pIdxComp})`);
+                whereComprobantes.push(`(
+                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) ILIKE $${pIdxComp} OR
+                    COALESCE(cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp}
+                )`);
                 paramsComp.push(`%${cliente}%`);
                 pIdxComp++;
             }
@@ -119,9 +123,10 @@ const busquedaController = {
                     c.correlativo::text ILIKE $${pIdxComp} OR 
                     CONCAT(c.serie, '-', c.correlativo) ILIKE $${pIdxComp} OR 
                     CONCAT(c.serie, '-', LPAD(c.correlativo::text, 6, '0')) ILIKE $${pIdxComp} OR
-                    cl.razon_social_o_nombre ILIKE $${pIdxComp} OR 
-                    cl.nombre_comercial ILIKE $${pIdxComp} OR 
-                    cl.numero_documento ILIKE $${pIdxComp} OR 
+                    CONCAT(c.serie, '-', LPAD(c.correlativo::text, 8, '0')) ILIKE $${pIdxComp} OR
+                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR 
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) ILIKE $${pIdxComp} OR 
+                    COALESCE(cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp} OR 
                     c.tipo_comprobante ILIKE $${pIdxComp}
                 )`);
                 paramsComp.push(`%${terminoLibre}%`);
@@ -136,16 +141,17 @@ const busquedaController = {
                     c.tipo_comprobante,
                     c.serie,
                     c.correlativo,
-                    CONCAT(c.serie, '-', LPAD(c.correlativo::text, 6, '0')) AS codigo_formateado,
+                    CONCAT(c.serie, '-', LPAD(c.correlativo::text, 8, '0')) AS codigo_formateado,
                     c.monto_total,
                     c.estado_sunat,
                     c.fecha_emision,
-                    cl.razon_social_o_nombre AS cliente_nombre,
-                    cl.nombre_comercial AS cliente_comercial,
-                    cl.numero_documento AS cliente_ruc
+                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) AS cliente_nombre,
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) AS cliente_comercial,
+                    COALESCE(cl_comp.numero_documento, cl.numero_documento) AS cliente_ruc
                 FROM comprobantes c
                 LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
                 LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                LEFT JOIN clientes cl_comp ON c.id_cliente = cl_comp.id_cliente
                 ${whereCompClause}
                 ORDER BY c.fecha_emision DESC
                 LIMIT 25;

@@ -24,12 +24,12 @@ const kardexController = {
                     p.nombre AS nombre_producto, 
                     p.sku,
                     COALESCE(p.unidad_medida, 'Unidad') AS unidad_medida,
-                    u.nombre_completo AS usuario_creador,
+                    COALESCE(u.nombre_completo, 'Sistema Automático') AS usuario_creador,
                     ua.nombre_completo AS usuario_anulador
                 FROM movimientos_kardex k
                 JOIN productos p ON k.id_producto = p.id_producto
                 JOIN ubicaciones ub ON k.id_ubicacion = ub.id_ubicacion
-                JOIN usuarios u ON k.id_usuario = u.id_usuario
+                LEFT JOIN usuarios u ON k.id_usuario = u.id_usuario
                 LEFT JOIN usuarios ua ON k.id_usuario_anulador = ua.id_usuario
             `;
 
@@ -99,7 +99,7 @@ const kardexController = {
                 }
             }
 
-            const disponible = stockCheck.rows[0].cantidad_fisica - stockCheck.rows[0].cantidad_reservada;
+            const disponible = Number(stockCheck.rows[0].cantidad_fisica) - Number(stockCheck.rows[0].cantidad_reservada);
 
             if (tipo_movimiento === 'SALIDA' && disponible < cantidadNum) {
                 throw new Error(`No hay suficiente stock disponible en esta sede. Disponible: ${disponible}, Solicitado: ${cantidadNum}.`);
@@ -212,8 +212,8 @@ const kardexController = {
                     [mov.id_producto, mov.id_ubicacion]
                 );
                 if (invRes.rows.length > 0) {
-                    const disp = invRes.rows[0].cantidad_fisica - invRes.rows[0].cantidad_reservada;
-                    if (disp < mov.cantidad) {
+                    const disp = Number(invRes.rows[0].cantidad_fisica) - Number(invRes.rows[0].cantidad_reservada);
+                    if (disp < Number(mov.cantidad)) {
                         throw new Error(`No se puede anular esta entrada porque parte de esa mercadería ya fue vendida o reservada (disponible actual: ${disp}).`);
                     }
                 }
@@ -281,8 +281,8 @@ const kardexController = {
                     [mov.id_producto, mov.id_ubicacion]
                 );
                 if (invRes.rows.length > 0) {
-                    const disp = invRes.rows[0].cantidad_fisica - invRes.rows[0].cantidad_reservada;
-                    if (disp < mov.cantidad) {
+                    const disp = Number(invRes.rows[0].cantidad_fisica) - Number(invRes.rows[0].cantidad_reservada);
+                    if (disp < Number(mov.cantidad)) {
                         throw new Error(`No se puede aprobar la anulación porque parte de ese stock ya fue vendido o reservado (disponible: ${disp}).`);
                     }
                 }

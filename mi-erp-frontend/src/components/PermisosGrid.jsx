@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 
@@ -22,11 +22,7 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
   const [rolesList, setRolesList] = useState([]);
   const [cargando, setCargando] = useState(true);
 
-  useEffect(() => {
-    cargarPermisos();
-  }, []);
-
-  const cargarPermisos = async () => {
+  const cargarPermisos = useCallback(async () => {
     setCargando(true);
     try {
       const [resPermisos, resRoles] = await Promise.all([
@@ -40,7 +36,17 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarPermisos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarPermisos]);
 
   const togglePermiso = async (p, campo) => {
     if (!puedeEditar) return;

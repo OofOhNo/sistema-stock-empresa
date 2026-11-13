@@ -177,6 +177,9 @@ const pagosCalendarioController = {
         const client = await pool.connect();
         try {
             const id = parseInt(req.params.id, 10);
+            if (Number.isNaN(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de pago inválido.' });
+            }
             const { estado } = req.body;
             if (!['PENDIENTE', 'PAGADO'].includes(estado)) {
                 return res.status(400).json({ exito: false, mensaje: 'Estado inválido.' });
@@ -252,6 +255,9 @@ const pagosCalendarioController = {
     eliminarPago: async (req, res) => {
         try {
             const id = parseInt(req.params.id, 10);
+            if (Number.isNaN(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de pago inválido.' });
+            }
             const { rows } = await pool.query('DELETE FROM pagos_programados WHERE id_pago = $1 RETURNING *;', [id]);
             if (rows.length === 0) {
                 return res.status(404).json({ exito: false, mensaje: 'Pago no encontrado.' });

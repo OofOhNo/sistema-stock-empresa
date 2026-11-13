@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import {
   AlertTriangle, Clock, Search, Plus,
@@ -40,7 +40,7 @@ export default function Errores({ usuario }) {
     solucion_adoptada: ''
   });
 
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
       const [resErrores, resUsers] = await Promise.all([
@@ -56,11 +56,17 @@ export default function Errores({ usuario }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   const handleCrear = async (e) => {
     e.preventDefault();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import { Calendar, Plus, ArrowLeft, Users, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react';
@@ -28,17 +28,7 @@ export default function Reuniones({ usuario }) {
     tipo_evento: 'reunion'
   });
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  useEffect(() => {
-    if (vista === 'nuevo' && !puedeEditarReuniones) {
-      setVista('lista');
-    }
-  }, [vista, puedeEditarReuniones]);
-
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     setCargando(true);
     setError('');
     try {
@@ -49,15 +39,37 @@ export default function Reuniones({ usuario }) {
       setReuniones(resReuniones.data.eventos || []);
       const ubs = resUbic.data.ubicaciones || resUbic.data.datos || [];
       setUbicaciones(ubs);
-      if (ubs.length > 0 && !form.id_ubicacion) {
-        setForm(f => ({ ...f, id_ubicacion: usuario?.id_ubicacion || ubs[0].id_ubicacion }));
+      if (ubs.length > 0) {
+        setForm(f => (f.id_ubicacion ? f : { ...f, id_ubicacion: usuario?.id_ubicacion || ubs[0].id_ubicacion }));
       }
-    } catch (err) {
+    } catch {
       setError('No se pudieron cargar las reuniones.');
     } finally {
       setCargando(false);
     }
-  };
+  }, [usuario?.id_ubicacion]);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
+
+  useEffect(() => {
+    let alive = true;
+    if (vista === 'nuevo' && !puedeEditarReuniones) {
+      Promise.resolve().then(() => {
+        if (alive) setVista('lista');
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [vista, puedeEditarReuniones]);
 
   const handleInicioChange = (valorInicio) => {
     let nuevoFin = form.fecha_hora_fin;

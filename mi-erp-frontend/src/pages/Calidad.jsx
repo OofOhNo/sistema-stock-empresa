@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import {
   AlertTriangle, Clock, CheckCircle2, XCircle,
@@ -6,6 +6,7 @@ import {
   Printer, Eye, Award
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { escaparHtml } from '../utils/htmlPrint';
 
 const crearFormularioInicial = (hoyStr, idUbicacion = '') => ({
   codigo_certificado: '',
@@ -66,7 +67,7 @@ export default function Calidad({ usuario }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [modalVerOficial, modalNuevo, modalEditar, certificadoAEliminar]);
 
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
       const [resCalidad, resUbic, resClientes, resProds] = await Promise.all([
@@ -86,8 +87,8 @@ export default function Calidad({ usuario }) {
       const prods = Array.isArray(resProds.data) ? resProds.data : (resProds.data?.datos || []);
       setProductosLista(prods);
 
-      if (ubs.length > 0 && !form.id_ubicacion) {
-        setForm(prev => ({ ...prev, id_ubicacion: ubs[0].id_ubicacion }));
+      if (ubs.length > 0) {
+        setForm(prev => (prev.id_ubicacion ? prev : { ...prev, id_ubicacion: ubs[0].id_ubicacion }));
       }
     } catch (error) {
       console.error('Error al cargar calidad:', error);
@@ -95,11 +96,17 @@ export default function Calidad({ usuario }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    cargarDatos();
-  }, []);
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   const formatearFechaOficial = (fechaStr) => {
     if (!fechaStr) return '';
@@ -121,13 +128,6 @@ export default function Calidad({ usuario }) {
     const anio = d.getUTCFullYear();
     return `${dia}/${mes}/${anio}`;
   };
-
-  const escaparHtml = (texto) =>
-    String(texto ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
 
   const imprimirCertificadoA4 = (cert) => {
     if (!cert) return;
@@ -355,7 +355,7 @@ export default function Calidad({ usuario }) {
       toast.success('Certificado eliminado.');
       setCertificadoAEliminar(null);
       cargarDatos();
-    } catch (error) {
+    } catch {
       toast.error('No se pudo eliminar el certificado.');
     } finally {
       setEliminando(false);

@@ -37,7 +37,7 @@ const ubicacionController = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            const nueva = await UbicacionModel.create({ nombre, id_division });
+            const nueva = await UbicacionModel.create({ nombre, id_division }, client);
 
             await registrarAuditoria(
                 client, 
@@ -54,6 +54,9 @@ const ubicacionController = {
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Error al crear ubicación:', error);
+            if (error.code === '23505') {
+                return res.status(400).json({ exito: false, mensaje: 'Ya existe una ubicación con ese nombre.' });
+            }
             res.status(500).json({ exito: false, mensaje: 'Error al crear ubicación', error: error.message });
         } finally {
             client.release();
@@ -67,13 +70,13 @@ const ubicacionController = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            const anterior = await UbicacionModel.getById(id);
+            const anterior = await UbicacionModel.getById(id, client);
             if (!anterior) {
                 await client.query('ROLLBACK');
                 return res.status(404).json({ exito: false, mensaje: 'Ubicación no encontrada' });
             }
 
-            const actualizada = await UbicacionModel.update(id, { nombre, id_division });
+            const actualizada = await UbicacionModel.update(id, { nombre, id_division }, client);
 
             await registrarAuditoria(
                 client, 
@@ -90,6 +93,9 @@ const ubicacionController = {
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Error al actualizar ubicación:', error);
+            if (error.code === '23505') {
+                return res.status(400).json({ exito: false, mensaje: 'Ya existe una ubicación con ese nombre.' });
+            }
             res.status(500).json({ exito: false, mensaje: 'Error al actualizar ubicación', error: error.message });
         } finally {
             client.release();
@@ -101,13 +107,13 @@ const ubicacionController = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
-            const anterior = await UbicacionModel.getById(id);
+            const anterior = await UbicacionModel.getById(id, client);
             if (!anterior) {
                 await client.query('ROLLBACK');
                 return res.status(404).json({ exito: false, mensaje: 'Ubicación no encontrada' });
             }
 
-            const eliminada = await UbicacionModel.delete(id);
+            const eliminada = await UbicacionModel.delete(id, client);
 
             await registrarAuditoria(
                 client, 

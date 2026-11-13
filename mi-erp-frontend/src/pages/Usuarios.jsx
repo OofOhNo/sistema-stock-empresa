@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import {
   Users, Shield, ShieldAlert, UserCheck, Briefcase, Lock,
@@ -72,7 +72,7 @@ function ResumenDatosLegible({ datos, textoVacio }) {
   return (
     <div className="bg-slate-50 border border-slate-200 rounded-xl divide-y divide-slate-200/70 overflow-hidden">
       {entradas.map(([clave, valor]) => {
-        let textoValor = '';
+        let textoValor;
         if (valor === null || valor === undefined) textoValor = '-';
         else if (typeof valor === 'boolean') textoValor = valor ? 'Sí' : 'No';
         else if (typeof valor === 'object') textoValor = JSON.stringify(valor);
@@ -174,7 +174,7 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     if (!puedeVerUsuarios) {
       setCargando(false);
       return;
@@ -216,9 +216,9 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, [puedeVerUsuarios, puedeEditarUsuarios, esAdminCentral]);
 
-  const cargarAuditorias = async () => {
+  const cargarAuditorias = useCallback(async () => {
     setCargandoAuditoria(true);
     try {
       const res = await api.get('/auditoria');
@@ -228,17 +228,29 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     } finally {
       setCargandoAuditoria(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    cargarDatos();
-  }, [puedeVerUsuarios]);
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarDatos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarDatos]);
 
   useEffect(() => {
+    let alive = true;
     if (tabActual === 'auditoria') {
-      cargarAuditorias();
+      Promise.resolve().then(() => {
+        if (alive) void cargarAuditorias();
+      });
     }
-  }, [tabActual]);
+    return () => {
+      alive = false;
+    };
+  }, [tabActual, cargarAuditorias]);
 
   const solicitarCambioRol = (user, nuevoRolId) => {
     const rolDestino = rolesDinamicos.find(r => r.id_rol === nuevoRolId);

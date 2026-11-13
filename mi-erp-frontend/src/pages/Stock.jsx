@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
@@ -44,38 +44,16 @@ export default function Stock({ usuario }) {
     usuario?.rol === 'Gerente de Área' ||
     (puedeEditarStock && puedeVerOtrasUbicaciones);
 
-  useEffect(() => {
-    cargarAlertasSilencioso();
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setMovimientoAAnular(null);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
-
-  const cargarAlertasSilencioso = async () => {
+  const cargarAlertasSilencioso = useCallback(async () => {
     try {
       const res = await api.get('/stock/alertas');
       setAlertas(res.data.alertas || []);
-    } catch (e) {}
-  };
-
-  useEffect(() => {
-    if (vista === 'nuevo' && !puedeEditarStock) {
-      setVista('inventario');
-      return;
+    } catch {
+      // Silencioso en carga en segundo plano
     }
-    if (vista === 'inventario' || vista === 'nuevo') cargarStock();
-    if (vista === 'historial') cargarHistorial();
-    if (vista === 'alertas') cargarAlertas();
-  }, [vista, puedeEditarStock]);
+  }, []);
 
-  const cargarStock = async () => {
+  const cargarStock = useCallback(async () => {
     setCargando(true);
     setError('');
     try {
@@ -104,37 +82,74 @@ export default function Stock({ usuario }) {
         id_producto: f.id_producto || (stTotal[0]?.id_producto ?? ''),
         id_ubicacion: f.id_ubicacion || usuario?.id_ubicacion || ubs[0]?.id_ubicacion || ''
       }));
-    } catch (err) {
+    } catch {
       setError('No se pudo cargar el inventario.');
     } finally {
       setCargando(false);
     }
-  };
+  }, [usuario]);
 
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     setCargando(true);
     setError('');
     try {
       const res = await api.get('/kardex');
       setHistorial(res.data.movimientos || []);
-    } catch (err) {
+    } catch {
       setError('No se pudo cargar el historial de entradas y salidas.');
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
 
-  const cargarAlertas = async () => {
+  const cargarAlertas = useCallback(async () => {
     setCargando(true);
     try {
       const res = await api.get('/stock/alertas');
       setAlertas(res.data.alertas || []);
-    } catch (err) {
+    } catch {
       toast.error('No se pudieron cargar las alertas de stock.');
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarAlertasSilencioso();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarAlertasSilencioso]);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setMovimientoAAnular(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (!alive) return;
+      if (vista === 'nuevo' && !puedeEditarStock) {
+        setVista('inventario');
+        return;
+      }
+      if (vista === 'inventario' || vista === 'nuevo') void cargarStock();
+      if (vista === 'historial') void cargarHistorial();
+      if (vista === 'alertas') void cargarAlertas();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [vista, puedeEditarStock, cargarStock, cargarHistorial, cargarAlertas]);
 
   const obtenerDisponibleEnSede = (idProducto, idUbicacion) => {
     if (!idUbicacion) {
@@ -959,7 +974,8 @@ export default function Stock({ usuario }) {
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Cantidad *</label>
                 <input
                   type="number"
-                  min="1"
+                  min="0.01"
+                  step="0.01"
                   required
                   value={form.cantidad}
                   onChange={(e) => setForm({ ...form, cantidad: e.target.value })}

@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import {
   Truck, CheckCircle, Clock, PackageCheck, Tag, ShieldCheck,
   Search, RefreshCw, Calendar, User, Phone
 } from 'lucide-react';
+import ModalPesoListoDespacho from '../components/ModalPesoListoDespacho';
 
 export default function Despacho({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -19,11 +20,7 @@ export default function Despacho({ usuario }) {
     esAdminCentral || usuario?.permisos?.pedidos?.puede_editar === true;
   const esProduccion = usuario?.area === 'PRODUCCION';
 
-  useEffect(() => {
-    cargarPedidos();
-  }, []);
-
-  const cargarPedidos = async () => {
+  const cargarPedidos = useCallback(async () => {
     setCargando(true);
     try {
       const res = await api.get('/pedidos/calendario');
@@ -33,7 +30,17 @@ export default function Despacho({ usuario }) {
     } finally {
       setCargando(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => {
+      if (alive) void cargarPedidos();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cargarPedidos]);
 
   const confirmarListoDespacho = async (e) => {
     e?.preventDefault();
@@ -419,6 +426,13 @@ export default function Despacho({ usuario }) {
           </div>
         )}
       </div>
+
+      <ModalPesoListoDespacho
+        modalPesoListo={modalPesoListo}
+        setModalPesoListo={setModalPesoListo}
+        onConfirmar={confirmarListoDespacho}
+        procesando={procesando === modalPesoListo.idPedido}
+      />
     </div>
   );
 }

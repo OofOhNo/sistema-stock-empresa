@@ -1,6 +1,6 @@
-import React from 'react';
 import { X, Printer, Truck } from 'lucide-react';
 import { generarSvgQrString } from '../../utils/qrSunat';
+import { escaparHtml } from '../../utils/htmlPrint';
 
 export default function GrePdfModal({ guia, emisor = {}, onClose }) {
   if (!guia) return null;
@@ -22,10 +22,10 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
       <tr>
         <td style="text-align:center;">${i + 1}</td>
         <td style="text-align:center;">${b.bien_normalizado ? 'Sí' : 'No'}</td>
-        <td>${b.codigo_bien || ''}</td>
-        <td>${b.codigo_sunat || ''}</td>
-        <td>${b.descripcion || ''}</td>
-        <td>${b.unidad_medida || 'KILOGRAMO'}</td>
+        <td>${escaparHtml(b.codigo_bien || '')}</td>
+        <td>${escaparHtml(b.codigo_sunat || '')}</td>
+        <td>${escaparHtml(b.descripcion || '')}</td>
+        <td>${escaparHtml(b.unidad_medida || 'KILOGRAMO')}</td>
         <td style="text-align:right;font-weight:bold;">${Number(b.cantidad || 0).toFixed(2)}</td>
       </tr>
     `).join('');
@@ -36,7 +36,7 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
       <html>
       <head>
         <meta charset="utf-8" />
-        <title>GRE ${numeroGre}</title>
+        <title>GRE ${escaparHtml(numeroGre)}</title>
         <style>
           @font-face {
             font-family: 'Berg Regular';
@@ -63,31 +63,31 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
           <div class="emisor-wrap">
             <img src="${baseUrl}/brand/logo-color-claro.png" alt="PROCESOS CÁRNICOS S.A.C." style="height: 70px; width: auto; object-fit: contain;" />
             <div>
-              <div class="emisor-title">${razonSocialEmisor}</div>
-              <div style="margin-top:4px;">RUC: <b>${rucEmisor}</b></div>
-              <div style="margin-top:2px;color:#475569;font-size:11px;">${guia.punto_partida_direccion || ''}</div>
+              <div class="emisor-title">${escaparHtml(razonSocialEmisor)}</div>
+              <div style="margin-top:4px;">RUC: <b>${escaparHtml(rucEmisor)}</b></div>
+              <div style="margin-top:2px;color:#475569;font-size:11px;">${escaparHtml(guia.punto_partida_direccion || '')}</div>
             </div>
           </div>
           <div class="title-box">
             <div style="font-weight:bold;font-size:11px;">GUÍA DE REMISIÓN ELECTRÓNICA</div>
-            <div style="font-weight:bold;font-size:12px;">${guia.tipo_gre || 'REMITENTE'}</div>
-            <div style="font-size:16px;font-weight:900;margin-top:4px;">N° ${numeroGre}</div>
+            <div style="font-weight:bold;font-size:12px;">${escaparHtml(guia.tipo_gre || 'REMITENTE')}</div>
+            <div style="font-size:16px;font-weight:900;margin-top:4px;">N° ${escaparHtml(numeroGre)}</div>
           </div>
         </div>
 
         <div class="sec">
-          <div><b>Fecha y hora de emisión:</b> ${fechaEmisionStr}</div>
-          <div><b>Fecha de inicio de traslado:</b> ${guia.fecha_inicio_traslado_iso || ''}</div>
-          <div><b>Punto de Partida:</b> ${guia.punto_partida_ubigeo ? `(${guia.punto_partida_ubigeo}) ` : ''}${guia.punto_partida_direccion || ''}</div>
-          <div><b>Punto de Llegada:</b> ${guia.punto_llegada_ubigeo ? `(${guia.punto_llegada_ubigeo}) ` : ''}${guia.punto_llegada_direccion || ''}</div>
-          <div><b>Motivo de Traslado:</b> ${guia.motivo_traslado || 'Venta'}</div>
-          ${guia.factura_serie ? `<div><b>Comprobante Asociado:</b> Factura ${guia.factura_serie}-${String(guia.factura_correlativo).padStart(8, '0')}</div>` : ''}
+          <div><b>Fecha y hora de emisión:</b> ${escaparHtml(fechaEmisionStr)}</div>
+          <div><b>Fecha de inicio de traslado:</b> ${escaparHtml(guia.fecha_inicio_traslado_iso || '')}</div>
+          <div><b>Punto de Partida:</b> ${guia.punto_partida_ubigeo ? `(${escaparHtml(guia.punto_partida_ubigeo)}) ` : ''}${escaparHtml(guia.punto_partida_direccion || '')}</div>
+          <div><b>Punto de Llegada:</b> ${guia.punto_llegada_ubigeo ? `(${escaparHtml(guia.punto_llegada_ubigeo)}) ` : ''}${escaparHtml(guia.punto_llegada_direccion || '')}</div>
+          <div><b>Motivo de Traslado:</b> ${escaparHtml(guia.motivo_traslado || 'Venta')}</div>
+          ${guia.factura_serie ? `<div><b>Comprobante Asociado:</b> Factura ${escaparHtml(guia.factura_serie)}-${escaparHtml(String(guia.factura_correlativo).padStart(8, '0'))}</div>` : ''}
         </div>
 
         <div class="sec">
           <div class="sec-title">Datos del Destinatario</div>
-          <div><b>Apellidos y nombres / Razón Social:</b> ${guia.destinatario_razon_social || ''}</div>
-          <div><b>Tipo y número de documento:</b> ${guia.destinatario_tipo_doc === '6' ? 'RUC' : 'DOC'} ${guia.destinatario_num_doc || ''}</div>
+          <div><b>Apellidos y nombres / Razón Social:</b> ${escaparHtml(guia.destinatario_razon_social || '')}</div>
+          <div><b>Tipo y número de documento:</b> ${guia.destinatario_tipo_doc === '6' ? 'RUC' : 'DOC'} ${escaparHtml(guia.destinatario_num_doc || '')}</div>
         </div>
 
         <div class="sec">
@@ -107,21 +107,21 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
             <tbody>${filasBienes}</tbody>
           </table>
           <div style="margin-top:8px;">
-            <b>Unidad de Medida del Peso Bruto:</b> ${guia.unidad_peso_bruto || 'KGM'} &nbsp;&nbsp;|&nbsp;&nbsp;
+            <b>Unidad de Medida del Peso Bruto:</b> ${escaparHtml(guia.unidad_peso_bruto || 'KGM')} &nbsp;&nbsp;|&nbsp;&nbsp;
             <b>Peso Bruto Total de la Carga:</b> ${Number(guia.peso_bruto_total || 0).toFixed(2)}
           </div>
         </div>
 
         <div class="sec">
           <div class="sec-title">Datos del Traslado</div>
-          <div><b>Modalidad de Traslado:</b> ${guia.modalidad_traslado || 'Privado'}</div>
-          <div><b>Vehículo(s) Placa N°:</b> ${guia.vehiculo_placa || '-'}</div>
-          <div><b>Conductor(es):</b> ${guia.conductor_nombres || '-'} | Doc: ${guia.conductor_num_doc || '-'} | Licencia: ${guia.conductor_licencia || '-'}</div>
+          <div><b>Modalidad de Traslado:</b> ${escaparHtml(guia.modalidad_traslado || 'Privado')}</div>
+          <div><b>Vehículo(s) Placa N°:</b> ${escaparHtml(guia.vehiculo_placa || '-')}</div>
+          <div><b>Conductor(es):</b> ${escaparHtml(guia.conductor_nombres || '-')} | Doc: ${escaparHtml(guia.conductor_num_doc || '-')} | Licencia: ${escaparHtml(guia.conductor_licencia || '-')}</div>
         </div>
 
         <div class="qr-row">
           <div style="font-size:10px;color:#475569;max-width:460px;">
-            Representación impresa de la Guía de Remisión Electrónica (${numeroGre}) emitida mediante Sistema ERP integrado.
+            Representación impresa de la Guía de Remisión Electrónica (${escaparHtml(numeroGre)}) emitida mediante Sistema ERP integrado.
           </div>
           <div>${qrSvg}</div>
         </div>

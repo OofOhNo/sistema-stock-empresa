@@ -23,7 +23,7 @@ class ProductoModel {
         return rows;
     }
 
-    static async getById(id) {
+    static async getById(id, db = pool) {
         const query = `
             SELECT 
                 p.*,
@@ -37,11 +37,11 @@ class ProductoModel {
             LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
             WHERE p.id_producto = $1
         `;
-        const { rows } = await pool.query(query, [id]);
+        const { rows } = await db.query(query, [id]);
         return rows[0];
     }
 
-    static async create(data) {
+    static async create(data, db = pool) {
         const {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo,
@@ -58,20 +58,22 @@ class ProductoModel {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
             RETURNING *
         `;
+        const precioCostoVal = (precio_costo === undefined || precio_costo === null || precio_costo === '') ? 0 : precio_costo;
+        const stockMinimoVal = (stock_minimo === undefined || stock_minimo === null || stock_minimo === '') ? 5 : stock_minimo;
         const values = [
             sku, nombre, descripcion, id_categoria || null,
-            precio_venta, precio_costo || 0, stock_minimo || 5,
+            precio_venta, precioCostoVal, stockMinimoVal,
             id_unidad || null, unidad_medida || 'Unidad',
             id_tipo_producto ? parseInt(id_tipo_producto, 10) : 1,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : '10',
             codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null
         ];
         
-        const { rows } = await pool.query(query, values);
+        const { rows } = await db.query(query, values);
         return rows[0];
     }
 
-    static async update(id, data) {
+    static async update(id, data, db = pool) {
         const {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo, activo,
@@ -108,13 +110,13 @@ class ProductoModel {
             id
         ];
 
-        const { rows } = await pool.query(query, values);
+        const { rows } = await db.query(query, values);
         return rows[0];
     }
 
-    static async delete(id) {
+    static async delete(id, db = pool) {
         const query = 'UPDATE productos SET activo = false WHERE id_producto = $1 RETURNING *';
-        const { rows } = await pool.query(query, [id]);
+        const { rows } = await db.query(query, [id]);
         return rows[0];
     }
 
