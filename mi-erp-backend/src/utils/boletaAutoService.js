@@ -92,11 +92,11 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             FROM inventario i
             JOIN productos p ON p.id_producto = i.id_producto
             LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
-            WHERE i.id_ubicacion = $1
+            WHERE i.id_ubicacion = $1::int
               AND p.activo = TRUE
               AND p.precio_venta > 0
-              AND p.precio_venta * $2 < 700
-              AND (i.cantidad_fisica - COALESCE(i.cantidad_reservada, 0)) >= $2
+              AND p.precio_venta * $2::numeric < 700
+              AND (i.cantidad_fisica - COALESCE(i.cantidad_reservada, 0)) >= $2::numeric
             ORDER BY RANDOM()
             LIMIT 12;
         `, [idUbicacion, pesoMinItem]);
@@ -106,7 +106,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             const intervalo = Math.max(1, parseInt(cfg.intervalo_minutos || 30, 10));
             await client.query(
                 `UPDATE config_boletas_automaticas
-                 SET proxima_ejecucion = CURRENT_TIMESTAMP + ($1 * INTERVAL '1 minute')
+                 SET proxima_ejecucion = CURRENT_TIMESTAMP + make_interval(mins => $1::int)
                  WHERE id_config = 1`,
                 [intervalo]
             );
@@ -325,7 +325,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         await client.query(`
             UPDATE config_boletas_automaticas
             SET ultima_ejecucion = CURRENT_TIMESTAMP,
-                proxima_ejecucion = CURRENT_TIMESTAMP + ($1 * INTERVAL '1 minute'),
+                proxima_ejecucion = CURRENT_TIMESTAMP + make_interval(mins => $1::int),
                 actualizado_en = CURRENT_TIMESTAMP
             WHERE id_config = 1;
         `, [intervalo]);

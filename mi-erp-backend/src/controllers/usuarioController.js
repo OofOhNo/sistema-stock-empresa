@@ -163,13 +163,13 @@ const usuarioController = {
 
             const queryUpsert = `
                 INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
-                SELECT $1, p.id, COALESCE($2, false), COALESCE($3, false)
+                SELECT $1::int, p.id, COALESCE($2::boolean, false), COALESCE($3::boolean, false)
                 FROM permisos p
-                WHERE p.modulo = $4
+                WHERE p.modulo = $4::varchar
                 ON CONFLICT (rol_id, permiso_id)
                 DO UPDATE SET 
-                    puede_ver = CASE WHEN $2 IS NOT NULL THEN EXCLUDED.puede_ver ELSE roles_permisos.puede_ver END,
-                    puede_editar = CASE WHEN $3 IS NOT NULL THEN EXCLUDED.puede_editar ELSE roles_permisos.puede_editar END;
+                    puede_ver = CASE WHEN $2::boolean IS NOT NULL THEN EXCLUDED.puede_ver ELSE roles_permisos.puede_ver END,
+                    puede_editar = CASE WHEN $3::boolean IS NOT NULL THEN EXCLUDED.puede_editar ELSE roles_permisos.puede_editar END;
             `;
             await client.query(queryUpsert, [rol_id, puede_ver, puede_editar, modulo]);
 

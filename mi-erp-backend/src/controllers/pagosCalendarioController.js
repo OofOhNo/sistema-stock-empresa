@@ -188,9 +188,9 @@ const pagosCalendarioController = {
             await client.query('BEGIN');
             const { rows } = await client.query(
                 `UPDATE pagos_programados
-                 SET estado = $1,
-                     fecha_pagado = CASE WHEN $1 = 'PAGADO' THEN CURRENT_TIMESTAMP ELSE NULL END
-                 WHERE id_pago = $2
+                 SET estado = $1::varchar,
+                     fecha_pagado = CASE WHEN $1::varchar = 'PAGADO' THEN CURRENT_TIMESTAMP ELSE NULL END
+                 WHERE id_pago = $2::int
                  RETURNING *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso;`,
                 [estado, id]
             );

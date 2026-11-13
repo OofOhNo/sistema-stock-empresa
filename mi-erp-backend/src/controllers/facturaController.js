@@ -1987,19 +1987,19 @@ const facturaController = {
 
             const { rows } = await pool.query(`
                 UPDATE config_boletas_automaticas
-                SET activo = COALESCE($1, activo),
-                    intervalo_minutos = $2,
-                    monto_minimo = $3,
-                    monto_maximo = $4,
-                    peso_minimo_item = $5,
-                    peso_maximo_item = $6,
-                    hora_inicio = COALESCE($7, hora_inicio),
-                    hora_fin = COALESCE($8, hora_fin),
-                    solo_horario_laboral = COALESCE($9, solo_horario_laboral),
-                    id_ubicacion = COALESCE($10, id_ubicacion),
-                    auto_imprimir_navegador = COALESCE($11, auto_imprimir_navegador),
+                SET activo = COALESCE($1::boolean, activo),
+                    intervalo_minutos = $2::int,
+                    monto_minimo = $3::numeric,
+                    monto_maximo = $4::numeric,
+                    peso_minimo_item = $5::numeric,
+                    peso_maximo_item = $6::numeric,
+                    hora_inicio = COALESCE($7::varchar, hora_inicio),
+                    hora_fin = COALESCE($8::varchar, hora_fin),
+                    solo_horario_laboral = COALESCE($9::boolean, solo_horario_laboral),
+                    id_ubicacion = COALESCE($10::int, id_ubicacion),
+                    auto_imprimir_navegador = COALESCE($11::boolean, auto_imprimir_navegador),
                     proxima_ejecucion = CASE
-                        WHEN COALESCE($1, activo) = TRUE THEN CURRENT_TIMESTAMP + ($2 * INTERVAL '1 minute')
+                        WHEN COALESCE($1::boolean, activo) = TRUE THEN CURRENT_TIMESTAMP + make_interval(mins => $2::int)
                         ELSE proxima_ejecucion
                     END,
                     actualizado_en = CURRENT_TIMESTAMP
@@ -2078,15 +2078,18 @@ const facturaController = {
     actualizarEstadoColaImpresion: async (req, res) => {
         try {
             const id = parseInt(req.params.id, 10);
+            if (!id || Number.isNaN(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de cola inválido.' });
+            }
             const { estado } = req.body;
             if (!['PENDIENTE', 'IMPRESO', 'OMITIDO'].includes(estado)) {
                 return res.status(400).json({ exito: false, mensaje: 'Estado de cola inválido.' });
             }
             const { rows } = await pool.query(`
                 UPDATE cola_impresion_boletas
-                SET estado = $1,
-                    impreso_en = CASE WHEN $1 = 'IMPRESO' THEN CURRENT_TIMESTAMP ELSE NULL END
-                WHERE id_cola = $2
+                SET estado = $1::varchar,
+                    impreso_en = CASE WHEN $1::varchar = 'IMPRESO' THEN CURRENT_TIMESTAMP ELSE NULL END
+                WHERE id_cola = $2::int
                 RETURNING *;
             `, [estado, id]);
             if (rows.length === 0) return res.status(404).json({ exito: false, mensaje: 'Elemento de cola no encontrado.' });

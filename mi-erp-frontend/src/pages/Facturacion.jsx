@@ -1999,6 +1999,7 @@ export default function Facturacion({ usuario }) {
         <PanelBoletasAutomaticas
           ubicaciones={ubicaciones}
           onBoletaGenerada={cargarDatos}
+          puedeEditar={puedeEditarFacturacion}
         />
       )}
 
