@@ -328,7 +328,8 @@ export default function CalendarioPagos({ usuario }) {
 
       {/* Contenido: Calendario o Lista */}
       {vista === 'calendario' ? (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+          <div className="min-w-[680px]">
           <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
             {DIAS_SEMANA.map((d) => (
               <div key={d} className="py-2.5 text-center text-xs font-bold text-slate-500 uppercase">
@@ -383,6 +384,7 @@ export default function CalendarioPagos({ usuario }) {
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       ) : (

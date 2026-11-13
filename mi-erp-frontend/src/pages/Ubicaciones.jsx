@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
-import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X, AlertTriangle } from 'lucide-react';
+import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X, AlertTriangle, Truck } from 'lucide-react';
 import Organizacion from './Organizacion';
+import PanelVehiculosTransporte from '../components/ubicaciones/PanelVehiculosTransporte';
 
 export default function Ubicaciones({ usuario }) {
   const [subTab, setSubTab] = useState('sedes'); // 'sedes' | 'almacenes'
@@ -133,7 +134,7 @@ export default function Ubicaciones({ usuario }) {
     <div className="space-y-6">
 
       {/* SELECTOR DE SUB-PESTAÑAS EN UBICACIONES */}
-      <div className="flex flex-wrap gap-2 bg-slate-100 p-1 rounded-xl w-max max-w-full">
+      <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-xl w-full sm:w-max max-w-full overflow-x-auto">
         <button
           type="button"
           onClick={() => setSubTab('sedes')}
@@ -159,10 +160,24 @@ export default function Ubicaciones({ usuario }) {
           <MapPin size={15} />
           <span>Lista de Almacenes y Sucursales</span>
         </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('vehiculos')}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            subTab === 'vehiculos'
+              ? 'bg-white text-indigo-600 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Truck size={15} />
+          <span>Vehículos y Transporte</span>
+        </button>
       </div>
 
       {subTab === 'sedes' ? (
         <Organizacion usuario={usuario} />
+      ) : subTab === 'vehiculos' ? (
+        <PanelVehiculosTransporte puedeEditar={puedeEditarUbicaciones} />
       ) : (
         <>
           {/* Cabecera */}

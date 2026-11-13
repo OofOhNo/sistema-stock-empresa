@@ -23,11 +23,14 @@ router.get('/boletas-auto/cola', verificarToken, requierePermiso('facturacion', 
 router.patch('/boletas-auto/cola/:id/estado', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.actualizarEstadoColaImpresion);
 
 // Guías de Remisión Electrónica (GRE EG07) y catálogos frecuentes
-router.get('/gre/catalogos', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarCatalogosGre);
+router.get('/gre/catalogos', verificarToken, requierePermiso(['facturacion', 'ubicaciones'], 'ver'), facturaController.listarCatalogosGre);
+router.get('/gre/puntos-llegada/:ruc', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerPuntosLlegadaPorRuc);
+router.post('/gre/puntos-llegada', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.guardarPuntoLlegadaRuc);
 router.post('/gre/puntos-partida', verificarToken, esAdmin, facturaController.crearPuntoPartidaGre);
 router.delete('/gre/puntos-partida/:id', verificarToken, esAdmin, facturaController.eliminarPuntoPartidaGre);
-router.post('/gre/vehiculos', verificarToken, esAdmin, facturaController.crearVehiculoGre);
-router.delete('/gre/vehiculos/:id', verificarToken, esAdmin, facturaController.eliminarVehiculoGre);
+router.post('/gre/vehiculos', verificarToken, requierePermiso('ubicaciones', 'editar'), facturaController.crearVehiculoGre);
+router.put('/gre/vehiculos/:id', verificarToken, requierePermiso('ubicaciones', 'editar'), facturaController.actualizarVehiculoGre);
+router.delete('/gre/vehiculos/:id', verificarToken, requierePermiso('ubicaciones', 'editar'), facturaController.eliminarVehiculoGre);
 router.post('/gre/conductores', verificarToken, esAdmin, facturaController.crearConductorGre);
 router.delete('/gre/conductores/:id', verificarToken, esAdmin, facturaController.eliminarConductorGre);
 router.get('/gre', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarGres);

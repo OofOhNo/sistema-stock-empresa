@@ -54,8 +54,8 @@ function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorP
             <div
               key={idx}
               className="flex-1 flex flex-col items-center h-full justify-end group relative cursor-pointer"
-              onMouseEnter={() => setHoverIdx(idx)}
-              onMouseLeave={() => setHoverIdx(null)}
+              onPointerEnter={(e) => { if (e.pointerType !== 'touch') setHoverIdx(idx); }}
+              onPointerLeave={(e) => { if (e.pointerType !== 'touch') setHoverIdx(null); }}
               onClick={() => setSeleccionadoIdx(seleccionadoIdx === idx ? null : idx)}
             >
               {val > 0 && (

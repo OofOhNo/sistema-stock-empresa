@@ -1568,7 +1568,7 @@ export default function Pedidos({ usuario }) {
                                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                                       loading="lazy"
                                     />
-                                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                    <div className="absolute inset-0 bg-black/25 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
                                       <Eye size={24} />
                                     </div>
                                   </div>

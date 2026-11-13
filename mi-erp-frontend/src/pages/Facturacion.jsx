@@ -1002,6 +1002,7 @@ export default function Facturacion({ usuario }) {
         },
         notas_de_credito: comprobantes.filter(c => c.tipo_comprobante === '07' || c.estado_sunat === 'ANULADO'),
         notas_de_pedido: notasPedido,
+        boletas_automaticas: comprobantes.filter(c => c.origen_facturacion === 'AUTOMATICA'),
         total_comprobantes: comprobantes.length,
         total_facturado_soles: totalMonto
       };
@@ -1020,7 +1021,7 @@ export default function Facturacion({ usuario }) {
 
       localStorage.setItem('erp_modo_emergencia', 'true');
       setModoEmergencia(true);
-      if (tabActiva === 'notas') {
+      if (tabActiva === 'notas' || tabActiva === 'boletas_auto') {
         setTabActiva(tieneAccesoPedidos ? 'pedidos' : 'manual');
       }
       setModalConfirmarEmergencia(false);
@@ -1233,7 +1234,7 @@ export default function Facturacion({ usuario }) {
   // Comprobantes visibles considerando Modo Emergencia
   const comprobantesVisibles = useMemo(() => {
     if (modoEmergencia) {
-      return comprobantes.filter(c => c.tipo_comprobante !== '07');
+      return comprobantes.filter(c => c.tipo_comprobante !== '07' && c.origen_facturacion !== 'AUTOMATICA');
     }
     return comprobantes;
   }, [comprobantes, modoEmergencia]);
@@ -1481,18 +1482,20 @@ export default function Facturacion({ usuario }) {
           <span>Guías de Remisión EG07 ({guiasRemision.length})</span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => setTabActiva('boletas_auto')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
-            tabActiva === 'boletas_auto'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Bot size={14} />
-          <span>Boletas Automáticas</span>
-        </button>
+        {!modoEmergencia && (
+          <button
+            type="button"
+            onClick={() => setTabActiva('boletas_auto')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              tabActiva === 'boletas_auto'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Bot size={14} />
+            <span>Boletas Automáticas</span>
+          </button>
+        )}
       </div>
 
       {/* PESTAÑA 1: FACTURACIÓN POR PEDIDOS */}
@@ -1659,13 +1662,13 @@ export default function Facturacion({ usuario }) {
 
                 {/* Filtros de Categoría / Tipo de Producto */}
                 {categoriasDisponibles.length > 2 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1.5 text-xs">
                     {categoriasDisponibles.map(cat => (
                       <button
                         key={cat}
                         type="button"
                         onClick={() => setCategoriaPos(cat)}
-                        className={`px-3 py-1 rounded-lg font-bold text-xs shrink-0 transition-colors cursor-pointer ${
+                        className={`px-3.5 py-2 rounded-xl font-bold text-xs shrink-0 transition-colors cursor-pointer ${
                           categoriaPos === cat
                             ? 'bg-indigo-600 text-white'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -1691,7 +1694,7 @@ export default function Facturacion({ usuario }) {
                           key={prod.id_producto}
                           type="button"
                           onClick={() => agregarProductoAlPos(prod)}
-                          className={`p-3 rounded-xl border text-left transition-all relative flex flex-col justify-between hover:shadow-md cursor-pointer ${
+                          className={`p-3.5 min-h-[98px] rounded-xl border text-left transition-all relative flex flex-col justify-between hover:shadow-md cursor-pointer select-none ${
                             yaEnCarrito
                               ? 'border-indigo-500 bg-indigo-50/50 ring-2 ring-indigo-500/20'
                               : 'border-slate-200 bg-white hover:border-indigo-300'
@@ -1771,17 +1774,19 @@ export default function Facturacion({ usuario }) {
                           <button
                             type="button"
                             onClick={() => modificarCantidadPos(idx, -1)}
-                            className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer font-bold"
+                            className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center cursor-pointer font-bold"
+                            aria-label="Restar cantidad"
                           >
-                            <Minus size={12} />
+                            <Minus size={14} />
                           </button>
-                          <span className="w-6 text-center font-bold font-mono">{it.cantidad}</span>
+                          <span className="w-7 text-center font-bold font-mono text-sm">{it.cantidad}</span>
                           <button
                             type="button"
                             onClick={() => modificarCantidadPos(idx, 1)}
-                            className="w-6 h-6 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center cursor-pointer font-bold"
+                            className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center cursor-pointer font-bold"
+                            aria-label="Sumar cantidad"
                           >
-                            <Plus size={12} />
+                            <Plus size={14} />
                           </button>
                         </div>
                         <div className="text-right shrink-0 min-w-[60px]">
@@ -1792,10 +1797,11 @@ export default function Facturacion({ usuario }) {
                         <button
                           type="button"
                           onClick={() => eliminarItemPos(idx)}
-                          className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer shrink-0"
+                          className="text-slate-400 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 cursor-pointer shrink-0"
                           title="Eliminar"
+                          aria-label="Eliminar producto"
                         >
-                          <Trash2 size={13} />
+                          <Trash2 size={15} />
                         </button>
                       </div>
                     ))
@@ -1811,53 +1817,53 @@ export default function Facturacion({ usuario }) {
                     <button
                       type="button"
                       onClick={() => setMetodoPagoPos('EFECTIVO')}
-                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      className={`py-3 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
                         metodoPagoPos === 'EFECTIVO'
                           ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-2 ring-emerald-500/20'
                           : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      <Banknote size={15} />
+                      <Banknote size={17} />
                       <span>Efectivo</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setMetodoPagoPos('YAPE')}
-                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      className={`py-3 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
                         metodoPagoPos === 'YAPE'
                           ? 'border-purple-600 bg-purple-50 text-purple-900 ring-2 ring-purple-500/20'
                           : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      <Zap size={15} />
+                      <Zap size={17} />
                       <span>Yape / Plin</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => setMetodoPagoPos('TARJETA')}
-                      className={`py-2 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1 ${
+                      className={`py-3 px-2 rounded-xl border text-center font-bold text-xs transition-all cursor-pointer flex flex-col items-center gap-1.5 ${
                         metodoPagoPos === 'TARJETA'
                           ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-500/20'
                           : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      <CreditCard size={15} />
+                      <CreditCard size={17} />
                       <span>Tarjeta</span>
                     </button>
                   </div>
 
                   {/* Cálculo de vuelto si paga en efectivo */}
                   {metodoPagoPos === 'EFECTIVO' && totalPosCalculado > 0 && (
-                    <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-2">
-                      <div className="flex items-center justify-between">
+                    <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 space-y-2.5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <span className="text-[11px] font-bold text-emerald-900">Paga con billete:</span>
-                        <div className="flex gap-1">
+                        <div className="flex flex-wrap gap-1.5">
                           {[10, 20, 50, 100].map(billete => (
                             <button
                               key={billete}
                               type="button"
                               onClick={() => setMontoEntregadoPos(String(billete))}
-                              className="px-2 py-0.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded text-[10px] font-bold text-emerald-800 cursor-pointer"
+                              className="px-2.5 py-1.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded-lg text-xs font-bold text-emerald-800 cursor-pointer"
                             >
                               S/ {billete}
                             </button>
@@ -1865,7 +1871,7 @@ export default function Facturacion({ usuario }) {
                           <button
                             type="button"
                             onClick={() => setMontoEntregadoPos(String(totalPosCalculado))}
-                            className="px-2 py-0.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded text-[10px] font-bold text-emerald-800 cursor-pointer"
+                            className="px-2.5 py-1.5 bg-white border border-emerald-200 hover:bg-emerald-100 rounded-lg text-xs font-bold text-emerald-800 cursor-pointer"
                           >
                             Exacto
                           </button>
@@ -2104,7 +2110,7 @@ export default function Facturacion({ usuario }) {
       )}
 
       {/* PESTAÑA: BOLETAS AUTOMÁTICAS Y COLA DE IMPRESIÓN */}
-      {tabActiva === 'boletas_auto' && (
+      {tabActiva === 'boletas_auto' && !modoEmergencia && (
         <PanelBoletasAutomaticas
           ubicaciones={ubicaciones}
           onBoletaGenerada={cargarDatos}
@@ -3515,8 +3521,8 @@ export default function Facturacion({ usuario }) {
                   <span>¿Qué ocurrirá al activar el Modo Seguro?</span>
                 </p>
                 <ul className="list-disc list-inside space-y-1 text-slate-700">
-                  <li>Se <strong>descargará automáticamente un archivo de respaldo (backup JSON)</strong> con todas las Notas de Crédito, Notas de Pedido y anulaciones del sistema.</li>
-                  <li>Las secciones de <strong>Notas de Crédito y Notas de Pedido desaparecerán de la pantalla</strong> y de los filtros.</li>
+                  <li>Se <strong>descargará automáticamente un archivo de respaldo (backup JSON)</strong> con todas las Notas de Crédito, Notas de Pedido, Boletas Automáticas y anulaciones del sistema.</li>
+                  <li>Las secciones de <strong>Notas de Crédito, Notas de Pedido y Boletas Automáticas desaparecerán de la pantalla</strong> y de los filtros.</li>
                   <li>El propio botón de Modo Seguro <strong>se ocultará por completo</strong>.</li>
                 </ul>
               </div>

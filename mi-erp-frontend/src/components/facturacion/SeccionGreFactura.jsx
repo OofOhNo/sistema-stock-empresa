@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api';
-import { Truck, MapPin, UserCheck, Plus, Trash2, PackageCheck, Shield } from 'lucide-react';
+import { Truck, MapPin, UserCheck, Plus, PackageCheck, Shield, Loader2 } from 'lucide-react';
 
 export function crearEstadoGreInicial(catalogos = {}, direccionLlegada = '') {
   const defPt = catalogos.puntos_partida?.[0];
@@ -60,13 +60,94 @@ export default function SeccionGreFactura({
 }) {
   const [gestionAbierta, setGestionAbierta] = useState(null); // 'punto' | 'vehiculo' | 'conductor' | null
   const [nuevoPunto, setNuevoPunto] = useState({ tipo: '-', ubigeo: '', domicilio: '' });
-  const [nuevoVehiculo, setNuevoVehiculo] = useState({ placa: '', entidad_emisora: '', numero_autorizacion: '' });
+  const [nuevoVehiculo, setNuevoVehiculo] = useState({ placa: '', descripcion: '', entidad_emisora: '', numero_autorizacion: '' });
   const [nuevoConductor, setNuevoConductor] = useState({ licencia: '', numero_documento: '', apellidos_nombres: '' });
   const [guardandoCat, setGuardandoCat] = useState(false);
+
+  // Puntos de llegada SUNAT basados en el RUC del destinatario
+  const [puntosLlegadaSunat, setPuntosLlegadaSunat] = useState([]);
+  const [cargandoLlegadas, setCargandoLlegadas] = useState(false);
+  const [modoLlegadaManual, setModoLlegadaManual] = useState(false);
 
   const puntos = catalogosGre.puntos_partida || [];
   const vehiculos = catalogosGre.vehiculos || [];
   const conductores = catalogosGre.conductores || [];
+
+  useEffect(() => {
+    const ruc = String(destinatarioDocumento || '').trim();
+    if (!ruc) {
+      setPuntosLlegadaSunat([]);
+      return;
+    }
+    let cancelado = false;
+    setCargandoLlegadas(true);
+    api.get(`/facturacion/gre/puntos-llegada/${encodeURIComponent(ruc)}`)
+      .then((res) => {
+        if (cancelado) return;
+        const lista = res.data?.puntos || [];
+        setPuntosLlegadaSunat(lista);
+        if (lista.length > 0) {
+          setModoLlegadaManual(false);
+          setGreForm((prev) => {
+            const actualEnLista = lista.some((pt) => pt.direccion === prev.punto_llegada_direccion);
+            if (!prev.punto_llegada_direccion || !actualEnLista) {
+              return {
+                ...prev,
+                punto_llegada_ubigeo: lista[0].ubigeo || '',
+                punto_llegada_direccion: lista[0].direccion
+              };
+            }
+            return prev;
+          });
+        } else {
+          setModoLlegadaManual(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelado) setPuntosLlegadaSunat([]);
+      })
+      .finally(() => {
+        if (!cancelado) setCargandoLlegadas(false);
+      });
+    return () => { cancelado = true; };
+  }, [destinatarioDocumento, setGreForm]);
+
+  const handleSelectPuntoLlegada = (valor) => {
+    if (valor === '__MANUAL__') {
+      setModoLlegadaManual(true);
+      setGreForm((prev) => ({ ...prev, punto_llegada_ubigeo: '', punto_llegada_direccion: '' }));
+      return;
+    }
+    setModoLlegadaManual(false);
+    const pt = puntosLlegadaSunat.find((p) => p.direccion === valor);
+    setGreForm((prev) => ({
+      ...prev,
+      punto_llegada_ubigeo: pt?.ubigeo || '',
+      punto_llegada_direccion: pt?.direccion || valor
+    }));
+  };
+
+  const guardarDireccionLlegadaSucursal = async () => {
+    const ruc = String(destinatarioDocumento || '').trim();
+    if (!ruc || !greForm.punto_llegada_direccion?.trim()) {
+      return toast.error('Ingresa una dirección válida para guardarla.');
+    }
+    try {
+      const res = await api.post('/facturacion/gre/puntos-llegada', {
+        ruc,
+        ubigeo: greForm.punto_llegada_ubigeo || '',
+        direccion: greForm.punto_llegada_direccion.trim(),
+        tipo: 'SUCURSAL / ANEXO'
+      });
+      if (res.data?.punto) {
+        setPuntosLlegadaSunat((prev) => [...prev.filter((p) => p.direccion !== res.data.punto.direccion), res.data.punto]);
+        setModoLlegadaManual(false);
+        toast.success('Dirección guardada en la lista de establecimientos del cliente.');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo guardar la dirección.');
+    }
+  };
 
   const handleSelectPunto = (id) => {
     const pt = puntos.find((p) => String(p.id_punto) === String(id));
@@ -130,7 +211,7 @@ export default function SeccionGreFactura({
     try {
       const res = await api.post('/facturacion/gre/vehiculos', nuevoVehiculo);
       toast.success('Vehículo frecuente agregado.');
-      setNuevoVehiculo({ placa: '', entidad_emisora: '', numero_autorizacion: '' });
+      setNuevoVehiculo({ placa: '', descripcion: '', entidad_emisora: '', numero_autorizacion: '' });
       setGestionAbierta(null);
       if (onCatalogosActualizados) await onCatalogosActualizados();
       if (res.data?.vehiculo) {
@@ -292,14 +373,54 @@ export default function SeccionGreFactura({
         </div>
 
         <div>
-          <label className="block font-bold text-slate-700 mb-1">Punto de Llegada *</label>
-          <input
-            type="text"
-            value={greForm.punto_llegada_direccion}
-            onChange={(e) => setGreForm({ ...greForm, punto_llegada_direccion: e.target.value })}
-            placeholder="Dirección exacta de entrega / llegada"
-            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
-          />
+          <div className="flex items-center justify-between mb-1">
+            <label className="font-bold text-slate-700 flex items-center gap-1.5">
+              <span>Punto de Llegada (SUNAT por RUC) *</span>
+              {cargandoLlegadas && <Loader2 size={11} className="animate-spin text-sky-600" />}
+            </label>
+            {puntosLlegadaSunat.length > 0 && modoLlegadaManual && (
+              <button
+                type="button"
+                onClick={() => handleSelectPuntoLlegada(puntosLlegadaSunat[0].direccion)}
+                className="text-[10px] font-bold text-sky-700 hover:underline cursor-pointer"
+              >
+                Usar lista SUNAT ({puntosLlegadaSunat.length})
+              </button>
+            )}
+          </div>
+          {puntosLlegadaSunat.length > 0 && !modoLlegadaManual ? (
+            <select
+              value={greForm.punto_llegada_direccion || ''}
+              onChange={(e) => handleSelectPuntoLlegada(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+            >
+              {puntosLlegadaSunat.map((pt, idx) => (
+                <option key={pt.id_punto_llegada || idx} value={pt.direccion}>
+                  {pt.ubigeo ? `[${pt.ubigeo}] ` : ''}{pt.tipo ? `${pt.tipo} — ` : ''}{pt.direccion}
+                </option>
+              ))}
+              <option value="__MANUAL__">✏️ Escribir / agregar otra dirección...</option>
+            </select>
+          ) : (
+            <div className="space-y-1.5">
+              <input
+                type="text"
+                value={greForm.punto_llegada_direccion}
+                onChange={(e) => setGreForm({ ...greForm, punto_llegada_direccion: e.target.value })}
+                placeholder="Dirección exacta de entrega / llegada"
+                className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+              />
+              {destinatarioDocumento && greForm.punto_llegada_direccion?.trim() && (
+                <button
+                  type="button"
+                  onClick={guardarDireccionLlegadaSucursal}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                >
+                  + Guardar esta dirección en establecimientos del RUC {destinatarioDocumento}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -356,10 +477,12 @@ export default function SeccionGreFactura({
           <select
             value={greForm.id_vehiculo}
             onChange={(e) => handleSelectVehiculo(e.target.value)}
-            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs font-mono font-bold"
+            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs font-semibold"
           >
             {vehiculos.map((v) => (
-              <option key={v.id_vehiculo} value={v.id_vehiculo}>{v.placa}</option>
+              <option key={v.id_vehiculo} value={v.id_vehiculo}>
+                {v.placa}{v.descripcion ? ` — ${v.descripcion}` : ''}
+              </option>
             ))}
           </select>
         </div>
@@ -409,13 +532,20 @@ export default function SeccionGreFactura({
       {esAdminCentral && gestionAbierta === 'vehiculo' && (
         <div className="p-3 bg-white border border-indigo-200 rounded-xl space-y-2">
           <div className="font-bold text-indigo-900 text-[11px]">Registrar Vehículo Frecuente</div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
               type="text"
               placeholder="Placa (Ej: BEG445) *"
               value={nuevoVehiculo.placa}
               onChange={(e) => setNuevoVehiculo({ ...nuevoVehiculo, placa: e.target.value.toUpperCase() })}
               className="p-1.5 border border-slate-300 rounded-lg text-xs font-mono"
+            />
+            <input
+              type="text"
+              placeholder="Descripción interna (Ej: Furgón blanco frío)"
+              value={nuevoVehiculo.descripcion}
+              onChange={(e) => setNuevoVehiculo({ ...nuevoVehiculo, descripcion: e.target.value })}
+              className="p-1.5 border border-slate-300 rounded-lg text-xs"
             />
             <input
               type="text"

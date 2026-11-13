@@ -3,7 +3,7 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import {
   MessageSquare, Send, Search, Eye, Lock,
-  CheckCheck, Check
+  CheckCheck, Check, ArrowLeft
 } from 'lucide-react';
 
 export default function Mensajes({ usuario }) {
@@ -215,7 +215,7 @@ export default function Mensajes({ usuario }) {
   });
 
   return (
-    <div className="space-y-4 h-[calc(100vh-115px)] flex flex-col">
+    <div className="space-y-4 h-[calc(100dvh-130px)] md:h-[calc(100dvh-115px)] flex flex-col">
       {/* CABECERA */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs shrink-0">
         <div className="flex items-center space-x-3">
@@ -257,7 +257,7 @@ export default function Mensajes({ usuario }) {
       {tabActual === 'chat' && (
         <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex min-h-0">
           {/* LISTA DE COMPAÑEROS */}
-          <div className="w-72 sm:w-84 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
+          <div className={`${contactoActivo ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-slate-200 flex-col shrink-0 bg-slate-50/50`}>
             <div className="p-3 border-b border-slate-200 bg-white">
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -331,12 +331,20 @@ export default function Mensajes({ usuario }) {
           </div>
 
           {/* CONVERSACIÓN ACTIVA */}
-          <div className="flex-1 flex flex-col min-w-0 bg-white">
+          <div className={`${contactoActivo ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 bg-white`}>
             {contactoActivo ? (
               <>
                 <div className="p-3.5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
+                  <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setContactoActivo(null)}
+                      className="md:hidden p-2 -ml-1 rounded-xl text-slate-600 hover:bg-slate-100 active:bg-slate-200 flex items-center justify-center shrink-0 cursor-pointer"
+                      aria-label="Volver a lista de contactos"
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                    <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs shrink-0">
                       {(contactoActivo.nombre_completo || 'U').split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('')}
                     </div>
                     <div>
@@ -431,7 +439,7 @@ export default function Mensajes({ usuario }) {
           </div>
 
           <div className="flex-1 flex min-h-0">
-            <div className="w-84 border-r border-slate-200 flex flex-col shrink-0 bg-slate-50/50">
+            <div className={`${parActivo ? 'hidden md:flex' : 'flex'} w-full md:w-80 border-r border-slate-200 flex-col shrink-0 bg-slate-50/50`}>
               <div className="p-3 border-b border-slate-200 bg-white">
                 <div className="relative">
                   <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
@@ -489,12 +497,21 @@ export default function Mensajes({ usuario }) {
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-w-0 bg-white">
+            <div className={`${parActivo ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 bg-white`}>
               {parActivo ? (
                 <>
-                  <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
-                    <div>
-                      <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
+                  <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setParActivo(null)}
+                        className="md:hidden p-2 -ml-1 rounded-xl text-slate-600 hover:bg-slate-200/70 flex items-center justify-center shrink-0 cursor-pointer"
+                        aria-label="Volver a conversaciones"
+                      >
+                        <ArrowLeft size={18} />
+                      </button>
+                      <div className="min-w-0">
+                        <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex flex-wrap items-center gap-1.5">
                         <Eye size={15} className="text-amber-600" />
                         <span>Conversación entre:</span>
                         <span className="text-indigo-700 font-bold">{parActivo.u1_nombre}</span>
@@ -504,6 +521,7 @@ export default function Mensajes({ usuario }) {
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         {parActivo.total_mensajes} mensajes · Vista silenciosa de Admin Central
                       </p>
+                      </div>
                     </div>
                   </div>
 

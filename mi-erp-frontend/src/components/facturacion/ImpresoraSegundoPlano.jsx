@@ -21,6 +21,7 @@ export default function ImpresoraSegundoPlano({ usuario }) {
 
     const revisarYProcesarCola = async () => {
       if (procesandoRef.current) return;
+      if (localStorage.getItem('erp_modo_emergencia') === 'true') return;
       procesandoRef.current = true;
       try {
         const cfgRes = await api.get('/facturacion/boletas-auto/config');

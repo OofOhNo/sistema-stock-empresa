@@ -390,22 +390,22 @@ export default function Clientes({ usuario }) {
                     <Folder size={24} />
                   </div>
                   {puedeEditarClientes && (
-                    <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center space-x-1 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 transition-opacity">
                       <button
                         type="button"
                         onClick={(e) => abrirEditarCarpeta(e, carpeta)}
-                        className="p-1.5 bg-white/80 hover:bg-white text-slate-600 hover:text-indigo-600 rounded-lg cursor-pointer shadow-xs"
+                        className="p-2 sm:p-1.5 bg-white/90 hover:bg-white text-slate-600 hover:text-indigo-600 rounded-lg cursor-pointer shadow-xs"
                         title="Renombrar carpeta"
                       >
-                        <Edit2 size={14} />
+                        <Edit2 size={15} />
                       </button>
                       <button
                         type="button"
                         onClick={(e) => eliminarCarpeta(e, carpeta)}
-                        className="p-1.5 bg-white/80 hover:bg-white text-slate-600 hover:text-rose-600 rounded-lg cursor-pointer shadow-xs"
+                        className="p-2 sm:p-1.5 bg-white/90 hover:bg-white text-slate-600 hover:text-rose-600 rounded-lg cursor-pointer shadow-xs"
                         title="Eliminar carpeta"
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={15} />
                       </button>
                     </div>
                   )}

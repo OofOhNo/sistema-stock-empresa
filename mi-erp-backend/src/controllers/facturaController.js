@@ -10,7 +10,7 @@ const {
     enviarAConectorNubefact
 } = require('../utils/sunatNubefactService');
 const { generarUnaBoletaAutomatica } = require('../utils/boletaAutoService');
-const { obtenerCatalogosGre, crearGreInterna } = require('../utils/greService');
+const { obtenerCatalogosGre, crearGreInterna, consultarPuntosLlegadaPorRuc } = require('../utils/greService');
 
 async function obtenerConfigEmisor(clientOrPool = pool) {
     try {
@@ -2132,18 +2132,81 @@ const facturaController = {
 
     crearVehiculoGre: async (req, res) => {
         try {
-            const { placa, entidad_emisora = '', numero_autorizacion = '' } = req.body;
+            const { placa, descripcion = '', entidad_emisora = '', numero_autorizacion = '' } = req.body;
             if (!placa || !placa.trim()) return res.status(400).json({ exito: false, mensaje: 'La placa del vehículo es obligatoria.' });
             const { rows } = await pool.query(
-                `INSERT INTO gre_vehiculos (placa, entidad_emisora, numero_autorizacion, activo)
-                 VALUES (UPPER($1), $2, $3, TRUE)
-                 ON CONFLICT (placa) DO UPDATE SET activo = TRUE, entidad_emisora = EXCLUDED.entidad_emisora, numero_autorizacion = EXCLUDED.numero_autorizacion
+                `INSERT INTO gre_vehiculos (placa, descripcion, entidad_emisora, numero_autorizacion, activo)
+                 VALUES (UPPER($1), $2, $3, $4, TRUE)
+                 ON CONFLICT (placa) DO UPDATE SET
+                    activo = TRUE,
+                    descripcion = COALESCE(NULLIF(EXCLUDED.descripcion, ''), gre_vehiculos.descripcion),
+                    entidad_emisora = EXCLUDED.entidad_emisora,
+                    numero_autorizacion = EXCLUDED.numero_autorizacion
                  RETURNING *;`,
-                [placa.trim(), entidad_emisora.trim(), numero_autorizacion.trim()]
+                [placa.trim(), String(descripcion || '').trim(), String(entidad_emisora || '').trim(), String(numero_autorizacion || '').trim()]
             );
-            res.status(201).json({ exito: true, vehiculo: rows[0] });
+            res.status(201).json({ exito: true, mensaje: 'Vehículo guardado correctamente.', vehiculo: rows[0] });
         } catch (error) {
             res.status(400).json({ exito: false, mensaje: error.message || 'Error al registrar vehículo.' });
+        }
+    },
+
+    actualizarVehiculoGre: async (req, res) => {
+        try {
+            const id = parseInt(req.params.id, 10);
+            const { placa, descripcion, entidad_emisora, numero_autorizacion } = req.body;
+            if (!placa || !placa.trim()) return res.status(400).json({ exito: false, mensaje: 'La placa es obligatoria.' });
+            const { rows } = await pool.query(
+                `UPDATE gre_vehiculos
+                 SET placa = UPPER($1),
+                     descripcion = COALESCE($2, descripcion),
+                     entidad_emisora = COALESCE($3, entidad_emisora),
+                     numero_autorizacion = COALESCE($4, numero_autorizacion)
+                 WHERE id_vehiculo = $5
+                 RETURNING *;`,
+                [
+                    placa.trim(),
+                    descripcion !== undefined ? String(descripcion || '').trim() : null,
+                    entidad_emisora !== undefined ? String(entidad_emisora || '').trim() : null,
+                    numero_autorizacion !== undefined ? String(numero_autorizacion || '').trim() : null,
+                    id
+                ]
+            );
+            if (rows.length === 0) return res.status(404).json({ exito: false, mensaje: 'Vehículo no encontrado.' });
+            res.json({ exito: true, mensaje: 'Vehículo actualizado correctamente.', vehiculo: rows[0] });
+        } catch (error) {
+            const msg = error.code === '23505' ? 'Ya existe otro vehículo con esa placa.' : (error.message || 'Error al actualizar vehículo.');
+            res.status(400).json({ exito: false, mensaje: msg });
+        }
+    },
+
+    obtenerPuntosLlegadaPorRuc: async (req, res) => {
+        try {
+            const ruc = String(req.params.ruc || '').trim();
+            const puntos = await consultarPuntosLlegadaPorRuc(pool, ruc);
+            res.json({ exito: true, ruc, puntos });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al consultar puntos de llegada por RUC.' });
+        }
+    },
+
+    guardarPuntoLlegadaRuc: async (req, res) => {
+        try {
+            const { ruc, tipo = 'SUCURSAL / ANEXO', ubigeo = '', direccion, codigo_anexo = 'MAN' } = req.body;
+            if (!ruc || !direccion || !direccion.trim()) {
+                return res.status(400).json({ exito: false, mensaje: 'RUC y dirección de llegada son obligatorios.' });
+            }
+            const { rows } = await pool.query(`
+                INSERT INTO gre_puntos_llegada_cliente (ruc, codigo_anexo, tipo, ubigeo, direccion, origen)
+                VALUES ($1, $2, $3, $4, $5, 'MANUAL')
+                ON CONFLICT (ruc, direccion) DO UPDATE SET
+                    ubigeo = COALESCE(NULLIF(EXCLUDED.ubigeo, ''), gre_puntos_llegada_cliente.ubigeo),
+                    tipo = EXCLUDED.tipo
+                RETURNING *;
+            `, [String(ruc).trim(), String(codigo_anexo).trim(), String(tipo).trim(), String(ubigeo || '').trim(), direccion.trim()]);
+            res.status(201).json({ exito: true, punto: rows[0] });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo guardar el punto de llegada.' });
         }
     },
 

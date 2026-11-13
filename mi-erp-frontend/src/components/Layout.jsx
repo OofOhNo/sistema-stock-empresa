@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import {
   LayoutDashboard, Package, ShoppingCart, FileText, Calendar, CalendarDays,
-  LogOut, Users, MapPin, Building2, Search,
+  LogOut, Users, MapPin, Building2, Search, Menu,
   ShieldCheck, X, Loader2, ArrowRight, Bug, MessageSquare,
   KeyRound, ChevronDown, Eye, EyeOff, CheckCircle2, AlertCircle, Tag
 } from 'lucide-react';
@@ -18,9 +18,12 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const [tabResultados, setTabResultados] = useState('facturas');
   const buscadorTimeout = useRef(null);
 
-  // Menú desplegable de Usuario ("Mi Cuenta")
+  // Menú desplegable de Usuario ("Mi Cuenta") y Drawer táctil/móvil
   const [menuUsuarioAbierto, setMenuUsuarioAbierto] = useState(false);
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState(false);
+  const [buscadorMovilAbierto, setBuscadorMovilAbierto] = useState(false);
   const menuUsuarioRef = useRef(null);
+  const gestoTouchRef = useRef({ x: null, y: null, bordeIzquierdo: false });
 
   // Modal para cambiar la propia contraseña estando iniciado sesión
   const [modalPassword, setModalPassword] = useState(false);
@@ -117,15 +120,17 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     const manejarEscape = (e) => {
       if (e.key === 'Escape') {
         setMenuUsuarioAbierto(false);
+        setMenuMovilAbierto(false);
+        setBuscadorMovilAbierto(false);
         setMostrarModalBusqueda(false);
         setModalBug(false);
         setModalPassword(false);
       }
     };
-    document.addEventListener('mousedown', manejarClickFuera);
+    document.addEventListener('pointerdown', manejarClickFuera);
     document.addEventListener('keydown', manejarEscape);
     return () => {
-      document.removeEventListener('mousedown', manejarClickFuera);
+      document.removeEventListener('pointerdown', manejarClickFuera);
       document.removeEventListener('keydown', manejarEscape);
     };
   }, []);
@@ -282,34 +287,91 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const coincidenNuevas =
     formPassword.confirmar.length > 0 && formPassword.nueva === formPassword.confirmar;
 
+  const manejarTouchStartLayout = (e) => {
+    const t = e.touches?.[0];
+    if (!t) return;
+    gestoTouchRef.current = {
+      x: t.clientX,
+      y: t.clientY,
+      bordeIzquierdo: t.clientX <= 28
+    };
+  };
+
+  const manejarTouchEndLayout = (e) => {
+    const t = e.changedTouches?.[0];
+    const inicio = gestoTouchRef.current;
+    if (!t || inicio.x === null || inicio.y === null) return;
+    const dx = t.clientX - inicio.x;
+    const dy = Math.abs(t.clientY - inicio.y);
+    gestoTouchRef.current = { x: null, y: null, bordeIzquierdo: false };
+
+    if (dy > 55) return;
+    if (!menuMovilAbierto && inicio.bordeIzquierdo && dx >= 55) {
+      setMenuMovilAbierto(true);
+    } else if (menuMovilAbierto && dx <= -55) {
+      setMenuMovilAbierto(false);
+    }
+  };
+
   return (
-    <div className="flex h-screen bg-slate-50">
-      {/* MENÚ LATERAL */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
-        <div className="p-6 pb-4">
-          <h2 className="text-2xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h2>
-          <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
-            <span className="text-xs text-indigo-400 font-semibold">{usuario.rol}</span>
-            <span className="text-slate-600">·</span>
-            <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-              esProduccion ? 'bg-amber-400/20 text-amber-300' : 'bg-indigo-400/20 text-indigo-300'
-            }`}>
-              {esProduccion ? 'Producción' : 'Administración'}
-            </span>
+    <div
+      className="flex h-screen h-[100dvh] bg-slate-50 overflow-hidden"
+      onTouchStart={manejarTouchStartLayout}
+      onTouchEnd={manejarTouchEndLayout}
+    >
+      {/* BACKDROP TÁCTIL PARA MENÚ EN MÓVIL / TABLET */}
+      {menuMovilAbierto && (
+        <div
+          onClick={() => setMenuMovilAbierto(false)}
+          className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs lg:hidden"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* MENÚ LATERAL (FIJO EN ESCRITORIO, DRAWER DESLIZABLE EN MÓVIL/TABLET) */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-72 lg:static lg:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 shadow-2xl lg:shadow-none transform transition-transform duration-200 ease-out ${
+          menuMovilAbierto ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+        }`}
+      >
+        <div className="p-5 lg:p-6 pb-4 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-2xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h2>
+            <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
+              <span className="text-xs text-indigo-400 font-semibold">{usuario.rol}</span>
+              <span className="text-slate-600">·</span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                esProduccion ? 'bg-amber-400/20 text-amber-300' : 'bg-indigo-400/20 text-indigo-300'
+              }`}>
+                {esProduccion ? 'Producción' : 'Administración'}
+              </span>
+            </div>
+            {usuario.nombre_ubicacion && (
+              <p className="text-[11px] text-slate-400 mt-1 truncate">
+                📍 {usuario.nombre_ubicacion}
+              </p>
+            )}
           </div>
-          {usuario.nombre_ubicacion && (
-            <p className="text-[11px] text-slate-400 mt-1 truncate">
-              📍 {usuario.nombre_ubicacion}
-            </p>
-          )}
+
+          <button
+            type="button"
+            onClick={() => setMenuMovilAbierto(false)}
+            className="lg:hidden p-2 -mr-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 min-w-[40px] min-h-[40px] flex items-center justify-center cursor-pointer"
+            aria-label="Cerrar menú"
+          >
+            <X size={20} />
+          </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-1.5 mt-1 overflow-y-auto pb-4">
+        <nav className="flex-1 px-4 space-y-1.5 mt-1 overflow-y-auto pb-6">
           {menu.map((item) => (
             <button
               key={item.id}
-              onClick={() => setVistaActual(item.id)}
-              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+              onClick={() => {
+                setVistaActual(item.id);
+                setMenuMovilAbierto(false);
+              }}
+              className={`w-full flex items-center justify-between px-4 py-3 lg:py-2.5 rounded-xl transition-all cursor-pointer ${
                 vistaActual === item.id
                   ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
                   : 'hover:bg-slate-800 hover:text-white'
@@ -330,49 +392,70 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       </aside>
 
       {/* CONTENIDO PRINCIPAL */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* BARRA SUPERIOR */}
-        <header className="h-16 bg-white border-b border-slate-200 px-6 sm:px-8 flex items-center justify-between shrink-0 shadow-xs gap-4">
-          <div className="flex items-center space-x-2 shrink-0">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:inline">
-              Pantalla:
-            </span>
-            <span className="text-sm font-bold text-blue-950">
-              {tituloActivo}
-            </span>
-          </div>
-
-          {/* BUSCADOR GENERAL RÁPIDO PARA FACTURAS Y PEDIDOS */}
-          <div className="relative flex-1 max-w-lg mx-2">
-            <div className="relative">
-              <Search size={16} className="absolute left-3.5 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar pedidos o facturas (ej: 5 de noviembre, cliente: vikingos)..."
-                value={terminoBusqueda}
-                onChange={(e) => handleInputBusqueda(e.target.value)}
-                onFocus={() => { if (resultadosBusqueda) setMostrarModalBusqueda(true); }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') ejecutarBusqueda(terminoBusqueda);
-                }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-9 py-2 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden transition-all shadow-2xs"
-              />
-              {cargandoBusqueda && (
-                <Loader2 size={15} className="absolute right-3 top-2.5 text-indigo-500 animate-spin" />
-              )}
-              {terminoBusqueda && !cargandoBusqueda && (
-                <button
-                  onClick={() => { setTerminoBusqueda(''); setResultadosBusqueda(null); }}
-                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                >
-                  <X size={15} />
-                </button>
-              )}
+        <header className="bg-white border-b border-slate-200 px-3 sm:px-6 lg:px-8 shrink-0 shadow-xs">
+          <div className="h-16 flex items-center justify-between gap-2 sm:gap-4">
+            <div className="flex items-center space-x-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => setMenuMovilAbierto(true)}
+                className="lg:hidden p-2 -ml-1 rounded-xl text-slate-600 hover:bg-slate-100 active:bg-slate-200 min-w-[44px] min-h-[44px] flex items-center justify-center shrink-0 cursor-pointer"
+                aria-label="Abrir menú de navegación"
+              >
+                <Menu size={22} />
+              </button>
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden xl:inline shrink-0">
+                Pantalla:
+              </span>
+              <span className="text-sm font-bold text-blue-950 truncate">
+                {tituloActivo}
+              </span>
             </div>
-          </div>
 
-          {/* MENÚ DE USUARIO ("MI CUENTA") */}
-          <div className="flex items-center space-x-3 shrink-0" ref={menuUsuarioRef}>
+            {/* BUSCADOR GENERAL RÁPIDO PARA FACTURAS Y PEDIDOS (ESCRITORIO / TABLET) */}
+            <div className="hidden sm:block relative flex-1 max-w-lg mx-2">
+              <div className="relative">
+                <Search size={16} className="absolute left-3.5 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar pedidos o facturas (ej: 5 de noviembre, cliente: vikingos)..."
+                  value={terminoBusqueda}
+                  onChange={(e) => handleInputBusqueda(e.target.value)}
+                  onFocus={() => { if (resultadosBusqueda) setMostrarModalBusqueda(true); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') ejecutarBusqueda(terminoBusqueda);
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-9 py-2 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden transition-all shadow-2xs"
+                />
+                {cargandoBusqueda && (
+                  <Loader2 size={15} className="absolute right-3 top-2.5 text-indigo-500 animate-spin" />
+                )}
+                {terminoBusqueda && !cargandoBusqueda && (
+                  <button
+                    onClick={() => { setTerminoBusqueda(''); setResultadosBusqueda(null); }}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X size={15} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* MENÚ DE USUARIO ("MI CUENTA") Y BOTÓN BUSCAR EN MÓVIL */}
+            <div className="flex items-center space-x-2 sm:space-x-3 shrink-0" ref={menuUsuarioRef}>
+              <button
+                type="button"
+                onClick={() => setBuscadorMovilAbierto((prev) => !prev)}
+                className={`sm:hidden min-w-[40px] min-h-[40px] rounded-xl border flex items-center justify-center transition-colors cursor-pointer ${
+                  buscadorMovilAbierto
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                }`}
+                aria-label="Buscar pedidos o facturas"
+              >
+                <Search size={18} />
+              </button>
             {puedeEditarUsuarios && pendientesRecuperacion > 0 && (
               <button
                 type="button"
@@ -519,10 +602,44 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
               )}
             </div>
           </div>
+          </div>
+
+          {/* BUSCADOR DESPLEGABLE EN MÓVILES */}
+          {buscadorMovilAbierto && (
+            <div className="sm:hidden pb-3 pt-1">
+              <div className="relative">
+                <Search size={16} className="absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Buscar pedidos o facturas..."
+                  value={terminoBusqueda}
+                  onChange={(e) => handleInputBusqueda(e.target.value)}
+                  onFocus={() => { if (resultadosBusqueda) setMostrarModalBusqueda(true); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') ejecutarBusqueda(terminoBusqueda);
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-10 py-2.5 text-sm font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+                {cargandoBusqueda && (
+                  <Loader2 size={16} className="absolute right-3 top-3 text-indigo-500 animate-spin" />
+                )}
+                {terminoBusqueda && !cargandoBusqueda && (
+                  <button
+                    type="button"
+                    onClick={() => { setTerminoBusqueda(''); setResultadosBusqueda(null); }}
+                    className="absolute right-2 top-1.5 p-1.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </header>
 
         {/* ÁREA DE CONTENIDO */}
-        <main className="flex-1 overflow-y-auto p-6 sm:p-8">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-24 sm:pb-20 lg:pb-8">
           {children}
         </main>
       </div>
@@ -530,7 +647,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       {/* MODAL PARA CAMBIAR LA PROPIA CONTRASEÑA */}
       {modalPassword && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
           onClick={() => setModalPassword(false)}
         >
           <div
@@ -870,7 +987,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       {puedeUsarMensajes && (
         <button
           onClick={() => setVistaActual('mensajes')}
-          className="fixed bottom-5 right-20 z-40 bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
+          className="fixed bottom-4 sm:bottom-5 right-20 z-40 bg-indigo-600 hover:bg-indigo-700 text-white p-3.5 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
           title="Abrir chat con compañeros"
         >
           <MessageSquare size={20} />
@@ -888,7 +1005,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       {/* BOTÓN FLOTANTE EN LA ESQUINA PARA REPORTAR PROBLEMAS */}
       <button
         onClick={() => setModalBug(true)}
-        className="fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-700 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
+        className="fixed bottom-4 sm:bottom-5 right-4 sm:right-5 z-40 bg-red-600 hover:bg-red-700 text-white p-3.5 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
         title="Avisar de un problema o falla"
       >
         <Bug size={20} />
@@ -900,7 +1017,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       {/* MODAL SIMPLE DE REPORTE DE PROBLEMAS */}
       {modalBug && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 overflow-y-auto"
           onClick={() => setModalBug(false)}
         >
           <div
