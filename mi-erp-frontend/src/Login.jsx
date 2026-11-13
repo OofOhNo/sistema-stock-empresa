@@ -92,8 +92,15 @@ export default function Login({ onLoginExitoso }) {
         {modo === 'login' ? (
           <>
             <div className="text-center mb-7">
-              <h1 className="text-3xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h1>
-              <p className="text-slate-300 text-sm mt-2">
+              <img
+                src="/brand/logo-negativo.png"
+                alt="PROCESOS CÁRNICOS S.A.C."
+                className="h-24 w-auto mx-auto object-contain mb-3"
+              />
+              <h1 className="text-lg font-brand !text-slate-200 tracking-wider uppercase" style={{ color: '#e2e8f0' }}>
+                Sistema de Gestión ERP
+              </h1>
+              <p className="text-slate-300 text-sm mt-1.5">
                 Escribe tu correo y contraseña para entrar
               </p>
             </div>
@@ -191,7 +198,12 @@ export default function Login({ onLoginExitoso }) {
             </button>
 
             <div className="mb-6">
-              <h2 className="text-2xl font-bold !text-white" style={{ color: '#ffffff' }}>¿Olvidaste tu contraseña?</h2>
+              <img
+                src="/brand/logo-negativo.png"
+                alt="PROCESOS CÁRNICOS S.A.C."
+                className="h-14 w-auto object-contain mb-4"
+              />
+              <h2 className="text-2xl !text-white" style={{ color: '#ffffff' }}>¿Olvidaste tu contraseña?</h2>
               <p className="text-slate-300 text-sm mt-2 leading-relaxed">
                 No te preocupes. Escribe abajo tu correo o tu nombre completo y le enviaremos un aviso al encargado de <strong>Personal y Roles</strong> para que te ponga una contraseña nueva.
               </p>

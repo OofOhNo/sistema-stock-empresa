@@ -30,6 +30,7 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
       </tr>
     `).join('');
 
+    const baseUrl = window.location.origin;
     win.document.write(`
       <!doctype html>
       <html>
@@ -37,8 +38,16 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
         <meta charset="utf-8" />
         <title>GRE ${numeroGre}</title>
         <style>
+          @font-face {
+            font-family: 'Berg Regular';
+            src: url('${baseUrl}/fonts/Berg_Regular_400.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+          }
           body { font-family: Arial, Helvetica, sans-serif; color: #111827; padding: 28px; font-size: 12px; }
-          .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 14px; }
+          .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 14px; }
+          .emisor-wrap { display: flex; align-items: center; gap: 14px; }
+          .emisor-title { font-family: 'Berg Regular', Arial, Helvetica, sans-serif; font-size: 21px; font-weight: 400; letter-spacing: 0.6px; }
           .title-box { border: 2px solid #0f172a; padding: 10px 18px; text-align: center; border-radius: 6px; }
           .sec { margin-bottom: 12px; line-height: 1.5; }
           .sec-title { font-weight: bold; text-transform: uppercase; font-size: 11px; color: #334155; border-bottom: 1px solid #cbd5e1; margin-bottom: 6px; padding-bottom: 2px; }
@@ -51,10 +60,13 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
       </head>
       <body>
         <div class="header">
-          <div>
-            <div style="font-size:17px;font-weight:900;">${razonSocialEmisor}</div>
-            <div style="margin-top:4px;">RUC: <b>${rucEmisor}</b></div>
-            <div style="margin-top:2px;color:#475569;font-size:11px;">${guia.punto_partida_direccion || ''}</div>
+          <div class="emisor-wrap">
+            <img src="${baseUrl}/brand/logo-color-claro.png" alt="PROCESOS CÁRNICOS S.A.C." style="height: 70px; width: auto; object-fit: contain;" />
+            <div>
+              <div class="emisor-title">${razonSocialEmisor}</div>
+              <div style="margin-top:4px;">RUC: <b>${rucEmisor}</b></div>
+              <div style="margin-top:2px;color:#475569;font-size:11px;">${guia.punto_partida_direccion || ''}</div>
+            </div>
           </div>
           <div class="title-box">
             <div style="font-weight:bold;font-size:11px;">GUÍA DE REMISIÓN ELECTRÓNICA</div>
@@ -113,7 +125,7 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
           </div>
           <div>${qrSvg}</div>
         </div>
-        <script>window.onload = function(){ window.print(); };</script>
+        <script>window.onload = async function(){ try { await document.fonts.ready; } catch(e) {} window.print(); };</script>
       </body>
       </html>
     `);
@@ -145,10 +157,17 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
 
         <div className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b border-slate-200 pb-4">
-            <div>
-              <h2 className="text-base font-black text-slate-900">{razonSocialEmisor}</h2>
-              <p className="font-mono font-bold text-slate-700">RUC: {rucEmisor}</p>
-              <p className="text-slate-500 mt-1">{guia.punto_partida_direccion}</p>
+            <div className="flex items-center gap-3.5">
+              <img
+                src="/brand/logo-color-claro.png"
+                alt="PROCESOS CÁRNICOS S.A.C."
+                className="h-16 w-auto object-contain shrink-0"
+              />
+              <div>
+                <h2 className="text-lg sm:text-xl font-brand text-slate-900">{razonSocialEmisor}</h2>
+                <p className="font-mono font-bold text-slate-700">RUC: {rucEmisor}</p>
+                <p className="text-slate-500 mt-1">{guia.punto_partida_direccion}</p>
+              </div>
             </div>
             <div className="border-2 border-slate-900 rounded-xl px-5 py-3 text-center shrink-0">
               <div className="font-bold text-[10px] uppercase text-slate-600">Guía de Remisión Electrónica</div>

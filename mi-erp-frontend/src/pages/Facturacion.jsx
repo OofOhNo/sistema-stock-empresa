@@ -91,33 +91,14 @@ function generarSvgQrString(cadena = '', size = 110) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N + 4} ${N + 4}" width="${size}" height="${size}" shape-rendering="crispEdges"><rect width="${N + 4}" height="${N + 4}" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.5"/>${rects}</svg>`;
 }
 
-// Logo SVG PROCESOS CÁRNICOS S.A.C.
+// Logo oficial PROCESOS CÁRNICOS S.A.C.
 function LogoProcesosCarnicos({ className = "h-20 w-auto" }) {
   return (
-    <svg viewBox="0 0 340 180" className={className} xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <path id="curveProcesos" d="M 25 105 A 115 100 0 0 1 295 105" fill="none" />
-      </defs>
-      <g transform="translate(15, 50)">
-        <circle cx="50" cy="50" r="42" fill="#94a3b8" />
-        <circle cx="50" cy="50" r="38" fill="#e2e8f0" stroke="#003399" strokeWidth="2" strokeDasharray="6,4" />
-        <circle cx="50" cy="50" r="16" fill="#cbd5e1" stroke="#003399" strokeWidth="2" />
-        <circle cx="50" cy="50" r="7" fill="#003399" />
-        <path d="M 50 48 L 100 48 L 115 28 L 125 28 L 125 58 L 175 58 L 175 92 L 150 92 L 150 78 L 105 78 L 85 92 L 40 92 Z" fill="#003399" />
-        <rect x="75" y="32" width="16" height="12" rx="3" fill="#003399" />
-        <path d="M 152 64 L 170 64 L 170 86 L 152 86 Z" fill="#ffffff" />
-      </g>
-      <text fill="#003399" fontSize="26" fontWeight="900" fontFamily="Impact, Arial Black, sans-serif" letterSpacing="1">
-        <textPath href="#curveProcesos" startOffset="50%" textAnchor="middle">
-          PROCESOS CÁRNICOS
-        </textPath>
-      </text>
-      <line x1="20" y1="152" x2="110" y2="152" stroke="#003399" strokeWidth="4" />
-      <text x="145" y="158" textAnchor="middle" fill="#003399" fontSize="20" fontWeight="900" fontFamily="Impact, Arial Black, sans-serif" letterSpacing="2">
-        S.A.C. ★★★
-      </text>
-      <line x1="180" y1="152" x2="270" y2="152" stroke="#003399" strokeWidth="4" />
-    </svg>
+    <img
+      src="/brand/logo-color-claro.png"
+      alt="PROCESOS CÁRNICOS S.A.C."
+      className={`object-contain ${className}`}
+    />
   );
 }
 
@@ -858,6 +839,7 @@ export default function Facturacion({ usuario }) {
     const ventana = window.open('', '_blank', 'width=850,height=900');
     if (!ventana) return window.print();
 
+    const baseUrl = window.location.origin;
     ventana.document.write(`
       <!DOCTYPE html>
       <html lang="es">
@@ -865,9 +847,15 @@ export default function Facturacion({ usuario }) {
         <meta charset="UTF-8" />
         <title>Nota de Pedido - ${n.numero_correlativo || n.id_nota_pedido}</title>
         <style>
+          @font-face {
+            font-family: 'Berg Regular';
+            src: url('${baseUrl}/fonts/Berg_Regular_400.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+          }
           body { font-family: Arial, Helvetica, sans-serif; color: #000; margin: 30px; font-size: 13px; }
-          .logo-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; }
-          .titulo-empresa { font-size: 22px; font-weight: 900; letter-spacing: 0.5px; color: #000; text-align: center; flex: 1; }
+          .logo-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; gap: 16px; }
+          .titulo-empresa { font-family: 'Berg Regular', Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 400; letter-spacing: 1px; color: #000; text-align: center; flex: 1; }
           .datos-cliente { font-size: 14px; line-height: 1.8; margin-bottom: 20px; }
           .datos-cliente strong { font-size: 14px; }
           table { width: 100%; border-collapse: collapse; margin-top: 15px; border: 1.5px solid #000; }
@@ -880,30 +868,13 @@ export default function Facturacion({ usuario }) {
       </head>
       <body>
         <div class="logo-header">
-          <div style="width: 140px;">
-            <svg viewBox="0 0 340 180" style="width: 130px;" xmlns="http://www.w3.org/2000/svg">
-              <defs><path id="cp" d="M 25 105 A 115 100 0 0 1 295 105" fill="none"/></defs>
-              <g transform="translate(15, 50)">
-                <circle cx="50" cy="50" r="42" fill="#94a3b8"/>
-                <circle cx="50" cy="50" r="38" fill="#e2e8f0" stroke="#003399" stroke-width="2" stroke-dasharray="6,4"/>
-                <circle cx="50" cy="50" r="16" fill="#cbd5e1" stroke="#003399" stroke-width="2"/>
-                <circle cx="50" cy="50" r="7" fill="#003399"/>
-                <path d="M 50 48 L 100 48 L 115 28 L 125 28 L 125 58 L 175 58 L 175 92 L 150 92 L 150 78 L 105 78 L 85 92 L 40 92 Z" fill="#003399"/>
-                <rect x="75" y="32" width="16" height="12" rx="3" fill="#003399"/>
-                <path d="M 152 64 L 170 64 L 170 86 L 152 86 Z" fill="#ffffff"/>
-              </g>
-              <text fill="#003399" font-size="26" font-weight="900" font-family="Impact, Arial Black, sans-serif" letter-spacing="1">
-                <textPath href="#cp" startOffset="50%" text-anchor="middle">PROCESOS CÁRNICOS</textPath>
-              </text>
-              <line x1="20" y1="152" x2="110" y2="152" stroke="#003399" stroke-width="4"/>
-              <text x="145" y="158" text-anchor="middle" fill="#003399" font-size="20" font-weight="900" font-family="Impact, Arial Black, sans-serif" letter-spacing="2">S.A.C. ★★★</text>
-              <line x1="180" y1="152" x2="270" y2="152" stroke="#003399" stroke-width="4"/>
-            </svg>
+          <div style="width: 150px;">
+            <img src="${baseUrl}/brand/logo-color-claro.png" alt="PROCESOS CÁRNICOS S.A.C." style="height: 82px; width: auto; object-fit: contain;" />
           </div>
           <div class="titulo-empresa">
             PROCESOS CÁRNICOS S.A.C.
           </div>
-          <div style="width: 140px; text-align: right; font-size: 11px; font-weight: bold; color: #555;">
+          <div style="width: 150px; text-align: right; font-size: 11px; font-weight: bold; color: #555;">
             ${n.numero_correlativo || ''}
           </div>
         </div>
@@ -932,7 +903,7 @@ export default function Facturacion({ usuario }) {
         </table>
 
         ${n.observaciones ? `<div style="margin-top:20px;font-size:11px;color:#555;"><strong>Obs:</strong> ${n.observaciones}</div>` : ''}
-        <script>window.onload = function() { window.print(); };</script>
+        <script>window.onload = async function() { try { await document.fonts.ready; } catch(e) {} window.print(); };</script>
       </body>
       </html>
     `);
@@ -3117,14 +3088,14 @@ export default function Facturacion({ usuario }) {
               </div>
             </div>
 
-            {/* Hoja exacta matching media_1793686333240_9d08c5c0.jpg */}
-            <div className="p-8 bg-white text-slate-900 space-y-6">
-              <div className="flex items-center justify-between">
-                <LogoProcesosCarnicos className="h-20 w-auto" />
-                <h2 className="text-xl sm:text-2xl font-black text-black tracking-wide text-center flex-1">
+            {/* Hoja oficial PROCESOS CÁRNICOS S.A.C. */}
+            <div className="p-6 sm:p-8 bg-white text-slate-900 space-y-6">
+              <div className="flex items-center justify-between gap-4">
+                <LogoProcesosCarnicos className="h-20 sm:h-24 w-auto shrink-0" />
+                <h2 className="text-2xl sm:text-3xl font-brand text-black tracking-wide text-center flex-1">
                   PROCESOS CÁRNICOS S.A.C.
                 </h2>
-                <div className="w-16"></div>
+                <div className="hidden sm:block w-20"></div>
               </div>
 
               <div className="space-y-1 text-sm font-semibold">
@@ -3220,12 +3191,15 @@ export default function Facturacion({ usuario }) {
               </div>
             </div>
 
-            <div className="p-8 overflow-y-auto space-y-5 bg-white text-xs">
-              <div className="flex justify-between items-start border-b-2 border-blue-950 pb-4">
-                <div>
-                  <h2 className="text-xl font-black text-blue-950">PROCESOS CARNICOS S.A.C.</h2>
-                  <p className="text-xs text-slate-500 mt-1">Dirección: Lima - Perú</p>
-                  <p className="text-xs text-slate-500">Sede: {modalPdf.comprobante.nombre_ubicacion || 'Principal'}</p>
+            <div className="p-6 sm:p-8 overflow-y-auto space-y-5 bg-white text-xs">
+              <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b-2 border-blue-950 pb-4">
+                <div className="flex items-center gap-4">
+                  <LogoProcesosCarnicos className="h-16 sm:h-20 w-auto shrink-0" />
+                  <div>
+                    <h2 className="text-xl sm:text-2xl font-brand text-blue-950">PROCESOS CARNICOS S.A.C.</h2>
+                    <p className="text-xs text-slate-500 mt-1">{configSunat?.direccion_fiscal || 'Arequipa / Lima - Perú'}</p>
+                    <p className="text-xs text-slate-500">Sede: {modalPdf.comprobante.nombre_ubicacion || 'Principal'}</p>
+                  </div>
                 </div>
                 <div className="border-2 border-blue-950 p-3 rounded-xl text-center min-w-[220px]">
                   <p className="font-bold">R.U.C. N° 20608725394</p>

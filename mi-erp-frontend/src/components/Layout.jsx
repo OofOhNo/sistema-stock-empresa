@@ -336,8 +336,12 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       >
         <div className="p-5 lg:p-6 pb-4 flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="text-2xl font-bold !text-white tracking-tight" style={{ color: '#ffffff' }}>Mi ERP</h2>
-            <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
+            <img
+              src="/brand/logo-negativo.png"
+              alt="PROCESOS CÁRNICOS S.A.C."
+              className="h-14 w-auto max-w-full object-contain mb-2"
+            />
+            <div className="flex items-center flex-wrap gap-1.5 mt-1">
               <span className="text-xs text-indigo-400 font-semibold">{usuario.rol}</span>
               <span className="text-slate-600">·</span>
               <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${

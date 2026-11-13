@@ -12,8 +12,8 @@ const crearFormularioInicial = (hoyStr, idUbicacion = '') => ({
   tipo_certificado: 'Certificado de Calidad e Inocuidad',
   lote_o_producto: '',
   entidad_emisora: 'SENASA',
-  empresa_nombre: '',
-  empresa_ruc: '',
+  empresa_nombre: 'PROCESOS CARNICOS S.A.C.',
+  empresa_ruc: '20608725394',
   id_cliente: '',
   cliente_nombre: '',
   cliente_ruc: '',
@@ -131,8 +131,8 @@ export default function Calidad({ usuario }) {
 
   const imprimirCertificadoA4 = (cert) => {
     if (!cert) return;
-    const empNombre = cert.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]';
-    const empRuc = cert.empresa_ruc || '[RUC DE LA EMPRESA]';
+    const empNombre = cert.empresa_nombre || 'PROCESOS CARNICOS S.A.C.';
+    const empRuc = cert.empresa_ruc || '20608725394';
     const cliNombre = cert.cliente_nombre || '[NOMBRE DEL CLIENTE]';
     const cliRuc = cert.cliente_ruc || '[RUC DEL CLIENTE]';
     const resolucion = cert.senasa_resolucion || '[N° DE RESOLUCIÓN / AUTORIZACIÓN SANITARIA]';
@@ -165,6 +165,7 @@ export default function Calidad({ usuario }) {
       return;
     }
 
+    const baseUrl = window.location.origin;
     win.document.write(`
       <!DOCTYPE html>
       <html lang="es">
@@ -172,10 +173,16 @@ export default function Calidad({ usuario }) {
         <meta charset="UTF-8" />
         <title>Certificado ${escaparHtml(cert.codigo_certificado || '')}</title>
         <style>
+          @font-face {
+            font-family: 'Berg Regular';
+            src: url('${baseUrl}/fonts/Berg_Regular_400.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+          }
           @page { size: A4; margin: 18mm; }
           body { font-family: Arial, Helvetica, sans-serif; color: #000; background: #fff; margin: 0; padding: 12px; font-size: 13px; line-height: 1.6; }
-          .header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-          .emp-title { font-size: 13px; font-weight: 900; color: #172554; text-transform: uppercase; }
+          .header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+          .emp-title { font-family: 'Berg Regular', Arial, Helvetica, sans-serif; font-size: 18px; font-weight: 400; letter-spacing: 0.5px; color: #172554; text-transform: uppercase; }
           .emp-ruc { font-size: 11px; color: #475569; font-family: monospace; font-weight: 700; }
           h1 { text-align: center; font-size: 20px; text-decoration: underline; margin: 22px 0; }
           table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 12px; text-align: center; }
@@ -186,12 +193,7 @@ export default function Calidad({ usuario }) {
       </head>
       <body>
         <div class="header">
-          <svg viewBox="0 0 100 100" width="60" height="60" fill="none">
-            <circle cx="50" cy="50" r="44" stroke="#1e3a8a" stroke-width="4" stroke-dasharray="4 2" />
-            <circle cx="50" cy="50" r="35" stroke="#1e3a8a" stroke-width="2" />
-            <path d="M 32 50 L 45 63 L 70 38" stroke="#1e3a8a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
-            <text x="50" y="85" text-anchor="middle" font-size="9" font-weight="bold" fill="#1e3a8a">CALIDAD</text>
-          </svg>
+          <img src="${baseUrl}/brand/logo-color-claro.png" alt="PROCESOS CÁRNICOS S.A.C." style="height: 68px; width: auto; object-fit: contain;" />
           <div>
             <div class="emp-title">${escaparHtml(empNombre)}</div>
             <div class="emp-ruc">RUC: ${escaparHtml(empRuc)}</div>
@@ -228,7 +230,7 @@ export default function Calidad({ usuario }) {
           <p style="margin-top:24px;">${escaparHtml(ciudad)}, ${escaparHtml(fechaLarga)}</p>
         </div>
         <script>
-          window.onload = function() { setTimeout(function() { window.print(); }, 200); };
+          window.onload = async function() { try { await document.fonts.ready; } catch(e) {} setTimeout(function() { window.print(); }, 150); };
         </script>
       </body>
       </html>
@@ -672,23 +674,18 @@ export default function Calidad({ usuario }) {
                 style={{ minHeight: '780px', color: '#000', backgroundColor: '#fff' }}
               >
                 <div className="flex items-start mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="text-blue-900">
-                      <svg viewBox="0 0 100 100" className="w-16 h-16" fill="none">
-                        <circle cx="50" cy="50" r="44" stroke="#1e3a8a" strokeWidth="4" strokeDasharray="4 2" />
-                        <circle cx="50" cy="50" r="35" stroke="#1e3a8a" strokeWidth="2" />
-                        <path d="M 32 50 L 45 63 L 70 38" stroke="#1e3a8a" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-                        <text x="50" y="85" textAnchor="middle" fontSize="9" fontWeight="bold" fill="#1e3a8a" fontFamily="Arial, sans-serif">
-                          CALIDAD
-                        </text>
-                      </svg>
-                    </div>
+                  <div className="flex items-center space-x-3.5">
+                    <img
+                      src="/brand/logo-color-claro.png"
+                      alt="PROCESOS CÁRNICOS S.A.C."
+                      className="h-16 w-auto object-contain shrink-0"
+                    />
                     <div>
-                      <div className="text-xs font-black tracking-wider text-blue-950 uppercase" style={{ fontFamily: 'Arial, sans-serif' }}>
-                        {modalVerOficial.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]'}
+                      <div className="text-base font-brand tracking-wide text-blue-950 uppercase">
+                        {modalVerOficial.empresa_nombre || 'PROCESOS CARNICOS S.A.C.'}
                       </div>
-                      <div className="text-[10px] text-slate-600 font-semibold font-mono">
-                        RUC: {modalVerOficial.empresa_ruc || '[RUC DE LA EMPRESA]'}
+                      <div className="text-[11px] text-slate-600 font-semibold font-mono">
+                        RUC: {modalVerOficial.empresa_ruc || '20608725394'}
                       </div>
                     </div>
                   </div>
@@ -702,7 +699,7 @@ export default function Calidad({ usuario }) {
 
                 <div className="space-y-4 text-xs leading-relaxed" style={{ fontFamily: 'Arial, sans-serif', fontSize: '13px', lineHeight: '1.6' }}>
                   <p>
-                    La que suscribe la empresa <strong>{modalVerOficial.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]'}</strong> con RUC <strong>{modalVerOficial.empresa_ruc || '[RUC DE LA EMPRESA]'}</strong>
+                    La que suscribe la empresa <strong>{modalVerOficial.empresa_nombre || 'PROCESOS CARNICOS S.A.C.'}</strong> con RUC <strong>{modalVerOficial.empresa_ruc || '20608725394'}</strong>
                   </p>
 
                   <div className="pt-2">
@@ -762,7 +759,7 @@ export default function Calidad({ usuario }) {
 
                   <div className="pt-8 space-y-4">
                     <p>Atentamente,</p>
-                    <p className="font-semibold">{modalVerOficial.empresa_nombre || '[NOMBRE DE LA EMPRESA / RAZÓN SOCIAL]'}</p>
+                    <p className="font-semibold">{modalVerOficial.empresa_nombre || 'PROCESOS CARNICOS S.A.C.'}</p>
                     <p className="pt-6">
                       {modalVerOficial.ciudad_emision || '[Ciudad]'}, {formatearFechaOficial(modalVerOficial.fecha_emision || new Date())}
                     </p>

@@ -49,6 +49,7 @@ export default function ImpresoraSegundoPlano({ usuario }) {
           </tr>
         `).join('');
 
+        const baseUrl = window.location.origin;
         const html = `
           <!doctype html>
           <html>
@@ -56,6 +57,12 @@ export default function ImpresoraSegundoPlano({ usuario }) {
             <meta charset="utf-8" />
             <title>Boleta ${numero}</title>
             <style>
+              @font-face {
+                font-family: 'Berg Regular';
+                src: url('${baseUrl}/fonts/Berg_Regular_400.ttf') format('truetype');
+                font-weight: 400;
+                font-style: normal;
+              }
               body { font-family: monospace, Arial, sans-serif; width: 280px; margin: 0 auto; padding: 10px; font-size: 11px; color: #000; }
               .center { text-align: center; }
               table { width: 100%; border-collapse: collapse; margin: 8px 0; }
@@ -65,7 +72,8 @@ export default function ImpresoraSegundoPlano({ usuario }) {
           </head>
           <body>
             <div class="center">
-              <div style="font-weight:bold;font-size:13px;">PROCESOS CARNICOS S.A.C.</div>
+              <img src="${baseUrl}/brand/logo-positivo.png" alt="PROCESOS CÁRNICOS S.A.C." style="height: 56px; width: auto; margin: 0 auto 5px; display: block; object-fit: contain;" />
+              <div style="font-family:'Berg Regular',monospace,Arial,sans-serif;font-size:16px;letter-spacing:0.6px;">PROCESOS CARNICOS S.A.C.</div>
               <div>RUC: 20608725394</div>
               <div style="margin-top:4px;font-weight:bold;">BOLETA DE VENTA ELECTRÓNICA</div>
               <div style="font-size:13px;font-weight:bold;">${numero}</div>

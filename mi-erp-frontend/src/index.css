@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'Berg Regular';
+  src: url('/fonts/Berg_Regular_400.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
 }
@@ -28,6 +36,14 @@ body {
     color: #0f244a; /* Azul oscuro corporativo de alta legibilidad por defecto */
   }
 
+  /* Tipografía oficial de la empresa en títulos principales */
+  :where(h1, h2) {
+    font-family: 'Berg Regular', system-ui, -apple-system, sans-serif;
+    font-weight: 400;
+    font-synthesis: none;
+    letter-spacing: 0.025em;
+  }
+
   /* Respuesta táctil inmediata (evita retraso de 300ms y zoom accidental al tocar rápido) */
   :where(button, a, select, input, textarea, [role="button"], label) {
     touch-action: manipulation;
@@ -36,6 +52,13 @@ body {
   :where(button:not(:disabled), [role="button"]):active {
     transform: scale(0.985);
   }
+}
+
+.font-brand {
+  font-family: 'Berg Regular', system-ui, -apple-system, sans-serif;
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0.03em;
 }
 
 /* Scroll inercial suave en tablas y contenedores táctiles */
