@@ -6,8 +6,12 @@ import {
   Search, ShieldCheck, DollarSign, Receipt,
   X, Printer, Eye, Loader2, Settings, Download, CheckCircle2,
   Trash2, Calendar, Scale, Users, Layers, Tag, CreditCard, ChevronRight,
-  ShieldAlert, Lock, Unlock, Coffee, ShoppingBag, Zap, Banknote, Minus
+  ShieldAlert, Lock, Unlock, Coffee, ShoppingBag, Zap, Banknote, Minus,
+  Truck, Bot
 } from 'lucide-react';
+import SeccionGreFactura, { crearEstadoGreInicial } from '../components/facturacion/SeccionGreFactura';
+import GrePdfModal from '../components/facturacion/GrePdfModal';
+import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
 
 // Generador determinístico de matriz QR en SVG SUNAT
 function construirMatrizQr(cadena = '') {
@@ -261,6 +265,13 @@ export default function Facturacion({ usuario }) {
   const [montoEntregadoPos, setMontoEntregadoPos] = useState('');
   const [cobrandoPos, setCobrandoPos] = useState(false);
 
+  // Guías de Remisión Electrónica (GRE EG07)
+  const [catalogosGre, setCatalogosGre] = useState({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
+  const [guiasRemision, setGuiasRemision] = useState([]);
+  const [greFormPedido, setGreFormPedido] = useState(() => crearEstadoGreInicial());
+  const [greFormManual, setGreFormManual] = useState(() => crearEstadoGreInicial());
+  const [guiaPreview, setGuiaPreview] = useState(null);
+
   useEffect(() => {
     cargarDatos();
   }, []);
@@ -275,6 +286,7 @@ export default function Facturacion({ usuario }) {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
         setModalPdf(null);
+        setGuiaPreview(null);
         setModalEmitir(false);
         setModalManual(false);
         setModalNotaPedido(false);
@@ -302,21 +314,38 @@ export default function Facturacion({ usuario }) {
     }
   }, [manualFormaPago]);
 
+  const recargarCatalogosGre = async () => {
+    try {
+      const resCat = await api.get('/facturacion/gre/catalogos');
+      if (resCat.data?.exito) setCatalogosGre(resCat.data);
+    } catch {
+      // Silencioso
+    }
+  };
+
   const cargarDatos = async () => {
     setCargando(true);
     try {
-      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic] = await Promise.all([
+      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic, resGreCat, resGres] = await Promise.all([
         api.get('/facturacion'),
         api.get('/facturacion/notas-pedido').catch(() => ({ data: { notas: [] } })),
         api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } })),
         api.get('/facturacion/configuracion').catch(() => ({ data: {} })),
         api.get('/clientes').catch(() => ({ data: { datos: [] } })),
         api.get('/productos').catch(() => ({ data: { datos: [] } })),
-        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } }))
+        api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
+        api.get('/facturacion/gre/catalogos').catch(() => ({ data: {} })),
+        api.get('/facturacion/gre').catch(() => ({ data: { guias: [] } }))
       ]);
 
       setComprobantes(resComp.data.comprobantes || []);
       setNotasPedido(resNotas.data.notas || []);
+      if (resGreCat.data?.puntos_partida) {
+        setCatalogosGre(resGreCat.data);
+        setGreFormPedido((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
+        setGreFormManual((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
+      }
+      setGuiasRemision(resGres.data?.guias || []);
       const listaCli = resCli.data.datos || resCli.data.clientes || [];
       setClientes(listaCli);
       const listaProd = resProd.data.datos || resProd.data.productos || [];
@@ -396,6 +425,7 @@ export default function Facturacion({ usuario }) {
     // Resetear pagos divididos
     setEsPagoDividido(false);
     setPagosDivididos([]);
+    setGreFormPedido(crearEstadoGreInicial(catalogosGre, ped.direccion_cliente || ''));
   };
 
   // Recalcular subtotal de un ítem editable
@@ -415,29 +445,57 @@ export default function Facturacion({ usuario }) {
     return itemsEditables.reduce((acc, it) => acc + (parseFloat(it.subtotal) || 0), 0);
   }, [itemsEditables]);
 
+  // Repartir monto y porcentaje de forma equitativa entre todos los participantes
+  const recalcularDivididosEquitativo = (lista, totalBase) => {
+    const n = lista.length;
+    if (n === 0) return [];
+    const totalNum = Number(totalBase) || 0;
+    const porcBase = Number((100 / n).toFixed(2));
+    const montoBase = Number((totalNum / n).toFixed(2));
+    let sumaPorc = 0;
+    let sumaMonto = 0;
+
+    return lista.map((item, index) => {
+      if (index === n - 1) {
+        return {
+          ...item,
+          porcentaje: Number((100 - sumaPorc).toFixed(2)),
+          monto: Number((totalNum - sumaMonto).toFixed(2))
+        };
+      }
+      sumaPorc += porcBase;
+      sumaMonto += montoBase;
+      return {
+        ...item,
+        porcentaje: porcBase,
+        monto: montoBase
+      };
+    });
+  };
+
   // Inicializar pagos divididos cuando el usuario marca el checkbox
   const togglePagoDividido = (activar) => {
     setEsPagoDividido(activar);
     if (activar && pedidoSeleccionado) {
       const total = totalItemsCalculado || parseFloat(pedidoSeleccionado.monto_total);
-      const mitad = Number((total / 2).toFixed(2));
-      const resto = Number((total - mitad).toFixed(2));
-      setPagosDivididos([
-        {
-          id_cliente: pedidoSeleccionado.id_cliente,
-          nombre_cliente: pedidoSeleccionado.cliente,
-          tipo_comprobante: tipoComprobante,
-          monto: mitad,
-          porcentaje: 50
-        },
-        {
-          id_cliente: '',
-          nombre_cliente: '',
-          tipo_comprobante: '01',
-          monto: resto,
-          porcentaje: 50
-        }
-      ]);
+      setPagosDivididos(
+        recalcularDivididosEquitativo([
+          {
+            id_cliente: pedidoSeleccionado.id_cliente,
+            nombre_cliente: pedidoSeleccionado.cliente,
+            tipo_comprobante: tipoComprobante,
+            monto: 0,
+            porcentaje: 0
+          },
+          {
+            id_cliente: '',
+            nombre_cliente: '',
+            tipo_comprobante: '01',
+            monto: 0,
+            porcentaje: 0
+          }
+        ], total)
+      );
     }
   };
 
@@ -451,7 +509,7 @@ export default function Facturacion({ usuario }) {
       copia[idx].monto = Number(((porc / 100) * total).toFixed(2));
     } else if (campo === 'monto') {
       const m = parseFloat(valor) || 0;
-      copia[idx].porcentaje = total > 0 ? Number(((m / total) * 100).toFixed(1)) : 0;
+      copia[idx].porcentaje = total > 0 ? Number(((m / total) * 100).toFixed(2)) : 0;
     } else if (campo === 'id_cliente') {
       const cli = clientes.find(c => String(c.id_cliente) === String(valor));
       if (cli) {
@@ -464,17 +522,21 @@ export default function Facturacion({ usuario }) {
   };
 
   const agregarFilaPagoDividido = () => {
-    setPagosDivididos([
+    const total = totalItemsCalculado || parseFloat(pedidoSeleccionado?.monto_total || 0);
+    const nuevaLista = [
       ...pagosDivididos,
       { id_cliente: '', nombre_cliente: '', tipo_comprobante: '01', monto: 0, porcentaje: 0 }
-    ]);
+    ];
+    setPagosDivididos(recalcularDivididosEquitativo(nuevaLista, total));
   };
 
   const eliminarFilaPagoDividido = (idx) => {
     if (pagosDivididos.length <= 2) {
       return toast.error('El pago dividido requiere al menos 2 clientes.');
     }
-    setPagosDivididos(pagosDivididos.filter((_, i) => i !== idx));
+    const total = totalItemsCalculado || parseFloat(pedidoSeleccionado?.monto_total || 0);
+    const restante = pagosDivididos.filter((_, i) => i !== idx);
+    setPagosDivididos(recalcularDivididosEquitativo(restante, total));
   };
 
   // Validaciones tributarias previas
@@ -553,7 +615,8 @@ export default function Facturacion({ usuario }) {
         peso_total: pesoTotalFactura ? parseFloat(pesoTotalFactura) : null,
         items: itemsEditables,
         es_pago_dividido: esPagoDividido,
-        pagos: esPagoDividido ? pagosDivididos : null
+        pagos: esPagoDividido ? pagosDivididos : null,
+        gre: tipoComprobante === '01' ? greFormPedido : null
       };
 
       const res = await api.post('/facturacion/emitir', payload);
@@ -582,6 +645,7 @@ export default function Facturacion({ usuario }) {
     setManualItems([
       { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || '', cantidad: 1, peso: '', precio_unitario: productos[0]?.precio_venta || 0, subtotal: productos[0]?.precio_venta || 0 }
     ]);
+    setGreFormManual(crearEstadoGreInicial(catalogosGre, ''));
     setModalManual(true);
   };
 
@@ -649,7 +713,8 @@ export default function Facturacion({ usuario }) {
         aplica_detraccion: manualTipoComp === '01' ? manualAplicaDetraccion : false,
         codigo_detraccion: manualCodigoDetraccion,
         peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
-        items: manualItems
+        items: manualItems,
+        gre: manualTipoComp === '01' ? greFormManual : null
       });
 
       toast.success(res.data.mensaje || '¡Factura manual emitida y stock descontado!');
@@ -1402,6 +1467,32 @@ export default function Facturacion({ usuario }) {
           <Receipt size={14} />
           <span>Comprobantes Emitidos ({comprobantesVisibles.length})</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setTabActiva('gre')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+            tabActiva === 'gre'
+              ? 'bg-sky-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Truck size={14} />
+          <span>Guías de Remisión EG07 ({guiasRemision.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setTabActiva('boletas_auto')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+            tabActiva === 'boletas_auto'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Bot size={14} />
+          <span>Boletas Automáticas</span>
+        </button>
       </div>
 
       {/* PESTAÑA 1: FACTURACIÓN POR PEDIDOS */}
@@ -1938,6 +2029,88 @@ export default function Facturacion({ usuario }) {
         </div>
       )}
 
+      {/* PESTAÑA: GUÍAS DE REMISIÓN ELECTRÓNICAS (EG07) */}
+      {tabActiva === 'gre' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sky-50/40">
+            <div>
+              <h3 className="text-base font-bold text-blue-950">Guías de Remisión Electrónica (Serie EG07)</h3>
+              <p className="text-xs text-slate-500">
+                Emitidas automáticamente junto a cada Factura (01) • Documentos relacionados vinculados automáticamente en SUNAT
+              </p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 text-slate-500 uppercase tracking-wider border-b border-slate-200">
+                  <th className="p-4">GRE N°</th>
+                  <th className="p-4">Factura Asociada</th>
+                  <th className="p-4">Destinatario</th>
+                  <th className="p-4">Traslado</th>
+                  <th className="p-4">Vehículo / Conductor</th>
+                  <th className="p-4 text-right">Peso Total</th>
+                  <th className="p-4 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {guiasRemision.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="p-10 text-center text-slate-400">
+                      Aún no se han emitido Guías de Remisión EG07. Se generan automáticamente al emitir una Factura (01).
+                    </td>
+                  </tr>
+                ) : (
+                  guiasRemision.map((g) => (
+                    <tr key={g.id_gre} className="hover:bg-slate-50">
+                      <td className="p-4 font-mono font-bold text-sky-800">
+                        {g.serie}-{String(g.correlativo).padStart(8, '0')}
+                      </td>
+                      <td className="p-4 font-mono text-slate-700">
+                        {g.factura_serie ? `${g.factura_serie}-${String(g.factura_correlativo).padStart(8, '0')}` : '-'}
+                      </td>
+                      <td className="p-4">
+                        <div className="font-bold text-slate-900">{g.destinatario_razon_social}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">{g.destinatario_num_doc}</div>
+                      </td>
+                      <td className="p-4 text-slate-600">
+                        <div>Inicio: <span className="font-mono font-bold">{g.fecha_inicio_traslado_iso}</span></div>
+                        <div className="text-[11px] truncate max-w-xs">{g.punto_llegada_direccion}</div>
+                      </td>
+                      <td className="p-4 text-slate-600">
+                        <div className="font-mono font-bold">{g.vehiculo_placa || '-'}</div>
+                        <div className="text-[11px] truncate max-w-[180px]">{g.conductor_nombres || '-'}</div>
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-slate-900">
+                        {Number(g.peso_bruto_total || 0).toFixed(2)} {g.unidad_peso_bruto || 'KGM'}
+                      </td>
+                      <td className="p-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setGuiaPreview(g)}
+                          className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Eye size={13} />
+                          <span>Ver / Imprimir</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* PESTAÑA: BOLETAS AUTOMÁTICAS Y COLA DE IMPRESIÓN */}
+      {tabActiva === 'boletas_auto' && (
+        <PanelBoletasAutomaticas
+          ubicaciones={ubicaciones}
+          onBoletaGenerada={cargarDatos}
+        />
+      )}
+
       {/* PESTAÑA 4: HISTORIAL DE COMPROBANTES EMITIDOS */}
       {tabActiva === 'historial' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -2380,16 +2553,19 @@ export default function Facturacion({ usuario }) {
                           </select>
                         </div>
                         <div className="sm:col-span-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            max="100"
-                            value={pago.porcentaje}
-                            onChange={(e) => actualizarPagoDividido(pIdx, 'porcentaje', e.target.value)}
-                            placeholder="%"
-                            className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs text-center"
-                          />
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="100"
+                              value={pago.porcentaje}
+                              onChange={(e) => actualizarPagoDividido(pIdx, 'porcentaje', e.target.value)}
+                              placeholder="%"
+                              className="w-full p-1.5 pr-6 border border-slate-300 rounded-lg font-mono text-xs text-center font-bold"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500 pointer-events-none">%</span>
+                          </div>
                         </div>
                         <div className="sm:col-span-2">
                           <input
@@ -2424,6 +2600,20 @@ export default function Facturacion({ usuario }) {
                   </div>
                 )}
               </div>
+
+              {tipoComprobante === '01' && (
+                <SeccionGreFactura
+                  greForm={greFormPedido}
+                  setGreForm={setGreFormPedido}
+                  catalogosGre={catalogosGre}
+                  esAdminCentral={esAdminCentral}
+                  onCatalogosActualizados={recargarCatalogosGre}
+                  destinatarioNombre={pedidoSeleccionado.cliente}
+                  destinatarioDocumento={pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente}
+                  pesoBrutoTotal={pesoTotalFactura || itemsEditables.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
+                  bienesResumen={itemsEditables}
+                />
+              )}
 
               {/* 6. Resumen de Precios y Peso (Req 11 & 12) */}
               <div className="bg-slate-900 text-white p-4 rounded-xl space-y-1.5 text-xs shadow-md">
@@ -2511,9 +2701,15 @@ export default function Facturacion({ usuario }) {
                   <select
                     value={manualClienteId}
                     onChange={(e) => {
-                      setManualClienteId(e.target.value);
-                      if (e.target.value === 'CLIENTES_VARIOS') {
+                      const val = e.target.value;
+                      setManualClienteId(val);
+                      if (val === 'CLIENTES_VARIOS') {
                         setManualTipoComp('03');
+                      } else {
+                        const cliObj = clientes.find(c => String(c.id_cliente) === String(val));
+                        if (cliObj?.direccion) {
+                          setGreFormManual((prev) => ({ ...prev, punto_llegada_direccion: cliObj.direccion }));
+                        }
                       }
                     }}
                     className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
@@ -2660,6 +2856,23 @@ export default function Facturacion({ usuario }) {
                   </div>
                 ))}
               </div>
+
+              {manualTipoComp === '01' && (() => {
+                const cliManualObj = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
+                return (
+                  <SeccionGreFactura
+                    greForm={greFormManual}
+                    setGreForm={setGreFormManual}
+                    catalogosGre={catalogosGre}
+                    esAdminCentral={esAdminCentral}
+                    onCatalogosActualizados={recargarCatalogosGre}
+                    destinatarioNombre={cliManualObj?.razon_social_o_nombre || cliManualObj?.nombre_comercial || 'Cliente'}
+                    destinatarioDocumento={cliManualObj?.numero_documento || ''}
+                    pesoBrutoTotal={manualPesoTotal || manualItems.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
+                    bienesResumen={manualItems}
+                  />
+                );
+              })()}
 
               {/* Total y botones */}
               <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between text-xs">
@@ -3405,6 +3618,14 @@ export default function Facturacion({ usuario }) {
             </form>
           </div>
         </div>
+      )}
+
+      {guiaPreview && (
+        <GrePdfModal
+          guia={guiaPreview}
+          emisor={configSunat || {}}
+          onClose={() => setGuiaPreview(null)}
+        />
       )}
     </div>
   );

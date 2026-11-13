@@ -25,7 +25,7 @@ const verificarToken = (req, res, next) => {
         //le decimos que pase al siguiente nivel si esta todo en orden
         next(); 
     } catch (error) {
-        res.status(400).json({ exito: false, mensaje: 'El token es inválido o ya expiró.' });
+        res.status(401).json({ exito: false, mensaje: 'El token es inválido o ya expiró.' });
     }
 };
 

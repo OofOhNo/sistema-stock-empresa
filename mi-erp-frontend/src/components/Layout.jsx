@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import {
-  LayoutDashboard, Package, ShoppingCart, FileText, Calendar,
+  LayoutDashboard, Package, ShoppingCart, FileText, Calendar, CalendarDays,
   LogOut, Users, MapPin, Building2, Search,
   ShieldCheck, X, Loader2, ArrowRight, Bug, MessageSquare,
   KeyRound, ChevronDown, Eye, EyeOff, CheckCircle2, AlertCircle, Tag
 } from 'lucide-react';
 import api from '../api';
+import ImpresoraSegundoPlano from './facturacion/ImpresoraSegundoPlano';
 
 export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaActual, children }) {
   // Buscador General Rápido
@@ -245,6 +246,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     { id: 'calidad', nombre: 'Calidad y Sanidad', icono: <ShieldCheck size={20} />, visible: tienePermisoVer('calidad') },
     { id: 'ubicaciones', nombre: 'Ubicaciones y Sedes', icono: <MapPin size={20} />, visible: tienePermisoVer('ubicaciones') || tienePermisoVer('organizacion') },
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} />, visible: tienePermisoVer('reuniones') },
+    { id: 'calendario_pagos', nombre: 'Calendario de Pagos', icono: <CalendarDays size={20} />, visible: usuario?.rol === 'Admin Central' },
     {
       id: 'usuarios',
       nombre: 'Personal y Roles',
@@ -1017,6 +1019,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
           </div>
         </div>
       )}
+      <ImpresoraSegundoPlano usuario={usuario} />
     </div>
   );
 }

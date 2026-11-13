@@ -15,6 +15,7 @@ import Calidad from './pages/Calidad';
 import Errores from './pages/Errores';
 import Organizacion from './pages/Organizacion';
 import Mensajes from './pages/Mensajes';
+import CalendarioPagos from './pages/CalendarioPagos';
 import api from './api';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -23,8 +24,21 @@ export default function App() {
     try {
       const usuarioGuardado = localStorage.getItem('usuario_erp');
       const tokenGuardado = localStorage.getItem('token_erp');
-      return usuarioGuardado && tokenGuardado ? JSON.parse(usuarioGuardado) : null;
+      if (!usuarioGuardado || !tokenGuardado) {
+        localStorage.removeItem('usuario_erp');
+        localStorage.removeItem('token_erp');
+        return null;
+      }
+      const parsed = JSON.parse(usuarioGuardado);
+      if (!parsed || !parsed.id_usuario || !parsed.email) {
+        localStorage.removeItem('usuario_erp');
+        localStorage.removeItem('token_erp');
+        return null;
+      }
+      return parsed;
     } catch {
+      localStorage.removeItem('usuario_erp');
+      localStorage.removeItem('token_erp');
       return null;
     }
   });
@@ -112,6 +126,8 @@ export default function App() {
         return <Despacho usuario={usuario} />;
       case 'reuniones':
         return <Reuniones usuario={usuario} />;
+      case 'calendario_pagos':
+        return <CalendarioPagos usuario={usuario} />;
       case 'facturacion':
         return <Facturacion usuario={usuario} />;
       case 'calidad':

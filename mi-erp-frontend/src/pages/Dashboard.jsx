@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import {
   DollarSign, ShoppingCart, Package, ArrowUpRight, Clock,
-  BarChart3, TrendingUp, CalendarDays, RefreshCw, ChevronRight
+  BarChart3, TrendingUp, CalendarDays, RefreshCw, ChevronRight,
+  BellRing, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 
 function GraficoBarras({ titulo, subtitulo, datos, keyEtiqueta, keyTotal, colorPrimario = 'indigo' }) {
@@ -130,6 +131,8 @@ export default function Dashboard({ usuario, setVistaActual }) {
   });
 
   const [datosGraficos, setDatosGraficos] = useState(null);
+  const [alertasPagos, setAlertasPagos] = useState([]);
+  const [alertasPedidos, setAlertasPedidos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [cargandoGraficos, setCargandoGraficos] = useState(false);
 
@@ -140,7 +143,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
 
   useEffect(() => {
     cargarResumen();
-  }, [puedeVerPedidos, puedeVerStock]);
+  }, [puedeVerPedidos, puedeVerStock, esAdmin]);
 
   useEffect(() => {
     if (subTab === 'graficos' && !puedeVerFacturacion) {
@@ -154,17 +157,42 @@ export default function Dashboard({ usuario, setVistaActual }) {
 
   const cargarResumen = async () => {
     try {
-      const [resPedidos, resAlertas] = await Promise.all([
+      const [resPedidos, resAlertas, resPagos] = await Promise.all([
         puedeVerPedidos
           ? api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } }))
           : Promise.resolve({ data: { eventos: [] } }),
         puedeVerStock
           ? api.get('/stock/alertas').catch(() => ({ data: { alertas: [] } }))
+          : Promise.resolve({ data: { alertas: [] } }),
+        esAdmin
+          ? api.get('/pagos-calendario/alertas-inicio').catch(() => ({ data: { alertas: [] } }))
           : Promise.resolve({ data: { alertas: [] } })
       ]);
 
       const pedidos = resPedidos.data.eventos || [];
       const alertas = resAlertas.data.alertas || [];
+      setAlertasPagos(esAdmin ? (resPagos.data?.alertas || []) : []);
+
+      // Filtrar entregas/pedidos urgentes de ayer, hoy y mañana
+      const ahoraLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+      ahoraLima.setHours(0, 0, 0, 0);
+      const isoDia = (d) => d.toLocaleDateString('en-CA');
+      const ayerISO = isoDia(new Date(ahoraLima.getTime() - 86400000));
+      const hoyISO = isoDia(ahoraLima);
+      const mananaISO = isoDia(new Date(ahoraLima.getTime() + 86400000));
+
+      const pedUrgentes = pedidos
+        .filter((p) => {
+          if (['CANCELADO', 'ENTREGADO', 'DESPACHADO'].includes(p.estado_pedido)) return false;
+          const f = String(p.fecha_entrega_programada || p.fecha_pedido || '').slice(0, 10);
+          return f === ayerISO || f === hoyISO || f === mananaISO;
+        })
+        .map((p) => {
+          const f = String(p.fecha_entrega_programada || p.fecha_pedido || '').slice(0, 10);
+          const urgencia = f === ayerISO ? 'AYER' : f === hoyISO ? 'HOY' : 'MANANA';
+          return { ...p, urgencia, fecha_iso: f };
+        });
+      setAlertasPedidos(pedUrgentes);
 
       const porAtender = pedidos.filter(
         p => p.estado_pedido === 'PENDIENTE' || p.estado_pedido === 'LISTO_DESPACHO'
@@ -201,6 +229,15 @@ export default function Dashboard({ usuario, setVistaActual }) {
       console.error('Error al cargar gráficos de facturación', error);
     } finally {
       setCargandoGraficos(false);
+    }
+  };
+
+  const marcarPagoPagado = async (idPago) => {
+    try {
+      await api.patch(`/pagos-calendario/${idPago}/estado`, { estado: 'PAGADO' });
+      cargarResumen();
+    } catch (err) {
+      console.error('Error al marcar pago como pagado', err);
     }
   };
 
@@ -262,6 +299,105 @@ export default function Dashboard({ usuario, setVistaActual }) {
       {/* SUB-PESTAÑA 1: RESUMEN GENERAL OPERATIVO */}
       {subTab === 'resumen' && (
         <div className="space-y-6">
+          {/* RECORDATORIOS Y VENCIMIENTOS DE AYER, HOY Y MAÑANA */}
+          {(esAdmin || alertasPedidos.length > 0) && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 rounded-xl bg-amber-100 text-amber-700">
+                    <BellRing size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-blue-950">Pendientes y Vencimientos (Ayer, Hoy y Mañana)</h3>
+                    <p className="text-xs text-slate-500">
+                      {esAdmin
+                        ? 'Pagos programados (sueldos, proveedores, impuestos) y entregas urgentes'
+                        : 'Entregas de pedidos urgentes para ayer, hoy o mañana'}
+                    </p>
+                  </div>
+                </div>
+                {esAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setVistaActual('calendario_pagos')}
+                    className="inline-flex items-center space-x-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-xl cursor-pointer self-start sm:self-auto"
+                  >
+                    <CalendarDays size={14} />
+                    <span>Ir al Calendario de Pagos</span>
+                  </button>
+                )}
+              </div>
+
+              {alertasPagos.length === 0 && alertasPedidos.length === 0 ? (
+                <div className="flex items-center space-x-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 font-medium">
+                  <CheckCircle2 size={16} />
+                  <span>¡Todo al día! No tienes pagos vencidos ni pendientes para ayer, hoy o mañana.</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {[
+                    { key: 'AYER_ATRASADO', titulo: 'Vencidos / Ayer', match: (u) => u === 'AYER' || u === 'ATRASADO', estilo: 'border-rose-200 bg-rose-50/70', badge: 'bg-rose-600 text-white' },
+                    { key: 'HOY', titulo: 'Para Hoy', match: (u) => u === 'HOY', estilo: 'border-amber-300 bg-amber-50/80', badge: 'bg-amber-600 text-white' },
+                    { key: 'MANANA', titulo: 'Para Mañana', match: (u) => u === 'MANANA', estilo: 'border-sky-200 bg-sky-50/70', badge: 'bg-sky-600 text-white' },
+                  ].map((col) => {
+                    const pagosCol = esAdmin ? alertasPagos.filter((a) => col.match(a.urgencia)) : [];
+                    const pedsCol = puedeVerPedidos ? alertasPedidos.filter((p) => col.match(p.urgencia)) : [];
+                    const totalCol = pagosCol.length + pedsCol.length;
+                    return (
+                      <div key={col.key} className={`rounded-xl border p-3.5 space-y-2 ${col.estilo}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-slate-800">{col.titulo}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${col.badge}`}>{totalCol}</span>
+                        </div>
+                        {totalCol === 0 ? (
+                          <p className="text-xs text-slate-400 italic py-2">Sin pendientes</p>
+                        ) : (
+                          <div className="space-y-2 max-h-52 overflow-y-auto pr-0.5">
+                            {pagosCol.map((pago) => (
+                              <div key={`pago-${pago.id_pago}`} className="bg-white rounded-lg p-2.5 border border-slate-200 shadow-2xs flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center space-x-1">
+                                    <AlertTriangle size={12} className="text-rose-500 shrink-0" />
+                                    <span className="text-xs font-bold text-slate-900 truncate">{pago.titulo}</span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 mt-0.5">
+                                    {pago.categoria} • <span className="font-mono font-bold text-slate-800">{pago.moneda === 'USD' ? '$' : 'S/'} {Number(pago.monto).toFixed(2)}</span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">{pago.fecha_vencimiento_iso}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => marcarPagoPagado(pago.id_pago)}
+                                  className="text-[10px] font-bold px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer shrink-0"
+                                >
+                                  Pagado
+                                </button>
+                              </div>
+                            ))}
+                            {pedsCol.map((ped) => (
+                              <div
+                                key={`ped-${ped.id_pedido}`}
+                                onClick={() => setVistaActual('pedidos')}
+                                className="bg-white rounded-lg p-2.5 border border-slate-200 shadow-2xs cursor-pointer hover:border-indigo-300"
+                              >
+                                <div className="text-xs font-bold text-indigo-950 truncate">
+                                  Pedido #{ped.id_pedido} — {ped.nombre_cliente || ped.razon_social_o_nombre || 'Cliente'}
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                  Estado: <span className="font-semibold">{ped.estado_pedido}</span> • {ped.fecha_iso}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {/* Tarjeta 1: Ventas */}

@@ -91,8 +91,14 @@ app.use('/api/busqueda', busquedaRoutes);
 const mensajeRoutes = require('./src/routes/mensajeRoutes.js');
 app.use('/api/mensajes', mensajeRoutes);
 
+const pagosCalendarioRoutes = require('./src/routes/pagosCalendarioRoutes.js');
+app.use('/api/pagos-calendario', pagosCalendarioRoutes);
+
 //configurar el puerto y encender el servidor
+const { iniciarCronBoletasAutomaticas } = require('./src/utils/boletaAutoService');
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
+  iniciarCronBoletasAutomaticas();
 });

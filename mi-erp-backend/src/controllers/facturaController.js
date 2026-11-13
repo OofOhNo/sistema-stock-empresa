@@ -9,6 +9,8 @@ const {
     generarXmlUbl21YDatosSunat,
     enviarAConectorNubefact
 } = require('../utils/sunatNubefactService');
+const { generarUnaBoletaAutomatica } = require('../utils/boletaAutoService');
+const { obtenerCatalogosGre, crearGreInterna } = require('../utils/greService');
 
 async function obtenerConfigEmisor(clientOrPool = pool) {
     try {
@@ -246,8 +248,9 @@ const facturaController = {
             // Bloquear fila del pedido para evitar doble facturación simultánea
             const queryPedido = `
                 SELECT 
-                    p.id_pedido, p.id_usuario, p.monto_total, p.id_ubicacion,
+                    p.id_pedido, p.id_cliente, p.id_usuario, p.monto_total, p.id_ubicacion,
                     p.estado_pedido, COALESCE(p.stock_descontado, false) AS stock_descontado,
+                    p.peso_total,
                     c.tipo_documento, c.numero_documento, c.razon_social_o_nombre, c.direccion, c.email
                 FROM pedidos p
                 JOIN clientes c ON p.id_cliente = c.id_cliente
@@ -392,7 +395,21 @@ const facturaController = {
                         porcPago,
                         JSON.stringify(itemDiv)
                     ]);
-                    comprobantesEmitidos.push(resC.rows[0]);
+                    const compDivCreado = resC.rows[0];
+                    if (tipoComp === '01') {
+                        const pesoProp = ((Number(req.body.peso_total || pedido.peso_total || 0)) * (porcPago / 100));
+                        compDivCreado.guia_remision = await crearGreInterna(client, {
+                            id_comprobante: compDivCreado.id_comprobante,
+                            id_pedido,
+                            cliente: cliDividido,
+                            items,
+                            peso_bruto_total: pesoProp > 0 ? pesoProp : undefined,
+                            gre: req.body.gre || {},
+                            configEmisor,
+                            idUsuario: req.usuario?.id_usuario || null
+                        });
+                    }
+                    comprobantesEmitidos.push(compDivCreado);
                 }
 
                 if (!pedido.stock_descontado) {
@@ -692,6 +709,20 @@ const facturaController = {
                 WHERE id_pedido = $2;
             `, [nuevoEstadoPedido, id_pedido]);
 
+            let guiaRemisionCreada = null;
+            if (tipo_comprobante === '01') {
+                guiaRemisionCreada = await crearGreInterna(client, {
+                    id_comprobante: compCreado.id_comprobante,
+                    id_pedido,
+                    cliente: pedido,
+                    items,
+                    peso_bruto_total: req.body.peso_total || pedido.peso_total || null,
+                    gre: req.body.gre || {},
+                    configEmisor,
+                    idUsuario: req.usuario?.id_usuario || null
+                });
+            }
+
             await registrarAuditoria(
                 client,
                 req.usuario?.id_usuario || null,
@@ -713,8 +744,11 @@ const facturaController = {
 
             res.status(201).json({
                 exito: true,
-                mensaje: `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y aceptado por SUNAT!`,
-                comprobante: compCreado
+                mensaje: guiaRemisionCreada
+                    ? `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas con éxito!`
+                    : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y aceptado por SUNAT!`,
+                comprobante: compCreado,
+                guia_remision: guiaRemisionCreada
             });
 
         } catch (error) {
@@ -1618,7 +1652,7 @@ const facturaController = {
             `;
 
             const resComp = await client.query(queryComprobante, [
-                id_cliente,
+                cliente.id_cliente,
                 idUbicacionUsuario,
                 tipo_comprobante,
                 serie,
@@ -1652,6 +1686,20 @@ const facturaController = {
 
             const compCreado = resComp.rows[0];
 
+            let guiaRemisionCreada = null;
+            if (tipo_comprobante === '01') {
+                guiaRemisionCreada = await crearGreInterna(client, {
+                    id_comprobante: compCreado.id_comprobante,
+                    id_pedido: null,
+                    cliente,
+                    items: itemsValidados,
+                    peso_bruto_total: pesoFinal,
+                    gre: req.body.gre || {},
+                    configEmisor,
+                    idUsuario: req.usuario?.id_usuario || null
+                });
+            }
+
             await registrarAuditoria(
                 client,
                 req.usuario?.id_usuario || null,
@@ -1665,8 +1713,11 @@ const facturaController = {
             await client.query('COMMIT');
             res.status(201).json({
                 exito: true,
-                mensaje: `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y stock descontado con éxito!`,
-                comprobante: compCreado
+                mensaje: guiaRemisionCreada
+                    ? `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas y stock descontado con éxito!`
+                    : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y stock descontado con éxito!`,
+                comprobante: compCreado,
+                guia_remision: guiaRemisionCreada
             });
         } catch (error) {
             await client.query('ROLLBACK');
@@ -1891,6 +1942,321 @@ const facturaController = {
         } catch (error) {
             console.error('Error al obtener detalle de nota de pedido:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al obtener detalle de nota de pedido', error: error.message });
+        }
+    },
+
+    // =========================================================================
+    // BOLETAS AUTOMÁTICAS + COLA DE IMPRESIÓN EN SEGUNDO PLANO
+    // =========================================================================
+    obtenerConfigBoletasAuto: async (req, res) => {
+        try {
+            const resCfg = await pool.query(`
+                SELECT c.*, u.nombre AS nombre_ubicacion
+                FROM config_boletas_automaticas c
+                LEFT JOIN ubicaciones u ON c.id_ubicacion = u.id_ubicacion
+                WHERE c.id_config = 1;
+            `);
+            res.json({ exito: true, config: resCfg.rows[0] || null });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al leer configuración de boletas automáticas.' });
+        }
+    },
+
+    actualizarConfigBoletasAuto: async (req, res) => {
+        try {
+            const {
+                activo,
+                intervalo_minutos,
+                monto_minimo,
+                monto_maximo,
+                peso_minimo_item,
+                peso_maximo_item,
+                hora_inicio,
+                hora_fin,
+                solo_horario_laboral,
+                id_ubicacion,
+                auto_imprimir_navegador
+            } = req.body;
+
+            const intervalo = Math.max(1, Math.min(480, parseInt(intervalo_minutos || 30, 10)));
+            const pesoMin = Math.max(0.50, Number(peso_minimo_item || 0.50));
+            const pesoMax = Math.max(pesoMin, Number(peso_maximo_item || 8.00));
+            const montoMax = Math.min(699.00, Math.max(25.00, Number(monto_maximo || 680.00)));
+            const montoMin = Math.max(15.00, Math.min(montoMax - 5, Number(monto_minimo || 35.00)));
+
+            const { rows } = await pool.query(`
+                UPDATE config_boletas_automaticas
+                SET activo = COALESCE($1, activo),
+                    intervalo_minutos = $2,
+                    monto_minimo = $3,
+                    monto_maximo = $4,
+                    peso_minimo_item = $5,
+                    peso_maximo_item = $6,
+                    hora_inicio = COALESCE($7, hora_inicio),
+                    hora_fin = COALESCE($8, hora_fin),
+                    solo_horario_laboral = COALESCE($9, solo_horario_laboral),
+                    id_ubicacion = COALESCE($10, id_ubicacion),
+                    auto_imprimir_navegador = COALESCE($11, auto_imprimir_navegador),
+                    proxima_ejecucion = CASE
+                        WHEN COALESCE($1, activo) = TRUE THEN CURRENT_TIMESTAMP + ($2 * INTERVAL '1 minute')
+                        ELSE proxima_ejecucion
+                    END,
+                    actualizado_en = CURRENT_TIMESTAMP
+                WHERE id_config = 1
+                RETURNING *;
+            `, [
+                activo !== undefined ? Boolean(activo) : null,
+                intervalo,
+                montoMin,
+                montoMax,
+                pesoMin,
+                pesoMax,
+                hora_inicio || null,
+                hora_fin || null,
+                solo_horario_laboral !== undefined ? Boolean(solo_horario_laboral) : null,
+                id_ubicacion ? parseInt(id_ubicacion, 10) : null,
+                auto_imprimir_navegador !== undefined ? Boolean(auto_imprimir_navegador) : null
+            ]);
+
+            res.json({ exito: true, mensaje: 'Configuración de boletas automáticas actualizada.', config: rows[0] });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: error.message || 'Error al actualizar configuración.' });
+        }
+    },
+
+    generarBoletaAutoAhora: async (req, res) => {
+        try {
+            const resultado = await generarUnaBoletaAutomatica({
+                forzar: true,
+                idUsuario: req.usuario?.id_usuario || null
+            });
+            if (!resultado.generada) {
+                return res.status(400).json({ exito: false, mensaje: resultado.motivo });
+            }
+            res.status(201).json({
+                exito: true,
+                mensaje: `Boleta automática ${resultado.comprobante.serie}-${String(resultado.comprobante.correlativo).padStart(8, '0')} generada (S/ ${Number(resultado.comprobante.monto_total).toFixed(2)}) y enviada a la cola de impresión.`,
+                comprobante: resultado.comprobante,
+                cola: resultado.cola
+            });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: error.message || 'Error al generar boleta automática.' });
+        }
+    },
+
+    listarColaImpresion: async (req, res) => {
+        try {
+            const { estado } = req.query;
+            const params = [];
+            let filtro = '';
+            if (estado && ['PENDIENTE', 'IMPRESO', 'OMITIDO'].includes(estado)) {
+                params.push(estado);
+                filtro = `WHERE q.estado = $1`;
+            }
+            const { rows } = await pool.query(`
+                SELECT
+                    q.*,
+                    c.serie, c.correlativo, c.monto_total, c.peso_total,
+                    c.fecha_emision, c.items_json, c.cadena_qr, c.codigo_hash,
+                    c.monto_en_letras,
+                    cl.razon_social_o_nombre AS cliente_nombre,
+                    cl.numero_documento AS cliente_documento
+                FROM cola_impresion_boletas q
+                JOIN comprobantes c ON q.id_comprobante = c.id_comprobante
+                LEFT JOIN clientes cl ON c.id_cliente = cl.id_cliente
+                ${filtro}
+                ORDER BY CASE WHEN q.estado = 'PENDIENTE' THEN 0 ELSE 1 END, q.creado_en DESC
+                LIMIT 60;
+            `, params);
+            res.json({ exito: true, cola: rows });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al consultar la cola de impresión.' });
+        }
+    },
+
+    actualizarEstadoColaImpresion: async (req, res) => {
+        try {
+            const id = parseInt(req.params.id, 10);
+            const { estado } = req.body;
+            if (!['PENDIENTE', 'IMPRESO', 'OMITIDO'].includes(estado)) {
+                return res.status(400).json({ exito: false, mensaje: 'Estado de cola inválido.' });
+            }
+            const { rows } = await pool.query(`
+                UPDATE cola_impresion_boletas
+                SET estado = $1,
+                    impreso_en = CASE WHEN $1 = 'IMPRESO' THEN CURRENT_TIMESTAMP ELSE NULL END
+                WHERE id_cola = $2
+                RETURNING *;
+            `, [estado, id]);
+            if (rows.length === 0) return res.status(404).json({ exito: false, mensaje: 'Elemento de cola no encontrado.' });
+            res.json({ exito: true, item: rows[0] });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al actualizar cola de impresión.' });
+        }
+    },
+
+    // =========================================================================
+    // GUÍAS DE REMISIÓN ELECTRÓNICA (GRE EG07) Y CATÁLOGOS FRECUENTES
+    // =========================================================================
+    listarCatalogosGre: async (req, res) => {
+        try {
+            const catalogos = await obtenerCatalogosGre(pool);
+            res.json({ exito: true, ...catalogos });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al cargar catálogos de GRE.' });
+        }
+    },
+
+    crearPuntoPartidaGre: async (req, res) => {
+        try {
+            const { tipo = '-', ubigeo, domicilio } = req.body;
+            if (!ubigeo || !domicilio) return res.status(400).json({ exito: false, mensaje: 'Ubigeo y domicilio son obligatorios.' });
+            const { rows } = await pool.query(
+                `INSERT INTO gre_puntos_partida (tipo, ubigeo, domicilio) VALUES ($1, $2, $3) RETURNING *;`,
+                [tipo.trim() || '-', ubigeo.trim(), domicilio.trim()]
+            );
+            res.status(201).json({ exito: true, punto: rows[0] });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo guardar el punto de partida.' });
+        }
+    },
+
+    eliminarPuntoPartidaGre: async (req, res) => {
+        try {
+            await pool.query('UPDATE gre_puntos_partida SET activo = FALSE WHERE id_punto = $1', [parseInt(req.params.id, 10)]);
+            res.json({ exito: true });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al eliminar punto de partida.' });
+        }
+    },
+
+    crearVehiculoGre: async (req, res) => {
+        try {
+            const { placa, entidad_emisora = '', numero_autorizacion = '' } = req.body;
+            if (!placa || !placa.trim()) return res.status(400).json({ exito: false, mensaje: 'La placa del vehículo es obligatoria.' });
+            const { rows } = await pool.query(
+                `INSERT INTO gre_vehiculos (placa, entidad_emisora, numero_autorizacion, activo)
+                 VALUES (UPPER($1), $2, $3, TRUE)
+                 ON CONFLICT (placa) DO UPDATE SET activo = TRUE, entidad_emisora = EXCLUDED.entidad_emisora, numero_autorizacion = EXCLUDED.numero_autorizacion
+                 RETURNING *;`,
+                [placa.trim(), entidad_emisora.trim(), numero_autorizacion.trim()]
+            );
+            res.status(201).json({ exito: true, vehiculo: rows[0] });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'Error al registrar vehículo.' });
+        }
+    },
+
+    eliminarVehiculoGre: async (req, res) => {
+        try {
+            await pool.query('UPDATE gre_vehiculos SET activo = FALSE WHERE id_vehiculo = $1', [parseInt(req.params.id, 10)]);
+            res.json({ exito: true });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al eliminar vehículo.' });
+        }
+    },
+
+    crearConductorGre: async (req, res) => {
+        try {
+            const { licencia, tipo_documento = 'DOCUMENTO NACIONAL DE IDENTIDAD', numero_documento, apellidos_nombres } = req.body;
+            if (!licencia || !numero_documento || !apellidos_nombres) {
+                return res.status(400).json({ exito: false, mensaje: 'Licencia, documento y nombres del conductor son obligatorios.' });
+            }
+            const { rows } = await pool.query(
+                `INSERT INTO gre_conductores (licencia, tipo_documento, numero_documento, apellidos_nombres, activo)
+                 VALUES (UPPER($1), $2, $3, UPPER($4), TRUE)
+                 ON CONFLICT (numero_documento) DO UPDATE SET activo = TRUE, licencia = EXCLUDED.licencia, apellidos_nombres = EXCLUDED.apellidos_nombres
+                 RETURNING *;`,
+                [licencia.trim(), tipo_documento, numero_documento.trim(), apellidos_nombres.trim()]
+            );
+            res.status(201).json({ exito: true, conductor: rows[0] });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'Error al registrar conductor.' });
+        }
+    },
+
+    eliminarConductorGre: async (req, res) => {
+        try {
+            await pool.query('UPDATE gre_conductores SET activo = FALSE WHERE id_conductor = $1', [parseInt(req.params.id, 10)]);
+            res.json({ exito: true });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al eliminar conductor.' });
+        }
+    },
+
+    listarGres: async (req, res) => {
+        try {
+            const { rows } = await pool.query(`
+                SELECT
+                    g.*,
+                    TO_CHAR(g.fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso,
+                    c.serie AS factura_serie,
+                    c.correlativo AS factura_correlativo
+                FROM guias_remision g
+                LEFT JOIN comprobantes c ON g.id_comprobante = c.id_comprobante
+                ORDER BY g.id_gre DESC
+                LIMIT 120;
+            `);
+            res.json({ exito: true, guias: rows });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al listar Guías de Remisión.' });
+        }
+    },
+
+    emitirGreStandalone: async (req, res) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const configEmisor = await obtenerConfigEmisor(client);
+            let cliente = null;
+            if (req.body.id_cliente) {
+                const cRes = await client.query('SELECT * FROM clientes WHERE id_cliente = $1', [parseInt(req.body.id_cliente, 10)]);
+                if (cRes.rows.length > 0) cliente = cRes.rows[0];
+            }
+
+            const greCreada = await crearGreInterna(client, {
+                id_comprobante: req.body.id_comprobante ? parseInt(req.body.id_comprobante, 10) : null,
+                id_pedido: req.body.id_pedido ? parseInt(req.body.id_pedido, 10) : null,
+                cliente,
+                items: req.body.bienes || [],
+                peso_bruto_total: req.body.peso_bruto_total,
+                gre: req.body,
+                configEmisor,
+                idUsuario: req.usuario?.id_usuario || null
+            });
+
+            await client.query('COMMIT');
+            res.status(201).json({
+                exito: true,
+                mensaje: `GRE ${greCreada.serie}-${String(greCreada.correlativo).padStart(8, '0')} emitida con éxito.`,
+                guia: greCreada
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            res.status(500).json({ exito: false, mensaje: error.message || 'Error al emitir Guía de Remisión.' });
+        } finally {
+            client.release();
+        }
+    },
+
+    obtenerDetalleGre: async (req, res) => {
+        try {
+            const id = parseInt(req.params.id, 10);
+            const { rows } = await pool.query(`
+                SELECT
+                    g.*,
+                    TO_CHAR(g.fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso,
+                    c.serie AS factura_serie,
+                    c.correlativo AS factura_correlativo
+                FROM guias_remision g
+                LEFT JOIN comprobantes c ON g.id_comprobante = c.id_comprobante
+                WHERE g.id_gre = $1;
+            `, [id]);
+            if (rows.length === 0) return res.status(404).json({ exito: false, mensaje: 'GRE no encontrada.' });
+            const configEmisor = await obtenerConfigEmisor(pool);
+            res.json({ exito: true, guia: rows[0], emisor: configEmisor });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'Error al obtener detalle de GRE.' });
         }
     },
 

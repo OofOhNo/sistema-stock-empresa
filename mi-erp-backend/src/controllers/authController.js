@@ -85,7 +85,7 @@ const authController = {
             }
 
             const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario);
-            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '8h' });
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
 
             res.status(200).json({
                 exito: true,
@@ -110,8 +110,8 @@ const authController = {
             }
 
             const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario);
-            // Emitir también un token fresco para mantener rol/área/sede sincronizados
-            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '8h' });
+            // Emitir también un token fresco de larga duración para mantener la sesión activa hasta que se borren los datos del navegador
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
 
             res.status(200).json({
                 exito: true,

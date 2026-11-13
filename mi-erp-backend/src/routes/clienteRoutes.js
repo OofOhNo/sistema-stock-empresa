@@ -5,6 +5,13 @@ const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
 // Listar clientes (disponible para selectores en Pedidos/Facturación; los celulares siguen protegidos por permiso individual)
+router.get('/carpetas', verificarToken, clienteController.listarCarpetas);
+router.post('/carpetas', verificarToken, requierePermiso('clientes', 'editar'), clienteController.crearCarpeta);
+router.put('/carpetas/:id', verificarToken, requierePermiso('clientes', 'editar'), clienteController.actualizarCarpeta);
+router.delete('/carpetas/:id', verificarToken, requierePermiso('clientes', 'editar'), clienteController.eliminarCarpeta);
+router.patch('/:id/carpeta', verificarToken, requierePermiso('clientes', 'editar'), clienteController.moverClienteCarpeta);
+
+// RUTAS DE CLIENTES
 router.get('/', verificarToken, clienteController.listarClientes);
 
 // Crear cliente

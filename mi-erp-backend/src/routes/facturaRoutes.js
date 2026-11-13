@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const facturaController = require('../controllers/facturaController');
-const { verificarToken } = require('../middlewares/authMiddleware');
+const { verificarToken, esAdmin } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
 // Listar comprobantes emitidos
@@ -14,6 +14,25 @@ router.post('/probar-conexion', verificarToken, requierePermiso('facturacion', '
 
 // Gráficos y métricas de facturación (Semanal, Mensual, Trimestral, Anual)
 router.get('/graficos', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerGraficosFacturacion);
+
+// Boletas automáticas y cola de impresión en segundo plano
+router.get('/boletas-auto/config', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerConfigBoletasAuto);
+router.put('/boletas-auto/config', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.actualizarConfigBoletasAuto);
+router.post('/boletas-auto/generar-ahora', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.generarBoletaAutoAhora);
+router.get('/boletas-auto/cola', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarColaImpresion);
+router.patch('/boletas-auto/cola/:id/estado', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.actualizarEstadoColaImpresion);
+
+// Guías de Remisión Electrónica (GRE EG07) y catálogos frecuentes
+router.get('/gre/catalogos', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarCatalogosGre);
+router.post('/gre/puntos-partida', verificarToken, esAdmin, facturaController.crearPuntoPartidaGre);
+router.delete('/gre/puntos-partida/:id', verificarToken, esAdmin, facturaController.eliminarPuntoPartidaGre);
+router.post('/gre/vehiculos', verificarToken, esAdmin, facturaController.crearVehiculoGre);
+router.delete('/gre/vehiculos/:id', verificarToken, esAdmin, facturaController.eliminarVehiculoGre);
+router.post('/gre/conductores', verificarToken, esAdmin, facturaController.crearConductorGre);
+router.delete('/gre/conductores/:id', verificarToken, esAdmin, facturaController.eliminarConductorGre);
+router.get('/gre', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarGres);
+router.post('/gre', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.emitirGreStandalone);
+router.get('/gre/:id/detalle', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerDetalleGre);
 
 // Detalle completo de un comprobante para vista previa e impresión PDF A4 reglamentaria
 router.get('/:id/detalle', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerDetalleComprobante);

@@ -29,11 +29,12 @@ api.interceptors.response.use(
         if (!esRutaPublicaAuth) {
             const tokenInvalido =
                 status === 401 ||
-                (status === 403 && (
+                ((status === 400 || status === 403) && (
                     mensaje.includes('token inválido') ||
                     mensaje.includes('token invalido') ||
                     mensaje.includes('expirado') ||
-                    mensaje.includes('no se proporcionó un token')
+                    mensaje.includes('no se proporcionó un token') ||
+                    mensaje.includes('token es inválido')
                 )) ||
                 (status === 404 && url.includes('/auth/perfil') && mensaje.includes('inactivo'));
 

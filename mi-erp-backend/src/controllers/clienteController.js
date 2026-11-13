@@ -97,6 +97,53 @@ const clienteController = {
                 error: error.message
             });
         }
+    },
+
+    listarCarpetas: async (req, res) => {
+        try {
+            const carpetas = await Cliente.listarCarpetas();
+            return res.status(200).json({ exito: true, carpetas });
+        } catch (error) {
+            return res.status(500).json({ exito: false, mensaje: error.message || 'Error al listar carpetas.' });
+        }
+    },
+
+    crearCarpeta: async (req, res) => {
+        try {
+            const carpeta = await Cliente.crearCarpeta(req.body);
+            return res.status(201).json({ exito: true, mensaje: 'Carpeta creada correctamente.', carpeta });
+        } catch (error) {
+            const msg = error.code === '23505' ? 'Ya existe una carpeta con ese nombre.' : (error.message || 'Error al crear carpeta.');
+            return res.status(400).json({ exito: false, mensaje: msg });
+        }
+    },
+
+    actualizarCarpeta: async (req, res) => {
+        try {
+            const carpeta = await Cliente.actualizarCarpeta(parseInt(req.params.id, 10), req.body);
+            return res.status(200).json({ exito: true, mensaje: 'Carpeta actualizada.', carpeta });
+        } catch (error) {
+            const msg = error.code === '23505' ? 'Ya existe una carpeta con ese nombre.' : (error.message || 'Error al actualizar carpeta.');
+            return res.status(400).json({ exito: false, mensaje: msg });
+        }
+    },
+
+    eliminarCarpeta: async (req, res) => {
+        try {
+            await Cliente.eliminarCarpeta(parseInt(req.params.id, 10));
+            return res.status(200).json({ exito: true, mensaje: 'Carpeta eliminada. Sus clientes pasaron a "Sin carpeta".' });
+        } catch (error) {
+            return res.status(400).json({ exito: false, mensaje: error.message || 'Error al eliminar carpeta.' });
+        }
+    },
+
+    moverClienteCarpeta: async (req, res) => {
+        try {
+            const cliente = await Cliente.moverClienteCarpeta(parseInt(req.params.id, 10), req.body.id_carpeta);
+            return res.status(200).json({ exito: true, mensaje: 'Cliente movido de carpeta.', cliente });
+        } catch (error) {
+            return res.status(400).json({ exito: false, mensaje: error.message || 'Error al mover cliente.' });
+        }
     }
 
 };

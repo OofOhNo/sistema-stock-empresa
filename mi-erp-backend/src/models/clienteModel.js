@@ -7,19 +7,23 @@ const Cliente = {
         try {
             const query = `
                 SELECT 
-                    id_cliente,
-                    tipo_documento,
-                    numero_documento,
-                    razon_social_o_nombre,
-                    nombre_comercial,
-                    contacto,
-                    cargo,
-                    celular,
-                    direccion,
-                    email,
-                    creado_en
-                FROM clientes
-                ORDER BY id_cliente ASC;
+                    c.id_cliente,
+                    c.tipo_documento,
+                    c.numero_documento,
+                    c.razon_social_o_nombre,
+                    c.nombre_comercial,
+                    c.contacto,
+                    c.cargo,
+                    c.celular,
+                    c.direccion,
+                    c.email,
+                    c.id_carpeta,
+                    cc.nombre AS nombre_carpeta,
+                    cc.color AS color_carpeta,
+                    c.creado_en
+                FROM clientes c
+                LEFT JOIN carpetas_clientes cc ON c.id_carpeta = cc.id_carpeta
+                ORDER BY c.id_cliente ASC;
             `;
             const { rows } = await pool.query(query);
 
@@ -76,12 +80,15 @@ const Cliente = {
             cargo = null,
             celular = null,
             direccion = null,
-            email = null
+            email = null,
+            id_carpeta = null
         } = datos;
 
         if (!numero_documento || !razon_social_o_nombre) {
             throw new Error('El RUC/documento y la razón social son obligatorios.');
         }
+
+        const carpetaNormalizada = id_carpeta ? parseInt(id_carpeta, 10) : null;
 
         const client = await pool.connect();
         try {
@@ -90,9 +97,9 @@ const Cliente = {
             const query = `
                 INSERT INTO clientes (
                     tipo_documento, numero_documento, razon_social_o_nombre,
-                    nombre_comercial, contacto, cargo, celular, direccion, email
+                    nombre_comercial, contacto, cargo, celular, direccion, email, id_carpeta
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING *;
             `;
             const { rows } = await client.query(query, [
@@ -104,7 +111,8 @@ const Cliente = {
                 cargo ? cargo.trim() : null,
                 celular ? celular.trim() : null,
                 direccion ? direccion.trim() : null,
-                email ? email.trim() : null
+                email ? email.trim() : null,
+                Number.isInteger(carpetaNormalizada) ? carpetaNormalizada : null
             ]);
             const nuevoCliente = rows[0];
 
@@ -189,10 +197,14 @@ const Cliente = {
                     cargo = $6,
                     celular = $7,
                     direccion = $8,
-                    email = $9
-                WHERE id_cliente = $10
+                    email = $9,
+                    id_carpeta = $10
+                WHERE id_cliente = $11
                 RETURNING *;
             `;
+            const idCarpetaUpdate = datos.id_carpeta !== undefined
+                ? (datos.id_carpeta ? parseInt(datos.id_carpeta, 10) : null)
+                : anterior.id_carpeta;
             const { rows } = await client.query(query, [
                 datos.tipo_documento || anterior.tipo_documento,
                 datos.numero_documento ? datos.numero_documento.trim() : anterior.numero_documento,
@@ -203,6 +215,7 @@ const Cliente = {
                 nuevoCelular,
                 datos.direccion !== undefined ? (datos.direccion ? datos.direccion.trim() : null) : anterior.direccion,
                 datos.email !== undefined ? (datos.email ? datos.email.trim() : null) : anterior.email,
+                Number.isInteger(idCarpetaUpdate) ? idCarpetaUpdate : null,
                 id
             ]);
             const actualizado = rows[0];
@@ -275,6 +288,81 @@ const Cliente = {
         } finally {
             client.release();
         }
+    },
+
+    listarCarpetas: async () => {
+        const query = `
+            SELECT
+                cc.id_carpeta,
+                cc.nombre,
+                cc.color,
+                cc.descripcion,
+                cc.creado_en,
+                COUNT(c.id_cliente)::INTEGER AS total_clientes
+            FROM carpetas_clientes cc
+            LEFT JOIN clientes c ON c.id_carpeta = cc.id_carpeta
+            GROUP BY cc.id_carpeta
+            ORDER BY cc.nombre ASC;
+        `;
+        const { rows } = await pool.query(query);
+        return rows;
+    },
+
+    crearCarpeta: async ({ nombre, color = 'indigo', descripcion = null }) => {
+        if (!nombre || !nombre.trim()) {
+            throw new Error('El nombre de la carpeta es obligatorio.');
+        }
+        const { rows } = await pool.query(
+            `INSERT INTO carpetas_clientes (nombre, color, descripcion)
+             VALUES ($1, $2, $3)
+             RETURNING *;`,
+            [nombre.trim(), color || 'indigo', descripcion ? descripcion.trim() : null]
+        );
+        return { ...rows[0], total_clientes: 0 };
+    },
+
+    actualizarCarpeta: async (idCarpeta, { nombre, color, descripcion }) => {
+        if (!nombre || !nombre.trim()) {
+            throw new Error('El nombre de la carpeta es obligatorio.');
+        }
+        const { rows } = await pool.query(
+            `UPDATE carpetas_clientes
+             SET nombre = $1,
+                 color = COALESCE($2, color),
+                 descripcion = $3
+             WHERE id_carpeta = $4
+             RETURNING *;`,
+            [nombre.trim(), color || null, descripcion !== undefined ? (descripcion ? descripcion.trim() : null) : null, idCarpeta]
+        );
+        if (rows.length === 0) throw new Error('Carpeta no encontrada.');
+        return rows[0];
+    },
+
+    eliminarCarpeta: async (idCarpeta) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('UPDATE clientes SET id_carpeta = NULL WHERE id_carpeta = $1', [idCarpeta]);
+            const { rows } = await client.query('DELETE FROM carpetas_clientes WHERE id_carpeta = $1 RETURNING *', [idCarpeta]);
+            if (rows.length === 0) throw new Error('Carpeta no encontrada.');
+            await client.query('COMMIT');
+            return rows[0];
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    moverClienteCarpeta: async (idCliente, idCarpeta) => {
+        const carpetaVal = idCarpeta ? parseInt(idCarpeta, 10) : null;
+        const { rows } = await pool.query(
+            `UPDATE clientes SET id_carpeta = $1 WHERE id_cliente = $2 RETURNING *;`,
+            [Number.isInteger(carpetaVal) ? carpetaVal : null, idCliente]
+        );
+        if (rows.length === 0) throw new Error('Cliente no encontrado.');
+        return rows[0];
     }
 
 };
