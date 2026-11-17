@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Clock } from 'lucide-react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import {
+  OPCIONES_DURACION_SESION,
+  formatearDuracionSesionLegible
+} from '../utils/sesionRol';
 
 const INFO_MODULOS = {
   stock: { nombre: 'Inventario', ayuda: 'Ver stock y registrar entradas o salidas' },
@@ -21,6 +26,9 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
   const [permisos, setPermisos] = useState([]);
   const [rolesList, setRolesList] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [customRolId, setCustomRolId] = useState(null);
+  const [customCantidad, setCustomCantidad] = useState('8');
+  const [customUnidad, setCustomUnidad] = useState('horas'); // 'min' | 'horas' | 'dias'
 
   const cargarPermisos = useCallback(async () => {
     setCargando(true);
@@ -60,11 +68,9 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
 
     if (campo === 'puede_editar') {
       payload.puede_editar = nuevoValor;
-      // Si se le da permiso de editar, también debe poder ver la pantalla
       if (nuevoValor) payload.puede_ver = true;
     } else {
       payload.puede_ver = nuevoValor;
-      // Si se le quita permiso de ver, también se desactiva editar para evitar confusiones
       if (!nuevoValor) payload.puede_editar = false;
     }
 
@@ -90,6 +96,48 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
     } catch (err) {
       toast.error('No se pudo actualizar: ' + (err.response?.data?.mensaje || err.message));
     }
+  };
+
+  const guardarDuracionSesionRol = async (rolId, minutos) => {
+    if (!puedeEditar) return;
+    try {
+      const res = await api.put(`/usuarios/roles/${rolId}/duracion-sesion`, {
+        duracion_sesion_minutos: minutos
+      });
+      toast.success(res.data?.mensaje || 'Tiempo de sesión actualizado.');
+      setCustomRolId(null);
+      await cargarPermisos();
+      onPermisoCambiado?.();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el tiempo de sesión.');
+    }
+  };
+
+  const handleSelectDuracion = (rol, value) => {
+    if (value === 'CUSTOM') {
+      setCustomRolId(rol.id_rol);
+      setCustomCantidad(rol.duracion_sesion_minutos ? String(rol.duracion_sesion_minutos) : '60');
+      setCustomUnidad('min');
+      return;
+    }
+    setCustomRolId(null);
+    const minutos = value === '' ? null : parseInt(value, 10);
+    void guardarDuracionSesionRol(rol.id_rol, minutos);
+  };
+
+  const handleGuardarCustom = (rolId) => {
+    const n = parseInt(customCantidad, 10);
+    if (Number.isNaN(n) || n < 1) {
+      toast.error('Ingresa un número mayor o igual a 1.');
+      return;
+    }
+    const multiplicador = customUnidad === 'dias' ? 1440 : customUnidad === 'horas' ? 60 : 1;
+    const totalMin = n * multiplicador;
+    if (totalMin > 525600) {
+      toast.error('El máximo permitido es 1 año (365 días).');
+      return;
+    }
+    void guardarDuracionSesionRol(rolId, totalMin);
   };
 
   if (cargando) return <div className="p-6 text-slate-500 font-medium">Cargando tabla de permisos...</div>;
@@ -140,6 +188,86 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
                   className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50 cursor-pointer"
                 />
               </label>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* RE-INICIO DE SESIÓN OBLIGATORIO POR ROL */}
+      <div className="p-4 bg-amber-50/50 rounded-xl border border-amber-200/80">
+        <div className="mb-3 flex items-start gap-2.5">
+          <Clock size={18} className="text-amber-700 mt-0.5 shrink-0" />
+          <div>
+            <h4 className="text-sm font-bold text-blue-950">
+              ¿Cada cuánto tiempo cada rol está obligado a volver a iniciar sesión?
+            </h4>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Se cuenta en tiempo fijo desde que el trabajador inicia sesión. Al cumplirse el tiempo, la sesión se cierra automáticamente y debe ingresar de nuevo.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {rolesList.map(r => {
+            const valorActual = r.duracion_sesion_minutos ? String(r.duracion_sesion_minutos) : '';
+            const esPreset = OPCIONES_DURACION_SESION.some(o => o.value === valorActual);
+            const editandoCustom = customRolId === r.id_rol;
+
+            return (
+              <div
+                key={r.id_rol}
+                className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-800 truncate">{r.nombre}</p>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 shrink-0">
+                    {formatearDuracionSesionLegible(r.duracion_sesion_minutos)}
+                  </span>
+                </div>
+
+                <select
+                  disabled={!puedeEditar}
+                  value={editandoCustom ? 'CUSTOM' : (esPreset ? valorActual : 'CUSTOM')}
+                  onChange={(e) => handleSelectDuracion(r, e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold bg-white text-slate-700 focus:outline-hidden focus:border-indigo-500 disabled:opacity-60 cursor-pointer"
+                >
+                  {OPCIONES_DURACION_SESION.map(opt => (
+                    <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
+                  ))}
+                  {!esPreset && !editandoCustom && valorActual && (
+                    <option value="CUSTOM">Personalizado ({formatearDuracionSesionLegible(valorActual)})</option>
+                  )}
+                  <option value="CUSTOM">Personalizado...</option>
+                </select>
+
+                {editandoCustom && puedeEditar && (
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <input
+                      type="number"
+                      min="1"
+                      value={customCantidad}
+                      onChange={(e) => setCustomCantidad(e.target.value)}
+                      className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold"
+                    />
+                    <select
+                      value={customUnidad}
+                      onChange={(e) => setCustomUnidad(e.target.value)}
+                      className="border border-slate-300 rounded-lg px-1.5 py-1 text-xs bg-white font-semibold"
+                    >
+                      <option value="min">min</option>
+                      <option value="horas">horas</option>
+                      <option value="dias">días</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleGuardarCustom(r.id_rol)}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                    >
+                      OK
+                    </button>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

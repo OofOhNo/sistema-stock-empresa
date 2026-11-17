@@ -41,7 +41,9 @@ api.interceptors.response.use(
             if (tokenInvalido && localStorage.getItem('token_erp')) {
                 localStorage.removeItem('token_erp');
                 localStorage.removeItem('usuario_erp');
-                window.dispatchEvent(new CustomEvent('sesion_expirada'));
+                window.dispatchEvent(new CustomEvent('sesion_expirada', {
+                    detail: { mensaje: error.response?.data?.mensaje || '' }
+                }));
             }
         }
 

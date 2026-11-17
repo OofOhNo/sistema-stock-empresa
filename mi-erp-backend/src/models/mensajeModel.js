@@ -93,6 +93,7 @@ const Mensaje = {
                     u.email,
                     r.nombre AS nombre_rol,
                     u.area,
+                    u.telefono_whatsapp,
                     ub.nombre AS nombre_ubicacion,
                     ult.mensaje AS ultimo_mensaje,
                     ult.creado_en AS fecha_ultimo_mensaje,

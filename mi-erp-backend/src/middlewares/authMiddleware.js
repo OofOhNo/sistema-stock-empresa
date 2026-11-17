@@ -1,45 +1,66 @@
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db');
 
-//guardia 1: verifica si la persona tiene una credencial (token)
-const verificarToken = (req, res, next) => {
-    //buscamos el token en las cabeceras (Headers) de la peticion
+// Guardia 1: verifica si la persona tiene un token válido y si no excedió el tiempo de sesión de su rol
+const verificarToken = async (req, res, next) => {
     const token = req.header('Authorization');
 
     if (!token) {
-        return res.status(401).json({ 
-            exito: false, 
-            mensaje: 'Acceso denegado. No enviaste un token de seguridad.' 
+        return res.status(401).json({
+            exito: false,
+            mensaje: 'Acceso denegado. No enviaste un token de seguridad.'
         });
     }
 
     try {
-        //el formato suele ser "Bearer eyJhbGci...", así que le quitamos la palabra "Bearer "
         const tokenLimpio = token.replace('Bearer ', '');
-        
-        //verificamos que el token sea autentico usando tu JWT_SECRET del .env
         const decodificado = jwt.verify(tokenLimpio, process.env.JWT_SECRET);
-        
-        //guardamos los datos del usuario decodificado en la peticion para poder usarlos luego
-        req.usuario = decodificado; 
-        
-        //le decimos que pase al siguiente nivel si esta todo en orden
-        next(); 
-    } catch (error) {
+
+        if (decodificado?.id_usuario) {
+            const resRol = await pool.query(`
+                SELECT COALESCE(u.activo, true) AS activo,
+                       r.duracion_sesion_minutos
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                WHERE u.id_usuario = $1::int
+            `, [decodificado.id_usuario]);
+
+            if (resRol.rows.length === 0 || !resRol.rows[0].activo) {
+                return res.status(401).json({
+                    exito: false,
+                    mensaje: 'Tu cuenta de usuario ya no está activa. Pide ayuda al administrador.'
+                });
+            }
+
+            const duracionMin = resRol.rows[0].duracion_sesion_minutos;
+            if (duracionMin && Number(duracionMin) > 0) {
+                const loginAt = Number(decodificado.login_at) || (Number(decodificado.iat) * 1000);
+                if (loginAt && (Date.now() - loginAt) >= Number(duracionMin) * 60 * 1000) {
+                    return res.status(401).json({
+                        exito: false,
+                        codigo: 'SESION_ROL_EXPIRADA',
+                        mensaje: 'Tu sesión expiró por el tiempo límite configurado para tu rol. Por favor vuelve a iniciar sesión.'
+                    });
+                }
+            }
+        }
+
+        req.usuario = decodificado;
+        next();
+    } catch {
         res.status(401).json({ exito: false, mensaje: 'El token es inválido o ya expiró.' });
     }
 };
 
-//guardia 2: verifica si el rol del usuario es "Admin Central"
+// Guardia 2: verifica si el rol del usuario es "Admin Central"
 const esAdmin = (req, res, next) => {
-    //cuando hagamos el login, guardaremos el nombre del rol dentro del token - aqui simplemente leemos esa informacion
     if (req.usuario.nombre_rol !== 'Admin Central') {
-        return res.status(403).json({ 
-            exito: false, 
-            mensaje: 'Acceso prohibido. Se requieren permisos de Administrador.' 
+        return res.status(403).json({
+            exito: false,
+            mensaje: 'Acceso prohibido. Se requieren permisos de Administrador.'
         });
     }
-    
-    //si es Admin Central, lo dejamos pasar
+
     next();
 };
 

@@ -8,7 +8,8 @@ const {
     enviarAConectorNubefact
 } = require('./sunatNubefactService');
 
-let cronHandle = null;
+let timeoutHandle = null;
+let watcherHandle = null;
 let ejecutandoCiclo = false;
 
 async function obtenerConfigEmisor(client) {
@@ -34,11 +35,31 @@ function dentroDeHorarioLima(horaInicio = '08:00', horaFin = '20:00') {
         minute: '2-digit',
         hour12: false
     });
-    return ahora >= horaInicio && ahora <= horaFin;
+    if (horaInicio <= horaFin) {
+        return ahora >= horaInicio && ahora <= horaFin;
+    }
+    // Soporte si el horario cruza medianoche (ej. 22:00 a 04:00)
+    return ahora >= horaInicio || ahora <= horaFin;
 }
 
 function redondearPasoPeso(valor, paso = 0.25) {
     return +(Math.round(valor / paso) * paso).toFixed(2);
+}
+
+/**
+ * Calcula una fecha aleatoria exacta al segundo entre minMinutos y maxMinutos.
+ * Ejemplo: rango 5 a 10 min => cualquier segundo entre 300s y 600s (ej. 5m 53s, 8m 02s).
+ */
+function calcularProximaEjecucionAleatoria(minMinutos = 5, maxMinutos = 10) {
+    const minM = Math.max(1, Math.min(1440, parseInt(minMinutos || 5, 10) || 5));
+    const maxM = Math.max(minM, Math.min(1440, parseInt(maxMinutos || minM, 10) || minM));
+    const minSeg = minM * 60;
+    const maxSeg = maxM * 60;
+    const segAleatorios = minSeg + Math.floor(Math.random() * (maxSeg - minSeg + 1));
+    return {
+        fecha: new Date(Date.now() + segAleatorios * 1000),
+        segundos: segAleatorios
+    };
 }
 
 async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } = {}) {
@@ -53,6 +74,8 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         }
 
         const cfg = cfgRes.rows[0];
+        const minMin = Math.max(1, parseInt(cfg.intervalo_min_minutos ?? cfg.intervalo_minutos ?? 5, 10) || 5);
+        const maxMin = Math.max(minMin, parseInt(cfg.intervalo_max_minutos ?? cfg.intervalo_minutos ?? 10, 10) || minMin);
 
         if (!forzar) {
             if (!cfg.activo) {
@@ -60,16 +83,25 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
                 return { generada: false, motivo: 'Generador desactivado.' };
             }
             if (cfg.solo_horario_laboral && !dentroDeHorarioLima(cfg.hora_inicio, cfg.hora_fin)) {
-                await client.query('ROLLBACK');
-                return { generada: false, motivo: 'Fuera de horario configurado.' };
+                // Quedarse en espera durante la noche y limpiar proxima_ejecucion para iniciar limpio al día siguiente
+                if (cfg.proxima_ejecucion) {
+                    await client.query(
+                        'UPDATE config_boletas_automaticas SET proxima_ejecucion = NULL WHERE id_config = 1'
+                    );
+                    await client.query('COMMIT');
+                } else {
+                    await client.query('ROLLBACK');
+                }
+                return { generada: false, motivo: 'En espera: fuera del horario configurado.' };
             }
-            if (cfg.proxima_ejecucion && new Date() < new Date(cfg.proxima_ejecucion)) {
+            // Tolerancia de 1 segundo para evitar desfasar un timer preciso
+            if (cfg.proxima_ejecucion && (new Date(cfg.proxima_ejecucion).getTime() - Date.now()) > 1000) {
                 await client.query('ROLLBACK');
-                return { generada: false, motivo: 'Aún no cumple el intervalo.' };
+                return { generada: false, motivo: 'Aún no cumple el intervalo aleatorio.' };
             }
         }
 
-        // Asegurar ubicación válida
+        // Sede emisora de la boleta (solo para registro fiscal; no descuenta stock)
         let idUbicacion = cfg.id_ubicacion;
         if (!idUbicacion) {
             const uRes = await client.query('SELECT id_ubicacion FROM ubicaciones ORDER BY id_ubicacion ASC LIMIT 1');
@@ -82,38 +114,33 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         const montoMaxLimite = Math.min(695.00, Number(cfg.monto_maximo || 680.00));
         const montoMinObjetivo = Math.max(20.00, Math.min(montoMaxLimite - 5, Number(cfg.monto_minimo || 35.00)));
 
-        // Seleccionar productos reales con stock físico disponible >= pesoMinItem en esa ubicación
+        // Seleccionar cualquier producto activo con precio > 0 sin revisar inventario ni descontar stock
         const prodRes = await client.query(`
             SELECT
                 p.id_producto, p.sku, p.nombre, p.precio_venta,
                 p.unidad_medida, p.tipo_afectacion_igv,
-                COALESCE(um.codigo, 'KGM') AS codigo_unidad_sunat,
-                (i.cantidad_fisica - COALESCE(i.cantidad_reservada, 0)) AS disponible
-            FROM inventario i
-            JOIN productos p ON p.id_producto = i.id_producto
+                COALESCE(um.codigo, 'KGM') AS codigo_unidad_sunat
+            FROM productos p
             LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
-            WHERE i.id_ubicacion = $1::int
-              AND p.activo = TRUE
+            WHERE p.activo = TRUE
               AND p.precio_venta > 0
-              AND p.precio_venta * $2::numeric < 700
-              AND (i.cantidad_fisica - COALESCE(i.cantidad_reservada, 0)) >= $2::numeric
+              AND p.precio_venta * $1::numeric < 700
             ORDER BY RANDOM()
             LIMIT 12;
-        `, [idUbicacion, pesoMinItem]);
+        `, [pesoMinItem]);
 
         if (prodRes.rows.length === 0) {
-            // Reprogramar siguiente intento para no saturar si falta stock
-            const intervalo = Math.max(1, parseInt(cfg.intervalo_minutos || 30, 10));
+            const siguiente = calcularProximaEjecucionAleatoria(minMin, maxMin);
             await client.query(
                 `UPDATE config_boletas_automaticas
-                 SET proxima_ejecucion = CURRENT_TIMESTAMP + make_interval(mins => $1::int)
+                 SET proxima_ejecucion = CASE WHEN activo THEN $1::timestamptz ELSE NULL END
                  WHERE id_config = 1`,
-                [intervalo]
+                [siguiente.fecha.toISOString()]
             );
             await client.query('COMMIT');
             return {
                 generada: false,
-                motivo: `No hay productos con stock disponible >= ${pesoMinItem.toFixed(2)} kg y precio compatible (< S/ 700) en la sede seleccionada.`
+                motivo: `No hay productos activos con precio compatible (< S/ 700 para porción de ${pesoMinItem.toFixed(2)} kg).`
             };
         }
 
@@ -129,7 +156,6 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         for (let idx = 0; idx < prodRes.rows.length && itemsElegidos.length < maxProductos; idx++) {
             const prod = prodRes.rows[idx];
             const precio = Number(prod.precio_venta);
-            const disponible = Number(prod.disponible);
             const restanteDinero = Math.min(698 - acumulado, objetivoMonto - acumulado);
 
             if (restanteDinero < precio * pesoMinItem && itemsElegidos.length > 0) {
@@ -137,12 +163,15 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             }
 
             const maxKgPosiblePorMonto = Math.floor(((698 - acumulado) / precio) / 0.25) * 0.25;
-            const maxKgPosible = Math.min(disponible, pesoMaxItem, maxKgPosiblePorMonto);
+            const maxKgPosible = Math.min(pesoMaxItem, maxKgPosiblePorMonto);
 
             if (maxKgPosible < pesoMinItem) continue;
 
             // Elegir peso realista >= 0.50 kg
-            const topeDeseado = Math.min(maxKgPosible, Math.max(pesoMinItem, (restanteDinero > 0 ? restanteDinero / precio : pesoMinItem)));
+            const topeDeseado = Math.min(
+                maxKgPosible,
+                Math.max(pesoMinItem, restanteDinero > 0 ? restanteDinero / precio : pesoMinItem)
+            );
             let kg = pesoMinItem + Math.random() * Math.max(0, topeDeseado - pesoMinItem);
             kg = Math.max(pesoMinItem, redondearPasoPeso(kg, 0.25));
             kg = Math.min(kg, maxKgPosible);
@@ -191,21 +220,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             cliente = insVarios.rows[0];
         }
 
-        // Descontar inventario real y registrar Kardex
-        for (const it of itemsElegidos) {
-            await client.query(`
-                UPDATE inventario
-                SET cantidad_fisica = cantidad_fisica - $1,
-                    ultima_actualizacion = CURRENT_TIMESTAMP
-                WHERE id_producto = $2 AND id_ubicacion = $3;
-            `, [it.cantidad, it.id_producto, idUbicacion]);
-
-            await client.query(`
-                INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                VALUES ($1, $2, $3, 'SALIDA', $4, $5);
-            `, [it.id_producto, idUbicacion, idUsuario, it.cantidad, `Boleta Automática (${it.descripcion})`]);
-        }
-
+        // Nota: La boletera automática NO descuenta stock ni altera Kardex por requerimiento del negocio.
         const configEmisor = await obtenerConfigEmisor(client);
         const { itemsCalculados, totales } = calcularDesgloseTributario(itemsElegidos, configEmisor.igv_porcentaje);
 
@@ -321,14 +336,16 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             RETURNING *;
         `, [comprobante.id_comprobante, forzar ? 'PRUEBA_MANUAL' : 'AUTOMATICA']);
 
-        const intervalo = Math.max(1, parseInt(cfg.intervalo_minutos || 30, 10));
+        const siguiente = calcularProximaEjecucionAleatoria(minMin, maxMin);
+        const nuevaProxima = cfg.activo ? siguiente.fecha.toISOString() : null;
+
         await client.query(`
             UPDATE config_boletas_automaticas
             SET ultima_ejecucion = CURRENT_TIMESTAMP,
-                proxima_ejecucion = CURRENT_TIMESTAMP + make_interval(mins => $1::int),
+                proxima_ejecucion = $1::timestamptz,
                 actualizado_en = CURRENT_TIMESTAMP
             WHERE id_config = 1;
-        `, [intervalo]);
+        `, [nuevaProxima]);
 
         await registrarAuditoria(
             client,
@@ -337,7 +354,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             'comprobantes',
             comprobante.id_comprobante,
             null,
-            { serie, correlativo, monto_total: totales.monto_total, peso_total: pesoTotal }
+            { serie, correlativo, monto_total: totales.monto_total, peso_total: pesoTotal, descuenta_stock: false }
         );
 
         await client.query('COMMIT');
@@ -355,23 +372,88 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
     }
 }
 
-function iniciarCronBoletasAutomaticas() {
-    if (cronHandle) return;
-    cronHandle = setInterval(async () => {
-        if (ejecutandoCiclo) return;
-        ejecutandoCiclo = true;
-        try {
-            await generarUnaBoletaAutomatica({ forzar: false });
-        } catch (err) {
-            console.error('Error en cron de boletas automáticas:', err.message);
-        } finally {
-            ejecutandoCiclo = false;
+async function ejecutarCicloAutomatico() {
+    if (ejecutandoCiclo) return;
+    ejecutandoCiclo = true;
+    try {
+        await generarUnaBoletaAutomatica({ forzar: false });
+    } catch (err) {
+        console.error('Error en ejecución automática de boletas:', err.message);
+    } finally {
+        ejecutandoCiclo = false;
+        await reprogramarBoletasAutomaticas();
+    }
+}
+
+/**
+ * Programa un temporizador exacto al segundo para la próxima boleta automática,
+ * respetando el rango aleatorio y el horario configurado.
+ */
+async function reprogramarBoletasAutomaticas() {
+    if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+    }
+
+    try {
+        const resCfg = await pool.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1');
+        const cfg = resCfg.rows[0];
+        if (!cfg || !cfg.activo) return;
+
+        if (cfg.solo_horario_laboral && !dentroDeHorarioLima(cfg.hora_inicio, cfg.hora_fin)) {
+            if (cfg.proxima_ejecucion) {
+                await pool.query('UPDATE config_boletas_automaticas SET proxima_ejecucion = NULL WHERE id_config = 1');
+            }
+            return;
         }
-    }, 30000);
-    console.log('⏱️  Servicio de Boletas Automáticas inicializado (verificación cada 30s).');
+
+        let proxima = cfg.proxima_ejecucion ? new Date(cfg.proxima_ejecucion) : null;
+        if (!proxima || Number.isNaN(proxima.getTime())) {
+            const minMin = Math.max(1, parseInt(cfg.intervalo_min_minutos ?? cfg.intervalo_minutos ?? 5, 10) || 5);
+            const maxMin = Math.max(minMin, parseInt(cfg.intervalo_max_minutos ?? cfg.intervalo_minutos ?? 10, 10) || minMin);
+            const calculada = calcularProximaEjecucionAleatoria(minMin, maxMin);
+            proxima = calculada.fecha;
+            await pool.query(
+                'UPDATE config_boletas_automaticas SET proxima_ejecucion = $1::timestamptz WHERE id_config = 1',
+                [proxima.toISOString()]
+            );
+        }
+
+        const delayMs = Math.max(200, proxima.getTime() - Date.now());
+        timeoutHandle = setTimeout(() => {
+            void ejecutarCicloAutomatico();
+        }, Math.min(delayMs, 2147483640));
+    } catch (err) {
+        console.error('Error reprogramando temporizador de boletas:', err.message);
+    }
+}
+
+function iniciarCronBoletasAutomaticas() {
+    if (watcherHandle) return;
+    void reprogramarBoletasAutomaticas();
+    // Vigía cada 15s para retomar automáticamente al llegar la hora de inicio del día siguiente
+    watcherHandle = setInterval(async () => {
+        if (ejecutandoCiclo || timeoutHandle) return;
+        try {
+            const resCfg = await pool.query(
+                'SELECT activo, solo_horario_laboral, hora_inicio, hora_fin FROM config_boletas_automaticas WHERE id_config = 1'
+            );
+            const cfg = resCfg.rows[0];
+            if (!cfg?.activo) return;
+            if (!cfg.solo_horario_laboral || dentroDeHorarioLima(cfg.hora_inicio, cfg.hora_fin)) {
+                await reprogramarBoletasAutomaticas();
+            }
+        } catch (err) {
+            console.error('Error en vigía de boletas automáticas:', err.message);
+        }
+    }, 15000);
+    console.log('⏱️  Servicio de Boletas Automáticas inicializado (programación aleatoria precisa al segundo, sin descuento de stock).');
 }
 
 module.exports = {
     iniciarCronBoletasAutomaticas,
-    generarUnaBoletaAutomatica
+    reprogramarBoletasAutomaticas,
+    generarUnaBoletaAutomatica,
+    calcularProximaEjecucionAleatoria,
+    dentroDeHorarioLima
 };

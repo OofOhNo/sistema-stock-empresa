@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bot,
   Play,
-  Pause,
+  Square,
   Zap,
   Save,
   RefreshCw,
@@ -21,7 +21,8 @@ import { imprimirBoletaEnIframe } from '../../utils/boletaTicketHtml';
 
 const CONFIG_INICIAL = {
   activo: false,
-  intervalo_minutos: '30',
+  intervalo_min_minutos: '5',
+  intervalo_max_minutos: '10',
   monto_minimo: '35',
   monto_maximo: '680',
   peso_minimo_item: '0.50',
@@ -33,12 +34,19 @@ const CONFIG_INICIAL = {
   auto_imprimir_navegador: true
 };
 
-const INTERVALOS_RAPIDOS = [10, 15, 30, 60];
+const RANGOS_RAPIDOS = [
+  { label: '5 a 10 min', min: '5', max: '10' },
+  { label: '10 a 20 min', min: '10', max: '20' },
+  { label: '15 a 30 min', min: '15', max: '30' }
+];
 
 function mapConfigAForm(cfg) {
+  const minVal = cfg?.intervalo_min_minutos ?? cfg?.intervalo_minutos ?? 5;
+  const maxVal = cfg?.intervalo_max_minutos ?? Math.max(Number(minVal) || 5, Number(cfg?.intervalo_minutos) || 10);
   return {
     activo: Boolean(cfg?.activo),
-    intervalo_minutos: String(cfg?.intervalo_minutos ?? 30),
+    intervalo_min_minutos: String(minVal),
+    intervalo_max_minutos: String(Math.max(Number(minVal) || 5, Number(maxVal) || 10)),
     monto_minimo: String(cfg?.monto_minimo ?? 35),
     monto_maximo: String(cfg?.monto_maximo ?? 680),
     peso_minimo_item: String(cfg?.peso_minimo_item ?? '0.50'),
@@ -51,7 +59,7 @@ function mapConfigAForm(cfg) {
   };
 }
 
-function formatearFechaLima(valor) {
+function formatearFechaLima(valor, conSegundos = false) {
   if (!valor) return null;
   const d = new Date(valor);
   if (Number.isNaN(d.getTime())) return null;
@@ -61,24 +69,31 @@ function formatearFechaLima(valor) {
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    ...(conSegundos ? { second: '2-digit' } : {})
   });
 }
 
 function validarFormulario(form, ubicaciones) {
   const errores = {};
-  const intervalo = parseInt(form.intervalo_minutos, 10);
+  const minMin = parseInt(form.intervalo_min_minutos, 10);
+  const maxMin = parseInt(form.intervalo_max_minutos, 10);
   const montoMin = parseFloat(form.monto_minimo);
   const montoMax = parseFloat(form.monto_maximo);
   const pesoMin = parseFloat(form.peso_minimo_item);
   const pesoMax = parseFloat(form.peso_maximo_item);
   const idUbicacion = form.id_ubicacion ? parseInt(form.id_ubicacion, 10) : null;
 
-  if (Number.isNaN(intervalo) || intervalo < 1 || intervalo > 1440) {
-    errores.intervalo_minutos = 'Ingresa un número entero entre 1 y 1440 minutos.';
+  if (Number.isNaN(minMin) || minMin < 1 || minMin > 1440) {
+    errores.intervalo_min_minutos = 'Ingresa un mínimo entero entre 1 y 1440 minutos.';
+  }
+  if (Number.isNaN(maxMin) || maxMin < 1 || maxMin > 1440) {
+    errores.intervalo_max_minutos = 'Ingresa un máximo entero entre 1 y 1440 minutos.';
+  } else if (!Number.isNaN(minMin) && maxMin < minMin) {
+    errores.intervalo_max_minutos = 'El máximo no puede ser menor que el mínimo.';
   }
   if (ubicaciones.length > 0 && (!idUbicacion || Number.isNaN(idUbicacion))) {
-    errores.id_ubicacion = 'Selecciona la sede de donde saldrá el stock.';
+    errores.id_ubicacion = 'Selecciona la sede emisora.';
   }
   if (Number.isNaN(montoMin) || montoMin < 1) {
     errores.monto_minimo = 'El monto mínimo debe ser al menos S/ 1.00.';
@@ -108,7 +123,9 @@ function validarFormulario(form, ubicaciones) {
     errores,
     payload: {
       activo: Boolean(form.activo),
-      intervalo_minutos: intervalo,
+      intervalo_minutos: minMin,
+      intervalo_min_minutos: minMin,
+      intervalo_max_minutos: maxMin,
       monto_minimo: montoMin,
       monto_maximo: montoMax,
       peso_minimo_item: pesoMin,
@@ -160,8 +177,8 @@ export default function PanelBoletasAutomaticas({
   const idUbicacionEfectivo =
     form.id_ubicacion || (ubicaciones[0] ? String(ubicaciones[0].id_ubicacion) : '');
 
-  const cargarTodo = useCallback(async (preservarEdicion = false) => {
-    setCargando(true);
+  const cargarTodo = useCallback(async (preservarEdicion = false, silencioso = false) => {
+    if (!silencioso) setCargando(true);
     try {
       const [cfgRes, colaRes] = await Promise.all([
         api.get('/facturacion/boletas-auto/config'),
@@ -181,9 +198,11 @@ export default function PanelBoletasAutomaticas({
       }
       setCola(colaRes.data?.cola || []);
     } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'No se pudo cargar la configuración de boletas automáticas.');
+      if (!silencioso) {
+        toast.error(err.response?.data?.mensaje || 'No se pudo cargar la configuración de boletas automáticas.');
+      }
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }, []);
 
@@ -221,7 +240,9 @@ export default function PanelBoletasAutomaticas({
   }, []);
 
   useEffect(() => {
-    const actualizarSoloCola = () => cargarTodo(true);
+    const actualizarSoloCola = () => {
+      void cargarTodo(true, true);
+    };
     window.addEventListener('cola_impresion_actualizada', actualizarSoloCola);
     return () => {
       window.removeEventListener('cola_impresion_actualizada', actualizarSoloCola);
@@ -231,6 +252,15 @@ export default function PanelBoletasAutomaticas({
       }
     };
   }, [cargarTodo]);
+
+  // Refresco silencioso mientras esté activo para ver la hora exacta de próxima boleta y la cola al instante
+  useEffect(() => {
+    if (!form.activo) return undefined;
+    const t = setInterval(() => {
+      void cargarTodo(true, true);
+    }, 10000);
+    return () => clearInterval(t);
+  }, [form.activo, cargarTodo]);
 
   const actualizarCampo = (campo, valor) => {
     setForm((prev) => ({ ...prev, [campo]: valor }));
@@ -242,6 +272,21 @@ export default function PanelBoletasAutomaticas({
         return copia;
       });
     }
+  };
+
+  const aplicarRangoRapido = (min, max) => {
+    setForm((prev) => ({
+      ...prev,
+      intervalo_min_minutos: min,
+      intervalo_max_minutos: max
+    }));
+    setHayCambios(true);
+    setErrores((prev) => {
+      const copia = { ...prev };
+      delete copia.intervalo_min_minutos;
+      delete copia.intervalo_max_minutos;
+      return copia;
+    });
   };
 
   const guardarConfiguracion = async (e) => {
@@ -281,7 +326,7 @@ export default function PanelBoletasAutomaticas({
     const validacion = validarFormulario({ ...form, id_ubicacion: idUbicacionEfectivo }, ubicaciones);
     setErrores(validacion.errores);
     if (!validacion.ok) {
-      toast.error('Corrige los parámetros marcados antes de activar o pausar.');
+      toast.error('Corrige los parámetros marcados antes de iniciar o detener.');
       return;
     }
 
@@ -305,8 +350,8 @@ export default function PanelBoletasAutomaticas({
       setHayCambios(false);
       toast.success(
         nuevoEstado
-          ? 'Generador automático ACTIVADO. Empezará a emitir boletas según tus reglas.'
-          : 'Generador automático PAUSADO. No se emitirán nuevas boletas solas.'
+          ? `Play activado: emitirá boletas en momentos aleatorios entre ${validacion.payload.intervalo_min_minutos} y ${validacion.payload.intervalo_max_minutos} minutos.`
+          : 'Generador detenido (Fin). No emitirá nuevas boletas hasta que pulses Play.'
       );
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo cambiar el estado del generador.');
@@ -321,7 +366,7 @@ export default function PanelBoletasAutomaticas({
     try {
       const res = await api.post('/facturacion/boletas-auto/generar-ahora');
       if (res.data?.exito === false) {
-        toast(res.data.mensaje || 'No se pudo generar en este intento (revisa el stock o la sede elegida).', {
+        toast(res.data.mensaje || 'No se pudo generar en este intento (revisa que existan productos activos con precio compatible).', {
           icon: '⚠️'
         });
         return;
@@ -375,8 +420,8 @@ export default function PanelBoletasAutomaticas({
     ubicaciones.find((u) => String(u.id_ubicacion) === String(idUbicacionEfectivo))?.nombre ||
     'la sede elegida';
 
-  const ultimaTexto = formatearFechaLima(configMeta.ultima_ejecucion);
-  const proximaTexto = formatearFechaLima(configMeta.proxima_ejecucion);
+  const ultimaTexto = formatearFechaLima(configMeta.ultima_ejecucion, true);
+  const proximaTexto = formatearFechaLima(configMeta.proxima_ejecucion, true);
 
   return (
     <div className="space-y-5">
@@ -405,12 +450,17 @@ export default function PanelBoletasAutomaticas({
                       : 'bg-slate-100 text-slate-600 border-slate-300'
                   }`}
                 >
-                  {form.activo ? 'ACTIVO — Emitiendo automáticamente' : 'PAUSADO — Detenido'}
+                  {form.activo
+                    ? form.solo_horario_laboral && !configMeta.proxima_ejecucion
+                      ? `EN ESPERA (Hasta las ${form.hora_inicio})`
+                      : 'ACTIVO — Emitiendo en momentos aleatorios'
+                    : 'DETENIDO — En pausa'}
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-1 max-w-2xl">
-                Emite boletas simples válidas ante SUNAT a <strong>CLIENTES VARIOS (DNI 00000000)</strong> por montos
-                menores a <strong>S/ 700</strong>, descontando stock real y poniéndolas listas para imprimir.
+                Emite boletas simples a <strong>CLIENTES VARIOS (DNI 00000000)</strong> menores a{' '}
+                <strong>S/ 700</strong> en momentos aleatorios exactos al segundo dentro de tu rango horario,{' '}
+                <strong>sin descontar stock ni mover el Kardex</strong>.
               </p>
             </div>
           </div>
@@ -427,15 +477,15 @@ export default function PanelBoletasAutomaticas({
                     : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                 }`}
               >
-                {form.activo ? <Pause size={16} /> : <Play size={16} />}
-                <span>{form.activo ? 'Pausar Automático' : 'Activar Automático'}</span>
+                {form.activo ? <Square size={15} /> : <Play size={16} />}
+                <span>{form.activo ? 'Fin / Pausar Automático' : 'Play — Activar Automático'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={generarPruebaAhora}
                 disabled={generandoAhora}
-                title="Emite inmediatamente una boleta real con las reglas guardadas sin esperar el temporizador"
+                title="Emite inmediatamente una boleta real sin esperar el temporizador aleatorio"
                 className="min-h-[42px] px-4 py-2 rounded-xl font-bold text-sm bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-colors"
               >
                 <Zap size={16} />
@@ -451,19 +501,20 @@ export default function PanelBoletasAutomaticas({
             <Info size={16} className="text-indigo-600 shrink-0 mt-0.5" />
             <p className="leading-relaxed">
               <strong className="text-blue-950">¿Qué hará con esta configuración?</strong>{' '}
-              {form.activo ? 'Cada ' : 'Cuando lo actives, cada '}
-              <strong>{form.intervalo_minutos || '—'} minutos</strong> elegirá productos disponibles en{' '}
-              <strong>{sedeSeleccionada}</strong> para emitir una boleta entre{' '}
+              {form.activo ? 'Desde que diste Play, en cada ciclo esperará ' : 'Cuando des Play, en cada ciclo esperará '}
+              un tiempo <strong>aleatorio entre {form.intervalo_min_minutos || '—'} y {form.intervalo_max_minutos || '—'} minutos</strong>{' '}
+              (por ejemplo <em>5 min 53 seg</em> u <em>8 min 02 seg</em>), elegirá productos activos del catálogo y emitirá una boleta fiscalmente registrada en{' '}
+              <strong>{sedeSeleccionada}</strong> (<strong>sin descontar stock</strong>) por un monto entre{' '}
               <strong>S/ {Number(form.monto_minimo || 0).toFixed(2)}</strong> y{' '}
               <strong>S/ {Number(form.monto_maximo || 0).toFixed(2)}</strong> (porciones de{' '}
               <strong>{Number(form.peso_minimo_item || 0.5).toFixed(2)} kg</strong> a{' '}
               <strong>{Number(form.peso_maximo_item || 8).toFixed(2)} kg</strong>).{' '}
               {form.solo_horario_laboral ? (
                 <span>
-                  Solo emitirá entre las <strong>{form.hora_inicio}</strong> y <strong>{form.hora_fin}</strong> (hora de Perú).
+                  Solo emitirá de <strong>{form.hora_inicio}</strong> a <strong>{form.hora_fin}</strong> (hora Perú); al terminar la hora de fin quedará en espera y retomará automáticamente al día siguiente.
                 </span>
               ) : (
-                <span>Emitirá a cualquier hora del día (sin restricción de horario).</span>
+                <span>Emitirá de forma continua las 24 horas hasta que pulses Fin.</span>
               )}{' '}
               {form.auto_imprimir_navegador
                 ? 'Se enviará automáticamente a imprimir desde este navegador.'
@@ -474,12 +525,16 @@ export default function PanelBoletasAutomaticas({
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 pt-2 border-t border-slate-200/80 text-[11px] text-slate-600">
             <span className="flex items-center gap-1.5">
               <Clock size={13} className="text-slate-400" />
-              <strong>Última emisión automática:</strong> {ultimaTexto || 'Aún no se ha ejecutado'}
+              <strong>Última emisión:</strong> {ultimaTexto || 'Aún no se ha ejecutado'}
             </span>
             <span className="flex items-center gap-1.5">
               <Clock size={13} className="text-emerald-600" />
-              <strong>Próxima aprox.:</strong>{' '}
-              {form.activo ? (proximaTexto || 'Calculando...') : 'En pausa'}
+              <strong>Próxima emisión aleatoria:</strong>{' '}
+              {!form.activo
+                ? 'En pausa'
+                : form.solo_horario_laboral && !configMeta.proxima_ejecucion
+                  ? `En espera hasta ${form.hora_inicio} (Lima)`
+                  : proximaTexto || 'Programando...'}
             </span>
             <span className="flex items-center gap-1.5">
               <Printer size={13} className="text-amber-600" />
@@ -492,8 +547,8 @@ export default function PanelBoletasAutomaticas({
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-3.5 py-2.5 text-xs font-semibold">
             <AlertCircle size={16} className="shrink-0 text-amber-600" />
             <span>
-              Tienes cambios sin guardar en los parámetros. Haz clic en <strong>Guardar Configuración</strong> (abajo) o{' '}
-              <strong>{form.activo ? 'Pausar' : 'Activar Automático'}</strong> para aplicarlos.
+              Tienes cambios sin guardar. Haz clic en <strong>Guardar Configuración</strong> (abajo) o{' '}
+              <strong>{form.activo ? 'Fin / Pausar' : 'Play — Activar Automático'}</strong> para aplicarlos.
             </span>
           </div>
         )}
@@ -507,52 +562,82 @@ export default function PanelBoletasAutomaticas({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
           <div>
             <h4 className="font-bold text-blue-950 text-base">
-              1. Reglas de Emisión y Origen de Stock
+              1. Reglas de Emisión y Rango Aleatorio
             </h4>
             <p className="text-xs text-slate-500">
-              Define con qué frecuencia emitir, desde qué almacén y los límites de cada boleta.
+              El sistema elige al azar un momento exacto (minutos y segundos) entre el mínimo y el máximo. No descuenta inventario.
             </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 mr-1">Rangos rápidos:</span>
+            {RANGOS_RAPIDOS.map((r) => {
+              const activoChip =
+                String(form.intervalo_min_minutos) === r.min &&
+                String(form.intervalo_max_minutos) === r.max;
+              return (
+                <button
+                  key={r.label}
+                  type="button"
+                  disabled={!puedeEditar}
+                  onClick={() => aplicarRangoRapido(r.min, r.max)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                    activoChip
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* FRECUENCIA */}
+          {/* INTERVALO MINIMO */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 block">
-              Frecuencia (minutos entre boletas)
+              Rango aleatorio: Mínimo (min)
             </label>
             <input
               type="number"
               min="1"
               max="1440"
               disabled={!puedeEditar}
-              value={form.intervalo_minutos}
-              onChange={(e) => actualizarCampo('intervalo_minutos', e.target.value)}
+              value={form.intervalo_min_minutos}
+              onChange={(e) => actualizarCampo('intervalo_min_minutos', e.target.value)}
               className={`w-full border rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                errores.intervalo_minutos ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'
+                errores.intervalo_min_minutos ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'
               }`}
             />
-            <div className="flex flex-wrap gap-1.5 pt-0.5">
-              {INTERVALOS_RAPIDOS.map((min) => (
-                <button
-                  key={min}
-                  type="button"
-                  disabled={!puedeEditar}
-                  onClick={() => actualizarCampo('intervalo_minutos', String(min))}
-                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
-                    String(form.intervalo_minutos) === String(min)
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {min}m
-                </button>
-              ))}
-            </div>
-            {errores.intervalo_minutos ? (
-              <p className="text-[11px] text-rose-600 font-semibold">{errores.intervalo_minutos}</p>
+            {errores.intervalo_min_minutos ? (
+              <p className="text-[11px] text-rose-600 font-semibold">{errores.intervalo_min_minutos}</p>
             ) : (
-              <p className="text-[11px] text-slate-400">Ejemplo: 30 = emite 1 boleta cada media hora.</p>
+              <p className="text-[11px] text-slate-400">Ejemplo: 5 (como mínimo espera 5 min).</p>
+            )}
+          </div>
+
+          {/* INTERVALO MAXIMO */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700 block">
+              Rango aleatorio: Máximo (min)
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="1440"
+              disabled={!puedeEditar}
+              value={form.intervalo_max_minutos}
+              onChange={(e) => actualizarCampo('intervalo_max_minutos', e.target.value)}
+              className={`w-full border rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                errores.intervalo_max_minutos ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'
+              }`}
+            />
+            {errores.intervalo_max_minutos ? (
+              <p className="text-[11px] text-rose-600 font-semibold">{errores.intervalo_max_minutos}</p>
+            ) : (
+              <p className="text-[11px] text-slate-400">Ejemplo: 10 (dispara al azar ej. 5m 53s o 8m 02s).</p>
             )}
           </div>
 
@@ -560,7 +645,7 @@ export default function PanelBoletasAutomaticas({
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
               <MapPin size={13} className="text-slate-400" />
-              <span>Sede de donde sale el stock</span>
+              <span>Sede emisora (sin descontar stock)</span>
             </label>
             <select
               disabled={!puedeEditar}
@@ -580,11 +665,11 @@ export default function PanelBoletasAutomaticas({
             {errores.id_ubicacion ? (
               <p className="text-[11px] text-rose-600 font-semibold">{errores.id_ubicacion}</p>
             ) : (
-              <p className="text-[11px] text-slate-400">Solo usa productos con inventario positivo en esta sede.</p>
+              <p className="text-[11px] text-slate-400">Solo registra la sede en el comprobante; no altera inventario.</p>
             )}
           </div>
 
-          {/* MONTO MINIMO */}
+          {/* MONTO MINIMO Y MAXIMO EN PARES CLAROS */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 block">
               Monto mínimo por boleta (S/)
@@ -607,7 +692,6 @@ export default function PanelBoletasAutomaticas({
             )}
           </div>
 
-          {/* MONTO MAXIMO */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-700 block">
               Monto máximo (&lt; S/ 700.00)
@@ -677,49 +761,49 @@ export default function PanelBoletasAutomaticas({
             )}
           </div>
 
-          {/* HORA INICIO */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700 block">
-              Hora inicio (Lima)
-            </label>
-            <input
-              type="time"
-              disabled={!puedeEditar || !form.solo_horario_laboral}
-              value={form.hora_inicio}
-              onChange={(e) => actualizarCampo('hora_inicio', e.target.value)}
-              className={`w-full border rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                !form.solo_horario_laboral
-                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                  : errores.hora_inicio
-                    ? 'border-rose-400 bg-rose-50/40'
-                    : 'border-slate-200'
-              }`}
-            />
-            <p className="text-[11px] text-slate-400">
-              {form.solo_horario_laboral ? 'Desde esta hora empieza a emitir.' : 'Activa "Restringir por horario" para usar.'}
-            </p>
-          </div>
+          {/* HORA INICIO Y HORA FIN */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700 block">
+                Hora inicio (Lima)
+              </label>
+              <input
+                type="time"
+                disabled={!puedeEditar || !form.solo_horario_laboral}
+                value={form.hora_inicio}
+                onChange={(e) => actualizarCampo('hora_inicio', e.target.value)}
+                className={`w-full border rounded-xl px-2.5 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                  !form.solo_horario_laboral
+                    ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                    : errores.hora_inicio
+                      ? 'border-rose-400 bg-rose-50/40'
+                      : 'border-slate-200'
+                }`}
+              />
+            </div>
 
-          {/* HORA FIN */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700 block">
-              Hora fin (Lima)
-            </label>
-            <input
-              type="time"
-              disabled={!puedeEditar || !form.solo_horario_laboral}
-              value={form.hora_fin}
-              onChange={(e) => actualizarCampo('hora_fin', e.target.value)}
-              className={`w-full border rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                !form.solo_horario_laboral
-                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                  : errores.hora_fin
-                    ? 'border-rose-400 bg-rose-50/40'
-                    : 'border-slate-200'
-              }`}
-            />
-            <p className="text-[11px] text-slate-400">
-              {form.solo_horario_laboral ? 'A esta hora deja de emitir hasta mañana.' : 'Opcional si quieres límite de atención.'}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700 block">
+                Hora fin (Lima)
+              </label>
+              <input
+                type="time"
+                disabled={!puedeEditar || !form.solo_horario_laboral}
+                value={form.hora_fin}
+                onChange={(e) => actualizarCampo('hora_fin', e.target.value)}
+                className={`w-full border rounded-xl px-2.5 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                  !form.solo_horario_laboral
+                    ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                    : errores.hora_fin
+                      ? 'border-rose-400 bg-rose-50/40'
+                      : 'border-slate-200'
+                }`}
+              />
+            </div>
+            <p className="col-span-2 text-[11px] text-slate-400">
+              {form.solo_horario_laboral
+                ? 'Duerme fuera de este horario y retoma al día siguiente.'
+                : 'Marca "Restringir a horario de atención" para activar estas horas.'}
             </p>
           </div>
         </div>
@@ -739,7 +823,7 @@ export default function PanelBoletasAutomaticas({
                 Restringir a horario de atención (hora de Perú)
               </span>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Si está marcado, solo generará boletas automáticas entre las {form.hora_inicio} y las {form.hora_fin}.
+                Emite entre las {form.hora_inicio} y las {form.hora_fin}. Durante la noche queda en espera y retoma solo al día siguiente.
               </span>
             </div>
           </label>
@@ -757,7 +841,7 @@ export default function PanelBoletasAutomaticas({
                 Auto-imprimir automáticamente desde esta PC / navegador
               </span>
               <span className="text-[11px] text-slate-500 block mt-0.5">
-                Mientras este sistema siga abierto en una pestaña, abrirá la impresión al generarse una boleta pendiente.
+                Mientras este sistema siga abierto en una pestaña, abrirá la impresión al instante en cuanto se genere una boleta pendiente.
               </span>
             </div>
           </label>
@@ -842,7 +926,7 @@ export default function PanelBoletasAutomaticas({
                 <tr>
                   <td colSpan={6} className="py-10 text-center text-slate-400 text-xs">
                     {cola.length === 0
-                      ? 'Todavía no hay boletas generadas en la cola. Activa el generador o pulsa "Emitir 1 Boleta Ahora" para probar.'
+                      ? 'Todavía no hay boletas generadas en la cola. Pulsa "Play — Activar Automático" o "Emitir 1 Boleta Ahora" para probar.'
                       : 'No hay boletas en este filtro.'}
                   </td>
                 </tr>
@@ -864,7 +948,7 @@ export default function PanelBoletasAutomaticas({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-xs text-slate-600">
-                        {formatearFechaLima(item.creado_en) || '—'}
+                        {formatearFechaLima(item.creado_en, true) || '—'}
                       </td>
                       <td className="py-3 px-4 text-xs text-slate-600 max-w-xs">
                         {resumenProductos || `${item.cantidad_items || 0} producto(s)`}

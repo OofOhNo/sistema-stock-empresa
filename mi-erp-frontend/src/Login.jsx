@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import api from './api';
 import { Lock, Mail, ArrowRight, Eye, EyeOff, HelpCircle, ArrowLeft, CheckCircle2, User, Send } from 'lucide-react';
 
@@ -10,12 +10,109 @@ export default function Login({ onLoginExitoso }) {
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
 
+  // Acceso corporativo Google Workspace
+  const [googleConfig, setGoogleConfig] = useState({
+    google_habilitado: false,
+    google_client_id: '',
+    dominios_corporativos: ''
+  });
+  const [cargandoGoogle, setCargandoGoogle] = useState(false);
+  const googleBtnRef = useRef(null);
+
   // Estados para "¿Olvidaste tu contraseña?"
   const [identificador, setIdentificador] = useState('');
   const [notaRecuperacion, setNotaRecuperacion] = useState('');
   const [enviandoRecuperacion, setEnviandoRecuperacion] = useState(false);
   const [recuperacionEnviada, setRecuperacionEnviada] = useState(false);
   const [mensajeExitoRecuperacion, setMensajeExitoRecuperacion] = useState('');
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const res = await api.get('/auth/config-publica');
+        if (cancelado || !res.data) return;
+        setGoogleConfig({
+          google_habilitado: Boolean(res.data.google_habilitado),
+          google_client_id: res.data.google_client_id || '',
+          dominios_corporativos: res.data.dominios_corporativos || ''
+        });
+      } catch {
+        /* fallback sin Google */
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, []);
+
+  const manejarCredentialGoogle = useCallback(async (response) => {
+    if (!response?.credential) return;
+    setError('');
+    setCargandoGoogle(true);
+    try {
+      const res = await api.post('/auth/google', { credential: response.credential });
+      if (res.data?.exito) {
+        localStorage.setItem('token_erp', res.data.token);
+        localStorage.setItem('usuario_erp', JSON.stringify(res.data.usuario));
+        onLoginExitoso(res.data.usuario);
+      }
+    } catch (err) {
+      setError(
+        err.response?.data?.mensaje ||
+        'No se pudo iniciar sesión con tu correo corporativo de Google.'
+      );
+    } finally {
+      setCargandoGoogle(false);
+    }
+  }, [onLoginExitoso]);
+
+  useEffect(() => {
+    if (modo !== 'login' || !googleConfig.google_habilitado || !googleConfig.google_client_id) {
+      return undefined;
+    }
+
+    let cancelado = false;
+    const renderizarBotonGoogle = () => {
+      if (cancelado || !googleBtnRef.current || !window.google?.accounts?.id) return;
+      window.google.accounts.id.initialize({
+        client_id: googleConfig.google_client_id,
+        callback: manejarCredentialGoogle
+      });
+      googleBtnRef.current.innerHTML = '';
+      window.google.accounts.id.renderButton(googleBtnRef.current, {
+        theme: 'filled_black',
+        size: 'large',
+        shape: 'pill',
+        text: 'signin_with',
+        width: 340,
+        locale: 'es'
+      });
+    };
+
+    if (window.google?.accounts?.id) {
+      renderizarBotonGoogle();
+      return () => {
+        cancelado = true;
+      };
+    }
+
+    let script = document.querySelector('script[data-gsi-client="true"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.setAttribute('data-gsi-client', 'true');
+      document.head.appendChild(script);
+    }
+    const onLoad = () => renderizarBotonGoogle();
+    script.addEventListener('load', onLoad);
+    return () => {
+      cancelado = true;
+      script?.removeEventListener('load', onLoad);
+    };
+  }, [modo, googleConfig.google_habilitado, googleConfig.google_client_id, manejarCredentialGoogle]);
 
   const manejarSubmit = async (e) => {
     e.preventDefault();
@@ -174,6 +271,39 @@ export default function Login({ onLoginExitoso }) {
                 {!cargando && <ArrowRight size={18} />}
               </button>
             </form>
+
+            {googleConfig.google_habilitado && googleConfig.google_client_id ? (
+              <div className="mt-5 pt-5 border-t border-slate-700/80 space-y-3">
+                <p className="text-center text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                  O entra con tu correo corporativo
+                </p>
+                <div className="flex justify-center min-h-[44px]" ref={googleBtnRef} />
+                {cargandoGoogle && (
+                  <p className="text-center text-xs text-indigo-300 font-semibold">
+                    Validando cuenta de Google Workspace...
+                  </p>
+                )}
+                {googleConfig.dominios_corporativos && (
+                  <p className="text-center text-[11px] text-slate-400">
+                    Autorizado para cuentas{' '}
+                    <span className="text-slate-200 font-semibold">
+                      {googleConfig.dominios_corporativos
+                        .split(/[\s,;]+/)
+                        .filter(Boolean)
+                        .map((d) => `@${d.replace(/^@+/, '')}`)
+                        .join(', ')}
+                    </span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-5 pt-4 border-t border-slate-700/60 text-center">
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  ¿Tu empresa usa correos de <strong className="text-slate-300">Google Workspace</strong>? Un Admin Central puede activar el botón de Google desde{' '}
+                  <span className="text-indigo-300 font-semibold">Personal y Roles → Correo Corporativo (Google)</span>.
+                </p>
+              </div>
+            )}
 
             <div className="mt-6 pt-5 border-t border-slate-700/80 text-center">
               <button

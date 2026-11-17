@@ -4,10 +4,15 @@ import {
   Users, Shield, ShieldAlert, UserCheck, Briefcase, Lock,
   ShieldCheck, History, Eye, EyeOff, RefreshCw, X,
   UserPlus, ShieldPlus, Phone, Search, Loader2,
-  Trash2, AlertTriangle, Layers, KeyRound, Copy, CheckCircle2
+  Trash2, AlertTriangle, Layers, KeyRound, Copy, CheckCircle2,
+  Clock, Mail, Save, Globe
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PermisosGrid from '../components/PermisosGrid';
+import {
+  OPCIONES_DURACION_SESION,
+  formatearDuracionSesionLegible
+} from '../utils/sesionRol';
 
 const TRADUCCION_ACCION = {
   CREAR_USUARIO: 'Creó un nuevo empleado',
@@ -18,6 +23,9 @@ const TRADUCCION_ACCION = {
   SOLICITAR_RECUPERACION_PASSWORD: 'Pidió ayuda por contraseña olvidada',
   ACTUALIZAR_PERMISOS: 'Modificó permisos de un rol',
   ACTUALIZAR_PERMISO_UBICACIONES_ROL: 'Cambió acceso a otras sedes de un rol',
+  ACTUALIZAR_DURACION_SESION_ROL: 'Cambió el tiempo máximo de sesión de un rol',
+  CONFIGURAR_LOGIN_GOOGLE: 'Configuró el acceso con correo corporativo (Google)',
+  LOGIN_GOOGLE: 'Inició sesión con correo corporativo (Google)',
   CREAR_ROL: 'Creó un nuevo rol',
   CREAR_PEDIDO: 'Registró un nuevo pedido',
   CAMBIAR_ESTADO_PEDIDO: 'Marcó pedido listo para despacho',
@@ -145,13 +153,24 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     id_ubicacion: '',
     area: 'ADMINISTRACION',
     puede_ver_celulares: false,
-    seccion_facturacion: 'AMBAS'
+    seccion_facturacion: 'AMBAS',
+    telefono_whatsapp: ''
   });
 
   const [formRol, setFormRol] = useState({
     nombre: '',
-    descripcion: ''
+    descripcion: '',
+    duracion_sesion_minutos: ''
   });
+
+  const [editandoWhatsappUser, setEditandoWhatsappUser] = useState(null); // { id_usuario, telefono }
+  const [configGoogle, setConfigGoogle] = useState({
+    google_habilitado: false,
+    google_client_id: '',
+    dominios_corporativos: ''
+  });
+  const [cargandoGoogle, setCargandoGoogle] = useState(false);
+  const [guardandoGoogle, setGuardandoGoogle] = useState(false);
 
   const [filtroEntidad, setFiltroEntidad] = useState('todas');
   const [detalleModal, setDetalleModal] = useState(null);
@@ -240,17 +259,63 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     };
   }, [cargarDatos]);
 
+  const cargarConfigGoogle = useCallback(async () => {
+    if (!esAdminCentral) return;
+    setCargandoGoogle(true);
+    try {
+      const res = await api.get('/auth/config-corporativa');
+      const cfg = res.data?.config;
+      if (cfg) {
+        setConfigGoogle({
+          google_habilitado: Boolean(cfg.google_habilitado),
+          google_client_id: cfg.google_client_id || '',
+          dominios_corporativos: cfg.dominios_corporativos || ''
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo cargar la configuración de correo corporativo.');
+    } finally {
+      setCargandoGoogle(false);
+    }
+  }, [esAdminCentral]);
+
   useEffect(() => {
     let alive = true;
     if (tabActual === 'auditoria') {
       Promise.resolve().then(() => {
         if (alive) void cargarAuditorias();
       });
+    } else if (tabActual === 'correo_corporativo' && esAdminCentral) {
+      Promise.resolve().then(() => {
+        if (alive) void cargarConfigGoogle();
+      });
     }
     return () => {
       alive = false;
     };
-  }, [tabActual, cargarAuditorias]);
+  }, [tabActual, esAdminCentral, cargarAuditorias, cargarConfigGoogle]);
+
+  const guardarConfigGoogle = async (e) => {
+    e.preventDefault();
+    if (!esAdminCentral) return;
+    setGuardandoGoogle(true);
+    try {
+      const res = await api.put('/auth/config-corporativa', configGoogle);
+      toast.success(res.data?.mensaje || 'Configuración guardada correctamente.');
+      const cfg = res.data?.config;
+      if (cfg) {
+        setConfigGoogle({
+          google_habilitado: Boolean(cfg.google_habilitado),
+          google_client_id: cfg.google_client_id || '',
+          dominios_corporativos: cfg.dominios_corporativos || ''
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo guardar la configuración.');
+    } finally {
+      setGuardandoGoogle(false);
+    }
+  };
 
   const solicitarCambioRol = (user, nuevoRolId) => {
     const rolDestino = rolesDinamicos.find(r => r.id_rol === nuevoRolId);
@@ -278,11 +343,24 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
-  const actualizarConfiguracion = async (idUsuario, puede_ver_celulares, area, seccion_facturacion) => {
+  const actualizarConfiguracion = async (
+    idUsuario,
+    puede_ver_celulares,
+    area,
+    seccion_facturacion,
+    telefono_whatsapp = undefined
+  ) => {
     setActualizando(idUsuario);
     try {
-      const res = await api.put(`/usuarios/${idUsuario}/configuracion`, { puede_ver_celulares, area, seccion_facturacion });
+      const payload = { puede_ver_celulares, area, seccion_facturacion };
+      if (telefono_whatsapp !== undefined) {
+        payload.telefono_whatsapp = telefono_whatsapp;
+      }
+      const res = await api.put(`/usuarios/${idUsuario}/configuracion`, payload);
       toast.success(res.data.mensaje);
+      if (telefono_whatsapp !== undefined) {
+        setEditandoWhatsappUser(null);
+      }
       await cargarDatos();
       if (idUsuario === usuarioLogueado?.id_usuario) {
         onPermisosActualizados?.();
@@ -443,7 +521,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       id_ubicacion: ubicaciones[0]?.id_ubicacion || '',
       area: 'ADMINISTRACION',
       puede_ver_celulares: false,
-      seccion_facturacion: 'AMBAS'
+      seccion_facturacion: 'AMBAS',
+      telefono_whatsapp: ''
     });
     setVerPasswordNuevo(true);
     setModalNuevoUsuario(true);
@@ -477,10 +556,15 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
     setGuardando(true);
     try {
-      const res = await api.post('/usuarios/roles', formRol);
+      const res = await api.post('/usuarios/roles', {
+        ...formRol,
+        duracion_sesion_minutos: formRol.duracion_sesion_minutos
+          ? parseInt(formRol.duracion_sesion_minutos, 10)
+          : null
+      });
       toast.success(res.data.mensaje || 'Rol creado con éxito.');
       setModalNuevoRol(false);
-      setFormRol({ nombre: '', descripcion: '' });
+      setFormRol({ nombre: '', descripcion: '', duracion_sesion_minutos: '' });
       await cargarDatos();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo crear el rol.');
@@ -737,6 +821,17 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
           <History size={16} />
           <span>Historial ("Quién hizo qué")</span>
         </button>
+        {esAdminCentral && (
+          <button
+            onClick={() => setTabActual('correo_corporativo')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-2 cursor-pointer ${
+              tabActual === 'correo_corporativo' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Mail size={16} />
+            <span>Correo Corporativo (Google)</span>
+          </button>
+        )}
       </div>
 
       {/* TAB 1: PERSONAL Y ROLES */}
@@ -857,7 +952,67 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                                     {esYoMismo && <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">Tú</span>}
                                   </div>
                                 </td>
-                                <td className="p-4 text-slate-600 font-mono text-xs">{user.email}</td>
+                                <td className="p-4 text-slate-600 text-xs">
+                                  <div className="font-mono">{user.email}</div>
+                                  {editandoWhatsappUser?.id_usuario === user.id_usuario ? (
+                                    <div className="mt-1.5 flex items-center gap-1">
+                                      <input
+                                        type="text"
+                                        placeholder="+51 999888777"
+                                        value={editandoWhatsappUser.telefono}
+                                        onChange={(e) => setEditandoWhatsappUser({
+                                          ...editandoWhatsappUser,
+                                          telefono: e.target.value
+                                        })}
+                                        className="w-32 border border-indigo-300 rounded-lg px-2 py-1 text-[11px] font-sans focus:outline-hidden"
+                                      />
+                                      <button
+                                        type="button"
+                                        disabled={actualizando === user.id_usuario}
+                                        onClick={() => actualizarConfiguracion(
+                                          user.id_usuario,
+                                          user.puede_ver_celulares,
+                                          user.area,
+                                          user.seccion_facturacion,
+                                          editandoWhatsappUser.telefono
+                                        )}
+                                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer"
+                                      >
+                                        OK
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditandoWhatsappUser(null)}
+                                        className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-bold cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="mt-1 flex items-center gap-1.5 font-sans">
+                                      {user.telefono_whatsapp ? (
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                                          <Phone size={10} />
+                                          {user.telefono_whatsapp}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-400">Sin WhatsApp</span>
+                                      )}
+                                      {puedeEditarUsuarios && !noPuedoModificarEsteAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditandoWhatsappUser({
+                                            id_usuario: user.id_usuario,
+                                            telefono: user.telefono_whatsapp || ''
+                                          })}
+                                          className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                                        >
+                                          {user.telefono_whatsapp ? 'Editar' : '+ Agregar'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="p-4 text-slate-600 font-medium">
                                   {user.nombre_ubicacion || 'Sede Central'}
                                 </td>
@@ -1013,7 +1168,16 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                       <p className="text-slate-500 text-xs mt-1 line-clamp-2">
                         {rol.descripcion || 'Permisos ajustables en la pestaña "Permisos por Rol".'}
                       </p>
-                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+                        <span className="font-bold text-slate-500 flex items-center gap-1">
+                          <Clock size={11} className="text-amber-600" />
+                          Re-login:
+                        </span>
+                        <span className="font-bold text-slate-700">
+                          {formatearDuracionSesionLegible(rol.duracion_sesion_minutos)}
+                        </span>
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
                         <span className="text-[10px] font-bold text-slate-500">🏢 Ver otras sedes</span>
                         <label className="flex items-center space-x-1 cursor-pointer">
                           <input
@@ -1041,8 +1205,105 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       {tabActual === 'permisos' && (
         <PermisosGrid
           puedeEditar={puedeEditarUsuarios}
-          onPermisoCambiado={onPermisosActualizados}
+          onPermisoCambiado={() => {
+            void cargarDatos();
+            onPermisosActualizados?.();
+          }}
         />
+      )}
+
+      {/* TAB: ACCESO CON CORREO CORPORATIVO GOOGLE WORKSPACE */}
+      {tabActual === 'correo_corporativo' && esAdminCentral && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6 max-w-3xl">
+          <div className="flex items-start gap-3 pb-4 border-b border-slate-100">
+            <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+              <Globe size={22} />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-blue-950">
+                Inicio de Sesión con Correos Corporativos (Google Workspace)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Permite que los trabajadores entren con su correo corporativo de Gmail / Google Workspace sin recordar otra contraseña, siempre que su correo exista en Lista de Personal.
+              </p>
+            </div>
+          </div>
+
+          {cargandoGoogle ? (
+            <div className="text-xs text-slate-500 py-4">Cargando configuración...</div>
+          ) : (
+            <form onSubmit={guardarConfigGoogle} className="space-y-4">
+              <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50/70 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(configGoogle.google_habilitado)}
+                  onChange={(e) => setConfigGoogle({ ...configGoogle, google_habilitado: e.target.checked })}
+                  className="mt-0.5 rounded text-indigo-600 w-4 h-4"
+                />
+                <div>
+                  <span className="text-sm font-bold text-slate-800 block">
+                    Habilitar botón "Iniciar sesión con Google" en la pantalla de Login
+                  </span>
+                  <span className="text-xs text-slate-500 block mt-0.5">
+                    El login normal con correo y contraseña seguirá funcionando igual.
+                  </span>
+                </div>
+              </label>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Google Client ID (OAuth 2.0 Web) *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: 1234567890-abcdefg.apps.googleusercontent.com"
+                  value={configGoogle.google_client_id}
+                  onChange={(e) => setConfigGoogle({ ...configGoogle, google_client_id: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Dominios corporativos permitidos (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: procesoscarnicos.com, otraempresa.pe (vacío = cualquier usuario registrado)"
+                  value={configGoogle.dominios_corporativos}
+                  onChange={(e) => setConfigGoogle({ ...configGoogle, dominios_corporativos: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Si pones el dominio de la empresa, rechazará cuentas personales @gmail.com incluso si intentan entrar.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-600 space-y-1.5">
+                <p className="font-bold text-slate-800">Guía rápida en Google Cloud Console:</p>
+                <p>1. Crea una credencial tipo <strong>ID de cliente de OAuth 2.0 (Aplicación web)</strong>.</p>
+                <p>
+                  2. En <strong>Orígenes de JavaScript autorizados</strong>, agrega esta dirección:{' '}
+                  <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-bold text-indigo-700">
+                    {typeof window !== 'undefined' ? window.location.origin : 'http://localhost'}
+                  </code>
+                </p>
+                <p>3. Pega el <strong>Client ID</strong> arriba, guarda, y asegúrate de crear cada empleado con su correo corporativo en <strong>Lista de Personal</strong>.</p>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  disabled={guardandoGoogle}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <Save size={16} />
+                  <span>{guardandoGoogle ? 'Guardando...' : 'Guardar Configuración Corporativa'}</span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
 
       {/* TAB 3: HISTORIAL LEGIBLE */}
@@ -1272,6 +1533,19 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Celular / WhatsApp para Mensajería <span className="text-slate-400 font-normal normal-case">(Opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: 999888777 o +51 999 888 777"
+                  value={formUsuario.telefono_whatsapp || ''}
+                  onChange={(e) => setFormUsuario({ ...formUsuario, telefono_whatsapp: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
+
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
                 💡 Si tu navegador te pregunta <em>"¿Guardar contraseña?"</em> al terminar, elige <strong>"Nunca"</strong> o ciérralo, porque esta contraseña es del nuevo empleado y no la tuya.
               </div>
@@ -1462,6 +1736,21 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                   onChange={(e) => setFormRol({ ...formRol, descripcion: e.target.value })}
                   className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Tiempo obligatorio para volver a iniciar sesión
+                </label>
+                <select
+                  value={formRol.duracion_sesion_minutos}
+                  onChange={(e) => setFormRol({ ...formRol, duracion_sesion_minutos: e.target.value })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm bg-white focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
+                >
+                  {OPCIONES_DURACION_SESION.map(opt => (
+                    <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-xs text-purple-800">

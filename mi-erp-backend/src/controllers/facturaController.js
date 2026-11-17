@@ -9,7 +9,12 @@ const {
     generarXmlUbl21YDatosSunat,
     enviarAConectorNubefact
 } = require('../utils/sunatNubefactService');
-const { generarUnaBoletaAutomatica } = require('../utils/boletaAutoService');
+const {
+    generarUnaBoletaAutomatica,
+    reprogramarBoletasAutomaticas,
+    calcularProximaEjecucionAleatoria,
+    dentroDeHorarioLima
+} = require('../utils/boletaAutoService');
 const { obtenerCatalogosGre, crearGreInterna, consultarPuntosLlegadaPorRuc } = require('../utils/greService');
 
 async function obtenerConfigEmisor(clientOrPool = pool) {
@@ -1968,6 +1973,8 @@ const facturaController = {
             const {
                 activo,
                 intervalo_minutos,
+                intervalo_min_minutos,
+                intervalo_max_minutos,
                 monto_minimo,
                 monto_maximo,
                 peso_minimo_item,
@@ -1979,45 +1986,65 @@ const facturaController = {
                 auto_imprimir_navegador
             } = req.body;
 
-            const intervalo = Math.max(1, Math.min(480, parseInt(intervalo_minutos || 30, 10)));
-            const pesoMin = Math.max(0.50, Number(peso_minimo_item || 0.50));
-            const pesoMax = Math.max(pesoMin, Number(peso_maximo_item || 8.00));
-            const montoMax = Math.min(699.00, Math.max(25.00, Number(monto_maximo || 680.00)));
-            const montoMin = Math.max(15.00, Math.min(montoMax - 5, Number(monto_minimo || 35.00)));
+            const resActual = await pool.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1');
+            const actual = resActual.rows[0] || {};
+
+            const minRaw = intervalo_min_minutos ?? intervalo_minutos ?? actual.intervalo_min_minutos ?? actual.intervalo_minutos ?? 5;
+            const maxRaw = intervalo_max_minutos ?? intervalo_minutos ?? actual.intervalo_max_minutos ?? actual.intervalo_minutos ?? 10;
+            const minMin = Math.max(1, Math.min(1440, parseInt(minRaw, 10) || 5));
+            const maxMin = Math.max(minMin, Math.min(1440, parseInt(maxRaw, 10) || minMin));
+
+            const pesoMin = Math.max(0.50, Number(peso_minimo_item ?? actual.peso_minimo_item ?? 0.50));
+            const pesoMax = Math.max(pesoMin, Number(peso_maximo_item ?? actual.peso_maximo_item ?? 8.00));
+            const montoMax = Math.min(699.00, Math.max(25.00, Number(monto_maximo ?? actual.monto_maximo ?? 680.00)));
+            const montoMin = Math.max(15.00, Math.min(montoMax - 5, Number(monto_minimo ?? actual.monto_minimo ?? 35.00)));
+
+            const finalActivo = activo !== undefined ? Boolean(activo) : Boolean(actual.activo);
+            const finalSoloHorario = solo_horario_laboral !== undefined ? Boolean(solo_horario_laboral) : Boolean(actual.solo_horario_laboral);
+            const finalHoraInicio = hora_inicio || actual.hora_inicio || '08:00';
+            const finalHoraFin = hora_fin || actual.hora_fin || '20:00';
+
+            let proximaEjecucion = null;
+            if (finalActivo && (!finalSoloHorario || dentroDeHorarioLima(finalHoraInicio, finalHoraFin))) {
+                proximaEjecucion = calcularProximaEjecucionAleatoria(minMin, maxMin).fecha.toISOString();
+            }
 
             const { rows } = await pool.query(`
                 UPDATE config_boletas_automaticas
-                SET activo = COALESCE($1::boolean, activo),
+                SET activo = $1::boolean,
                     intervalo_minutos = $2::int,
-                    monto_minimo = $3::numeric,
-                    monto_maximo = $4::numeric,
-                    peso_minimo_item = $5::numeric,
-                    peso_maximo_item = $6::numeric,
-                    hora_inicio = COALESCE($7::varchar, hora_inicio),
-                    hora_fin = COALESCE($8::varchar, hora_fin),
-                    solo_horario_laboral = COALESCE($9::boolean, solo_horario_laboral),
-                    id_ubicacion = COALESCE($10::int, id_ubicacion),
-                    auto_imprimir_navegador = COALESCE($11::boolean, auto_imprimir_navegador),
-                    proxima_ejecucion = CASE
-                        WHEN COALESCE($1::boolean, activo) = TRUE THEN CURRENT_TIMESTAMP + make_interval(mins => $2::int)
-                        ELSE proxima_ejecucion
-                    END,
+                    intervalo_min_minutos = $2::int,
+                    intervalo_max_minutos = $3::int,
+                    monto_minimo = $4::numeric,
+                    monto_maximo = $5::numeric,
+                    peso_minimo_item = $6::numeric,
+                    peso_maximo_item = $7::numeric,
+                    hora_inicio = $8::varchar,
+                    hora_fin = $9::varchar,
+                    solo_horario_laboral = $10::boolean,
+                    id_ubicacion = COALESCE($11::int, id_ubicacion),
+                    auto_imprimir_navegador = COALESCE($12::boolean, auto_imprimir_navegador),
+                    proxima_ejecucion = $13::timestamptz,
                     actualizado_en = CURRENT_TIMESTAMP
                 WHERE id_config = 1
                 RETURNING *;
             `, [
-                activo !== undefined ? Boolean(activo) : null,
-                intervalo,
+                finalActivo,
+                minMin,
+                maxMin,
                 montoMin,
                 montoMax,
                 pesoMin,
                 pesoMax,
-                hora_inicio || null,
-                hora_fin || null,
-                solo_horario_laboral !== undefined ? Boolean(solo_horario_laboral) : null,
+                finalHoraInicio,
+                finalHoraFin,
+                finalSoloHorario,
                 id_ubicacion ? parseInt(id_ubicacion, 10) : null,
-                auto_imprimir_navegador !== undefined ? Boolean(auto_imprimir_navegador) : null
+                auto_imprimir_navegador !== undefined ? Boolean(auto_imprimir_navegador) : null,
+                proximaEjecucion
             ]);
+
+            await reprogramarBoletasAutomaticas();
 
             res.json({ exito: true, mensaje: 'Configuración de boletas automáticas actualizada.', config: rows[0] });
         } catch (error) {
@@ -2034,6 +2061,7 @@ const facturaController = {
             if (!resultado.generada) {
                 return res.status(400).json({ exito: false, mensaje: resultado.motivo });
             }
+            await reprogramarBoletasAutomaticas();
             res.status(201).json({
                 exito: true,
                 mensaje: `Boleta automática ${resultado.comprobante.serie}-${String(resultado.comprobante.correlativo).padStart(8, '0')} generada (S/ ${Number(resultado.comprobante.monto_total).toFixed(2)}) y enviada a la cola de impresión.`,

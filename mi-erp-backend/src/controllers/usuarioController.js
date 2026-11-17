@@ -196,10 +196,16 @@ const usuarioController = {
 
     actualizarConfiguracion: async (req, res) => {
         const { id_usuario } = req.params;
-        const { puede_ver_celulares, area, seccion_facturacion } = req.body;
+        const { puede_ver_celulares, area, seccion_facturacion, telefono_whatsapp } = req.body;
 
         try {
-            const actualizado = await Usuario.actualizarConfiguracion(id_usuario, puede_ver_celulares, area, seccion_facturacion);
+            const actualizado = await Usuario.actualizarConfiguracion(
+                id_usuario,
+                puede_ver_celulares,
+                area,
+                seccion_facturacion,
+                telefono_whatsapp
+            );
             res.status(200).json({
                 exito: true,
                 mensaje: 'Configuración de empleado actualizada correctamente.',
@@ -225,7 +231,7 @@ const usuarioController = {
     },
 
     crearRol: async (req, res) => {
-        const { nombre, descripcion } = req.body;
+        const { nombre, descripcion, duracion_sesion_minutos } = req.body;
         const usuarioSolicitante = req.usuario;
 
         if (!nombre || !nombre.trim()) {
@@ -238,7 +244,7 @@ const usuarioController = {
                 return res.status(400).json({ exito: false, mensaje: 'Ya existe un rol con ese nombre.' });
             }
 
-            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion);
+            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion, duracion_sesion_minutos);
 
             await registrarAuditoria(
                 pool,
@@ -262,7 +268,7 @@ const usuarioController = {
     },
 
     crearUsuario: async (req, res) => {
-        const { nombre_completo, email, password, id_ubicacion, area, puede_ver_celulares, seccion_facturacion } = req.body;
+        const { nombre_completo, email, password, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp } = req.body;
         const rol_id = req.body.rol_id ?? req.body.id_rol;
         const usuarioSolicitante = req.usuario;
         const esAdminCentral = usuarioSolicitante.nombre_rol === 'Admin Central';
@@ -314,7 +320,8 @@ const usuarioController = {
                 id_ubicacion: Number(id_ubicacion),
                 area: area || 'ADMINISTRACION',
                 puede_ver_celulares: puede_ver_celulares === true,
-                seccion_facturacion: seccion_facturacion || 'AMBAS'
+                seccion_facturacion: seccion_facturacion || 'AMBAS',
+                telefono_whatsapp: telefono_whatsapp || null
             });
 
             await registrarAuditoria(
@@ -363,6 +370,65 @@ const usuarioController = {
         } catch (error) {
             console.error('Error al actualizar permiso de sedes de rol:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al actualizar permiso de rol', error: error.message });
+        }
+    },
+
+    actualizarDuracionSesionRol: async (req, res) => {
+        const idRol = parseInt(req.params.id_rol, 10);
+        const { duracion_sesion_minutos } = req.body;
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante.nombre_rol === 'Admin Central';
+
+        if (!idRol || Number.isNaN(idRol)) {
+            return res.status(400).json({ exito: false, mensaje: 'Rol inválido.' });
+        }
+
+        let valorFinal = null;
+        if (duracion_sesion_minutos !== null && duracion_sesion_minutos !== undefined && duracion_sesion_minutos !== '') {
+            const num = parseInt(duracion_sesion_minutos, 10);
+            if (Number.isNaN(num) || num < 1 || num > 525600) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El tiempo de sesión debe estar entre 1 minuto y 525600 minutos (1 año), o vacío para no expirar.'
+                });
+            }
+            valorFinal = num;
+        }
+
+        try {
+            const rolCheck = await pool.query('SELECT id_rol, nombre, duracion_sesion_minutos FROM roles WHERE id_rol = $1', [idRol]);
+            if (rolCheck.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Rol no encontrado.' });
+            }
+            if (!esAdminCentral && rolCheck.rows[0].nombre === 'Admin Central') {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede modificar el tiempo de sesión de Admin Central.'
+                });
+            }
+
+            const rolActualizado = await Usuario.actualizarDuracionSesion(idRol, valorFinal);
+
+            await registrarAuditoria(
+                pool,
+                solicitante.id_usuario,
+                'ACTUALIZAR_DURACION_SESION_ROL',
+                'roles',
+                idRol,
+                { duracion_sesion_minutos: rolCheck.rows[0].duracion_sesion_minutos },
+                { duracion_sesion_minutos: valorFinal }
+            );
+
+            res.status(200).json({
+                exito: true,
+                mensaje: valorFinal
+                    ? `Sesión máxima del rol "${rolActualizado.nombre}" configurada correctamente.`
+                    : `El rol "${rolActualizado.nombre}" ya no cerrará sesión por tiempo.`,
+                rol: rolActualizado
+            });
+        } catch (error) {
+            console.error('Error al actualizar duración de sesión del rol:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al guardar el tiempo de sesión del rol.', error: error.message });
         }
     },
 

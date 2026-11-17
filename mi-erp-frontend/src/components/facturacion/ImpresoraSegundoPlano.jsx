@@ -48,7 +48,7 @@ export default function ImpresoraSegundoPlano({ usuario }) {
       }
     };
 
-    const timer = setInterval(revisarYProcesarCola, 25000);
+    const timer = setInterval(revisarYProcesarCola, 5000);
     window.addEventListener('cola_impresion_nueva_boleta', revisarYProcesarCola);
     return () => {
       clearInterval(timer);

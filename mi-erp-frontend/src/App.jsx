@@ -87,9 +87,10 @@ export default function App() {
         sincronizarPerfil();
       }
     };
-    const onSesionExpirada = () => {
+    const onSesionExpirada = (e) => {
       cerrarSesion();
-      toast.error('Tu sesión terminó. Por favor vuelve a entrar con tu correo y contraseña.');
+      const msg = e?.detail?.mensaje;
+      toast.error(msg || 'Tu sesión terminó. Por favor vuelve a entrar con tu correo y contraseña.');
     };
     window.addEventListener('focus', onFocus);
     window.addEventListener('sesion_expirada', onSesionExpirada);
@@ -98,6 +99,17 @@ export default function App() {
       window.removeEventListener('sesion_expirada', onSesionExpirada);
     };
   }, [cerrarSesion, sincronizarPerfil]);
+
+  // Cierre automático exacto cuando el rol tiene un límite fijo de sesión
+  useEffect(() => {
+    if (!usuario?.sesion_expira_en) return;
+    const restanteMs = Number(usuario.sesion_expira_en) - Date.now();
+    const timer = setTimeout(() => {
+      cerrarSesion();
+      toast.error('Tu sesión expiró según el tiempo límite configurado para tu rol. Vuelve a iniciar sesión.');
+    }, Math.max(0, Math.min(restanteMs, 2147483640)));
+    return () => clearTimeout(timer);
+  }, [usuario?.sesion_expira_en, cerrarSesion]);
 
   const cambiarVista = (nuevaVista) => {
     setVistaActual(nuevaVista);

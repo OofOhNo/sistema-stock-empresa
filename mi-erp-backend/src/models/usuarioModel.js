@@ -16,6 +16,7 @@ const Usuario = {
                     r.nombre AS nombre_rol,
                     u.puede_ver_celulares,
                     u.area,
+                    u.telefono_whatsapp,
                     COALESCE(u.seccion_facturacion, 'AMBAS') AS seccion_facturacion,
                     COALESCE(u.activo, true) AS activo,
                     u.creado_en,
@@ -53,18 +54,21 @@ const Usuario = {
         }
     },
 
-    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area, seccion_facturacion = null) => {
+    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area, seccion_facturacion = null, telefono_whatsapp = undefined) => {
         try {
+            const actualizaTel = telefono_whatsapp !== undefined;
+            const telValor = actualizaTel ? (String(telefono_whatsapp || '').trim() || null) : null;
             const query = `
                 UPDATE usuarios 
                 SET 
                     puede_ver_celulares = COALESCE($1, puede_ver_celulares),
                     area = COALESCE($2, area),
-                    seccion_facturacion = COALESCE($3, seccion_facturacion)
-                WHERE id_usuario = $4 
-                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion;
+                    seccion_facturacion = COALESCE($3, seccion_facturacion),
+                    telefono_whatsapp = CASE WHEN $4::boolean THEN $5::varchar ELSE telefono_whatsapp END
+                WHERE id_usuario = $6::int
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp;
             `;
-            const res = await pool.query(query, [puede_ver_celulares, area, seccion_facturacion, id_usuario]);
+            const res = await pool.query(query, [puede_ver_celulares, area, seccion_facturacion, actualizaTel, telValor, id_usuario]);
             return res.rows[0];
         } catch (error) {
             throw error;
@@ -78,6 +82,7 @@ const Usuario = {
                     u.*, 
                     r.nombre AS nombre_rol,
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
+                    r.duracion_sesion_minutos,
                     ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
@@ -139,6 +144,7 @@ const Usuario = {
                     u.*, 
                     r.nombre AS nombre_rol,
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
+                    r.duracion_sesion_minutos,
                     ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
@@ -160,11 +166,12 @@ const Usuario = {
                     r.nombre, 
                     r.descripcion, 
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
+                    r.duracion_sesion_minutos,
                     r.creado_en,
                     COUNT(u.id_usuario)::int AS total_usuarios
                 FROM roles r
                 LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND COALESCE(u.activo, true) = true
-                GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.creado_en
+                GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.duracion_sesion_minutos, r.creado_en
                 ORDER BY r.id_rol ASC;
             `;
             const res = await pool.query(query);
@@ -186,13 +193,31 @@ const Usuario = {
         }
     },
 
-    crearRol: async (nombre, descripcion) => {
+    actualizarDuracionSesion: async (rol_id, duracion_sesion_minutos) => {
+        try {
+            const valor = duracion_sesion_minutos && Number(duracion_sesion_minutos) > 0
+                ? parseInt(duracion_sesion_minutos, 10)
+                : null;
+            const res = await pool.query(
+                'UPDATE roles SET duracion_sesion_minutos = $1::int WHERE id_rol = $2::int RETURNING *',
+                [valor, rol_id]
+            );
+            return res.rows[0];
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    crearRol: async (nombre, descripcion, duracion_sesion_minutos = null) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+            const duracion = duracion_sesion_minutos && Number(duracion_sesion_minutos) > 0
+                ? parseInt(duracion_sesion_minutos, 10)
+                : null;
             const insertRol = await client.query(
-                `INSERT INTO roles (nombre, descripcion) VALUES ($1, $2) RETURNING *`,
-                [nombre, descripcion || null]
+                `INSERT INTO roles (nombre, descripcion, duracion_sesion_minutos) VALUES ($1, $2, $3) RETURNING *`,
+                [nombre, descripcion || null, duracion]
             );
             const nuevoRol = insertRol.rows[0];
 
@@ -214,15 +239,16 @@ const Usuario = {
         }
     },
 
-    crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion = 'AMBAS' }) => {
+    crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion = 'AMBAS', telefono_whatsapp = null }) => {
         try {
+            const telLimpio = telefono_whatsapp ? String(telefono_whatsapp).trim() : null;
             const query = `
                 INSERT INTO usuarios (
                     nombre_completo, email, password_hash, rol_id, id_ubicacion, 
-                    area, puede_ver_celulares, seccion_facturacion, activo
+                    area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp, activo
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
-                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, activo, creado_en;
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp, activo, creado_en;
             `;
             const res = await pool.query(query, [
                 nombre_completo,
@@ -232,7 +258,8 @@ const Usuario = {
                 id_ubicacion,
                 area || 'ADMINISTRACION',
                 puede_ver_celulares === true,
-                ['AMBAS', 'PEDIDOS', 'MANUAL'].includes(String(seccion_facturacion).toUpperCase()) ? String(seccion_facturacion).toUpperCase() : 'AMBAS'
+                ['AMBAS', 'PEDIDOS', 'MANUAL'].includes(String(seccion_facturacion).toUpperCase()) ? String(seccion_facturacion).toUpperCase() : 'AMBAS',
+                telLimpio || null
             ]);
             return res.rows[0];
         } catch (error) {

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { OAuth2Client } = require('google-auth-library');
 const Usuario = require('../models/usuarioModel');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
@@ -10,10 +11,43 @@ const MODULOS_TODOS = [
     'organizacion', 'mensajes'
 ];
 
-async function construirPayloadUsuario(usuario) {
+function parsearDominiosCorporativos(texto = '') {
+    return String(texto || '')
+        .split(/[\s,;]+/)
+        .map((d) => d.trim().toLowerCase().replace(/^@+/, ''))
+        .filter(Boolean);
+}
+
+async function obtenerConfiguracionAuth() {
+    try {
+        const res = await pool.query('SELECT * FROM configuracion_autenticacion WHERE id_config = 1');
+        if (res.rows.length > 0) {
+            const row = res.rows[0];
+            return {
+                google_habilitado: Boolean(row.google_habilitado),
+                google_client_id: (row.google_client_id || process.env.GOOGLE_CLIENT_ID || '').trim(),
+                dominios_corporativos: (row.dominios_corporativos || '').trim()
+            };
+        }
+    } catch {
+        // Fallback si la tabla aún no fue consultada
+    }
+    const envClient = (process.env.GOOGLE_CLIENT_ID || '').trim();
+    return {
+        google_habilitado: Boolean(envClient),
+        google_client_id: envClient,
+        dominios_corporativos: (process.env.GOOGLE_ALLOWED_DOMAINS || '').trim()
+    };
+}
+
+async function construirPayloadUsuario(usuario, loginAtMs = Date.now()) {
     const puedeVerCelulares = usuario.puede_ver_celulares === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
     const puedeVerOtrasUbicaciones = usuario.puede_ver_otras_ubicaciones === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
     const area = usuario.area || 'ADMINISTRACION';
+    const duracionMin = usuario.duracion_sesion_minutos && Number(usuario.duracion_sesion_minutos) > 0
+        ? Number(usuario.duracion_sesion_minutos)
+        : null;
+    const sesionExpiraEn = duracionMin ? (loginAtMs + duracionMin * 60 * 1000) : null;
 
     const permisosMap = {};
     if (usuario.rol_id) {
@@ -44,7 +78,8 @@ async function construirPayloadUsuario(usuario) {
             puede_ver_celulares: puedeVerCelulares,
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
             area: area,
-            seccion_facturacion: usuario.seccion_facturacion || 'AMBAS'
+            seccion_facturacion: usuario.seccion_facturacion || 'AMBAS',
+            login_at: loginAtMs
         },
         usuarioFront: {
             id_usuario: usuario.id_usuario,
@@ -57,12 +92,35 @@ async function construirPayloadUsuario(usuario) {
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
             area: area,
             seccion_facturacion: usuario.seccion_facturacion || 'AMBAS',
+            telefono_whatsapp: usuario.telefono_whatsapp || null,
+            duracion_sesion_minutos: duracionMin,
+            login_at: loginAtMs,
+            sesion_expira_en: sesionExpiraEn,
             permisos: permisosMap
         }
     };
 }
 
 const authController = {
+    configPublica: async (req, res) => {
+        try {
+            const cfg = await obtenerConfiguracionAuth();
+            res.status(200).json({
+                exito: true,
+                google_habilitado: Boolean(cfg.google_habilitado && cfg.google_client_id),
+                google_client_id: cfg.google_habilitado ? cfg.google_client_id : '',
+                dominios_corporativos: cfg.dominios_corporativos
+            });
+        } catch {
+            res.status(200).json({
+                exito: true,
+                google_habilitado: false,
+                google_client_id: '',
+                dominios_corporativos: ''
+            });
+        }
+    },
+
     login: async (req, res) => {
         try {
             const { email, password } = req.body;
@@ -84,7 +142,8 @@ const authController = {
                 return res.status(401).json({ exito: false, mensaje: 'Correo o contraseña incorrectos. Revisa que estén bien escritos.' });
             }
 
-            const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario);
+            const loginAtMs = Date.now();
+            const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
             const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
 
             res.status(200).json({
@@ -99,6 +158,138 @@ const authController = {
         }
     },
 
+    loginConGoogle: async (req, res) => {
+        try {
+            const { credential } = req.body;
+            if (!credential) {
+                return res.status(400).json({ exito: false, mensaje: 'No se recibió la credencial de Google.' });
+            }
+
+            const cfg = await obtenerConfiguracionAuth();
+            if (!cfg.google_habilitado || !cfg.google_client_id) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El acceso con Google Workspace no está activado en este momento.'
+                });
+            }
+
+            const client = new OAuth2Client(cfg.google_client_id);
+            const ticket = await client.verifyIdToken({
+                idToken: String(credential),
+                audience: cfg.google_client_id
+            });
+            const payload = ticket.getPayload();
+
+            if (!payload?.email || payload.email_verified !== true) {
+                return res.status(401).json({
+                    exito: false,
+                    mensaje: 'Tu correo de Google no está verificado.'
+                });
+            }
+
+            const emailGoogle = String(payload.email).trim().toLowerCase();
+            const dominioEmail = emailGoogle.split('@')[1] || '';
+            const dominiosPermitidos = parsearDominiosCorporativos(cfg.dominios_corporativos);
+
+            if (dominiosPermitidos.length > 0 && !dominiosPermitidos.includes(dominioEmail)) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: `Solo se permiten correos corporativos autorizados (${dominiosPermitidos.map(d => '@' + d).join(', ')}).`
+                });
+            }
+
+            const usuario = await Usuario.buscarPorEmail(emailGoogle);
+            if (!usuario) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: `Tu correo corporativo (${emailGoogle}) aún no tiene una cuenta asignada en el sistema. Pídele al Admin Central que te registre en Personal y Roles con ese correo.`
+                });
+            }
+
+            const loginAtMs = Date.now();
+            const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
+
+            await registrarAuditoria(
+                pool,
+                usuario.id_usuario,
+                'LOGIN_GOOGLE',
+                'usuarios',
+                usuario.id_usuario,
+                null,
+                { email: emailGoogle, hd: payload.hd || null }
+            );
+
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Inicio de sesión con correo corporativo exitoso',
+                token,
+                usuario: usuarioFront
+            });
+        } catch (error) {
+            console.error('Error en loginConGoogle:', error);
+            res.status(401).json({
+                exito: false,
+                mensaje: 'No se pudo validar tu acceso con Google. Verifica el Client ID o intenta nuevamente.'
+            });
+        }
+    },
+
+    obtenerConfigCorporativa: async (req, res) => {
+        try {
+            const cfg = await obtenerConfiguracionAuth();
+            res.status(200).json({ exito: true, config: cfg });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'No se pudo obtener la configuración corporativa.', error: error.message });
+        }
+    },
+
+    actualizarConfigCorporativa: async (req, res) => {
+        try {
+            const { google_habilitado, google_client_id, dominios_corporativos } = req.body;
+            const clientIdLimpio = String(google_client_id || '').trim();
+            const dominiosLimpios = parsearDominiosCorporativos(dominios_corporativos).join(', ');
+            const habilitadoFinal = Boolean(google_habilitado);
+
+            if (habilitadoFinal && !clientIdLimpio) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'Para habilitar el botón de Google Workspace debes ingresar el Client ID.'
+                });
+            }
+
+            const { rows } = await pool.query(`
+                INSERT INTO configuracion_autenticacion (id_config, google_habilitado, google_client_id, dominios_corporativos, actualizado_en)
+                VALUES (1, $1::boolean, $2::varchar, $3::varchar, CURRENT_TIMESTAMP)
+                ON CONFLICT (id_config) DO UPDATE SET
+                    google_habilitado = EXCLUDED.google_habilitado,
+                    google_client_id = EXCLUDED.google_client_id,
+                    dominios_corporativos = EXCLUDED.dominios_corporativos,
+                    actualizado_en = CURRENT_TIMESTAMP
+                RETURNING *;
+            `, [habilitadoFinal, clientIdLimpio, dominiosLimpios]);
+
+            await registrarAuditoria(
+                pool,
+                req.usuario.id_usuario,
+                'CONFIGURAR_LOGIN_GOOGLE',
+                'usuarios',
+                req.usuario.id_usuario,
+                null,
+                { google_habilitado: habilitadoFinal, dominios_corporativos: dominiosLimpios }
+            );
+
+            res.status(200).json({
+                exito: true,
+                mensaje: 'Configuración de acceso con correo corporativo guardada.',
+                config: rows[0]
+            });
+        } catch (error) {
+            console.error('Error al guardar config corporativa:', error);
+            res.status(500).json({ exito: false, mensaje: 'Error al guardar la configuración corporativa.', error: error.message });
+        }
+    },
+
     perfil: async (req, res) => {
         try {
             const usuario = req.usuario?.id_usuario
@@ -109,8 +300,11 @@ const authController = {
                 return res.status(404).json({ exito: false, mensaje: 'Usuario no encontrado o inactivo.' });
             }
 
-            const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario);
-            // Emitir también un token fresco de larga duración para mantener la sesión activa hasta que se borren los datos del navegador
+            // Conservar el timestamp original del login para respetar el límite fijo por rol
+            const loginAtMs = Number(req.usuario?.login_at)
+                || (req.usuario?.iat ? Number(req.usuario.iat) * 1000 : Date.now());
+
+            const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
             const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
 
             res.status(200).json({
@@ -140,7 +334,6 @@ const authController = {
             const idUsuarioMatch = usuarioEncontrado ? usuarioEncontrado.id_usuario : null;
             const notaLimpia = mensaje ? String(mensaje).trim().slice(0, 300) : null;
 
-            // Evitar duplicados si la persona apretó el botón varias veces seguidas
             const existente = await pool.query(`
                 SELECT id_solicitud
                 FROM solicitudes_recuperacion_password
@@ -229,7 +422,6 @@ const authController = {
             const nuevoHash = await bcrypt.hash(nuevaLimpia, 10);
             await pool.query('UPDATE usuarios SET password_hash = $1 WHERE id_usuario = $2', [nuevoHash, id_usuario]);
 
-            // Si tenía alguna solicitud de recuperación abierta, marcarla atendida
             await pool.query(`
                 UPDATE solicitudes_recuperacion_password
                 SET estado = 'ATENDIDA', atendido_por = $1, atendido_en = CURRENT_TIMESTAMP

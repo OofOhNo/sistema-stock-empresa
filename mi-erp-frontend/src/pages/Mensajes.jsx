@@ -3,8 +3,9 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import {
   MessageSquare, Send, Search, Eye, Lock,
-  CheckCheck, Check, ArrowLeft
+  CheckCheck, Check, ArrowLeft, Phone, ExternalLink
 } from 'lucide-react';
+import { normalizarNumeroWhatsApp, construirUrlWhatsApp } from '../utils/whatsapp';
 
 export default function Mensajes({ usuario }) {
   // SOLO Admin Central puede ver la pestaña de supervisión silenciosa.
@@ -196,16 +197,11 @@ export default function Mensajes({ usuario }) {
     }
   }, [mensajesSupervision]);
 
-  const handleEnviarMensaje = async (e) => {
-    e.preventDefault();
-    if (!nuevoMensaje.trim() || !contactoActivo) return;
-
-    const texto = nuevoMensaje.trim();
-    setNuevoMensaje('');
+  const enviarTextoInterno = async (texto, receptorId) => {
     setEnviando(true);
     try {
       const res = await api.post('/mensajes', {
-        id_receptor: contactoActivo.id_usuario,
+        id_receptor: receptorId,
         mensaje: texto
       });
       if (res.data.exito && res.data.datos) {
@@ -219,6 +215,37 @@ export default function Mensajes({ usuario }) {
       setEnviando(false);
     }
   };
+
+  const handleEnviarMensaje = async (e) => {
+    e.preventDefault();
+    if (!nuevoMensaje.trim() || !contactoActivo) return;
+
+    const texto = nuevoMensaje.trim();
+    setNuevoMensaje('');
+    await enviarTextoInterno(texto, contactoActivo.id_usuario);
+  };
+
+  const handleEnviarYWhatsApp = async () => {
+    if (!contactoActivo) return;
+    const urlWa = construirUrlWhatsApp(contactoActivo.telefono_whatsapp, nuevoMensaje.trim());
+    if (!urlWa) {
+      toast.error('Este compañero aún no tiene un número de WhatsApp registrado en Personal y Roles.');
+      return;
+    }
+
+    // Abrir enlace wa.me inmediatamente al hacer clic para evitar bloqueo de popups en navegador/móvil
+    window.open(urlWa, '_blank', 'noopener,noreferrer');
+
+    const texto = nuevoMensaje.trim();
+    if (texto) {
+      setNuevoMensaje('');
+      await enviarTextoInterno(texto, contactoActivo.id_usuario);
+    }
+  };
+
+  const whatsappActivoUrl = contactoActivo
+    ? construirUrlWhatsApp(contactoActivo.telefono_whatsapp)
+    : '';
 
   const formatearHoraMensaje = (fechaISO) => {
     if (!fechaISO) return '';
@@ -332,13 +359,23 @@ export default function Mensajes({ usuario }) {
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-1">
                           <p className="text-xs font-bold text-slate-800 truncate">{c.nombre_completo}</p>
-                          {c.fecha_ultimo_mensaje && (
-                            <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                              {formatearHoraMensaje(c.fecha_ultimo_mensaje)}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {Boolean(normalizarNumeroWhatsApp(c.telefono_whatsapp)) && (
+                              <span
+                                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                title={`WhatsApp: ${c.telefono_whatsapp}`}
+                              >
+                                WA
+                              </span>
+                            )}
+                            {c.fecha_ultimo_mensaje && (
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {formatearHoraMensaje(c.fecha_ultimo_mensaje)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <p className="text-[11px] text-slate-500 flex items-center space-x-1 mt-0.5 truncate">
                           <span>{c.nombre_rol}</span>
@@ -380,17 +417,40 @@ export default function Mensajes({ usuario }) {
                     <div className="w-9 h-9 rounded-full bg-indigo-600 text-white font-bold flex items-center justify-center text-xs shadow-xs shrink-0">
                       {(contactoActivo.nombre_completo || 'U').split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('')}
                     </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
                         {contactoActivo.nombre_completo}
                       </h3>
-                      <p className="text-[11px] text-slate-500 flex items-center space-x-1.5 mt-0.5">
+                      <p className="text-[11px] text-slate-500 flex items-center space-x-1.5 mt-0.5 truncate">
                         <span className="font-semibold text-indigo-700">{contactoActivo.nombre_rol}</span>
                         <span>·</span>
                         <span>{contactoActivo.nombre_ubicacion || 'Sede'}</span>
                       </p>
                     </div>
                   </div>
+
+                  {whatsappActivoUrl ? (
+                    <a
+                      href={whatsappActivoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold inline-flex items-center gap-1.5 shrink-0 transition-colors"
+                      title={`Abrir chat directo en WhatsApp (${contactoActivo.telefono_whatsapp})`}
+                    >
+                      <Phone size={13} />
+                      <span className="hidden sm:inline">Abrir WhatsApp</span>
+                      <ExternalLink size={12} />
+                    </a>
+                  ) : (
+                    <span
+                      className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-xl shrink-0 inline-flex items-center gap-1"
+                      title="Registra su número en Personal, Roles y Contraseñas para activar WhatsApp"
+                    >
+                      <Phone size={11} className="text-slate-400" />
+                      <span className="hidden sm:inline">Sin WhatsApp (agrégalo en Personal)</span>
+                      <span className="sm:hidden">Sin WA</span>
+                    </span>
+                  )}
                 </div>
 
                 <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
@@ -415,9 +475,25 @@ export default function Mensajes({ usuario }) {
                               : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
                           }`}>
                             <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
-                            <div className={`flex items-center justify-end space-x-1 mt-1 text-[10px] font-mono ${
+                            <div className={`flex items-center justify-end space-x-1.5 mt-1 text-[10px] font-mono ${
                               soyEmisor ? 'text-indigo-200' : 'text-slate-400'
                             }`}>
+                              {Boolean(whatsappActivoUrl) && (
+                                <a
+                                  href={construirUrlWhatsApp(contactoActivo.telefono_whatsapp, m.mensaje)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans font-semibold transition-colors ${
+                                    soyEmisor
+                                      ? 'text-emerald-200 hover:text-white hover:bg-indigo-500/40'
+                                      : 'text-emerald-700 hover:bg-emerald-50'
+                                  }`}
+                                  title="Enviar este mensaje por WhatsApp"
+                                >
+                                  <Phone size={10} />
+                                  <span>WhatsApp</span>
+                                </a>
+                              )}
                               <span>{formatearHoraMensaje(m.creado_en)}</span>
                               {soyEmisor && (
                                 m.leido ? <CheckCheck size={13} className="text-indigo-200" /> : <Check size={13} className="text-indigo-300" />
@@ -430,18 +506,30 @@ export default function Mensajes({ usuario }) {
                   )}
                 </div>
 
-                <form onSubmit={handleEnviarMensaje} className="p-3 border-t border-slate-200 bg-white shrink-0 flex items-center space-x-2">
+                <form onSubmit={handleEnviarMensaje} className="p-3 border-t border-slate-200 bg-white shrink-0 flex flex-wrap sm:flex-nowrap items-center gap-2">
                   <input
                     type="text"
                     placeholder={`Escribe un mensaje para ${(contactoActivo.nombre_completo || '').split(' ')[0]}...`}
                     value={nuevoMensaje}
                     onChange={(e) => setNuevoMensaje(e.target.value)}
-                    className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                    className="flex-1 min-w-[160px] border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
                   />
+                  {Boolean(whatsappActivoUrl) && (
+                    <button
+                      type="button"
+                      onClick={handleEnviarYWhatsApp}
+                      disabled={enviando || !nuevoMensaje.trim()}
+                      className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+                      title="Guarda el mensaje aquí y abre WhatsApp con el texto listo para enviar"
+                    >
+                      <Phone size={14} />
+                      <span>Enviar + WhatsApp</span>
+                    </button>
+                  )}
                   <button
                     type="submit"
                     disabled={enviando || !nuevoMensaje.trim()}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
                   >
                     <Send size={15} />
                     <span>Enviar</span>
