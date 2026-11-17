@@ -33,7 +33,7 @@ body {
 
 @layer base {
   :where(h1, h2, h3, h4, h5, h6) {
-    color: #0f244a; /* Azul oscuro corporativo de alta legibilidad por defecto */
+    color: inherit;
   }
 
   /* Tipografía oficial de la empresa en títulos principales */
@@ -42,6 +42,7 @@ body {
     font-weight: 400;
     font-synthesis: none;
     letter-spacing: 0.025em;
+    line-height: 1.25;
   }
 
   /* Respuesta táctil inmediata (evita retraso de 300ms y zoom accidental al tocar rápido) */

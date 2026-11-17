@@ -14,6 +14,7 @@ import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
 import { escaparHtml } from '../utils/htmlPrint';
+import { esUnidadSoloEnteros, obtenerInfoUnidad } from '../utils/unidades';
 
 // Logo oficial PROCESOS CÁRNICOS S.A.C.
 function LogoProcesosCarnicos({ className = "h-20 w-auto" }) {
@@ -547,9 +548,14 @@ export default function Facturacion({ usuario }) {
     if (campo === 'id_producto') {
       const p = productos.find(prod => String(prod.id_producto) === String(valor));
       if (p) {
+        let cantAjustada = parseFloat(copia[idx].cantidad) || 1;
+        if (esUnidadSoloEnteros(p)) {
+          cantAjustada = Math.max(1, Math.round(cantAjustada));
+          copia[idx].cantidad = cantAjustada;
+        }
         copia[idx].descripcion = p.nombre;
         copia[idx].precio_unitario = parseFloat(p.precio_venta || 0);
-        copia[idx].subtotal = Number(((parseFloat(copia[idx].cantidad) || 1) * parseFloat(p.precio_venta || 0)).toFixed(2));
+        copia[idx].subtotal = Number((cantAjustada * parseFloat(p.precio_venta || 0)).toFixed(2));
       }
     } else if (campo === 'cantidad' || campo === 'precio_unitario') {
       const c = parseFloat(copia[idx].cantidad) || 0;
@@ -1766,7 +1772,7 @@ export default function Facturacion({ usuario }) {
                         <div>
                           <input
                             type="number"
-                            step="0.50"
+                            step="any"
                             min="0"
                             value={montoEntregadoPos}
                             onChange={(e) => setMontoEntregadoPos(e.target.value)}
@@ -2255,7 +2261,7 @@ export default function Facturacion({ usuario }) {
                         <label className="block text-[10px] text-slate-500 mb-0.5">Peso (kg):</label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           min="0"
                           value={it.peso}
                           onChange={(e) => actualizarItemEditable(idx, 'peso', e.target.value)}
@@ -2267,7 +2273,7 @@ export default function Facturacion({ usuario }) {
                         <label className="block text-[10px] text-slate-500 mb-0.5">Precio (S/):</label>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           min="0"
                           value={it.precio_unitario}
                           onChange={(e) => actualizarItemEditable(idx, 'precio_unitario', e.target.value)}
@@ -2296,7 +2302,7 @@ export default function Facturacion({ usuario }) {
                   </div>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     value={pesoTotalFactura}
                     onChange={(e) => setPesoTotalFactura(e.target.value)}
@@ -2455,7 +2461,7 @@ export default function Facturacion({ usuario }) {
                           <div className="relative">
                             <input
                               type="number"
-                              step="0.1"
+                              step="any"
                               min="0"
                               max="100"
                               value={pago.porcentaje}
@@ -2469,7 +2475,7 @@ export default function Facturacion({ usuario }) {
                         <div className="sm:col-span-2">
                           <input
                             type="number"
-                            step="0.01"
+                            step="any"
                             min="0"
                             value={pago.monto}
                             onChange={(e) => actualizarPagoDividido(pIdx, 'monto', e.target.value)}
@@ -2663,7 +2669,7 @@ export default function Facturacion({ usuario }) {
                   </label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     value={manualPesoTotal}
                     onChange={(e) => setManualPesoTotal(e.target.value)}
@@ -2688,7 +2694,10 @@ export default function Facturacion({ usuario }) {
                   </button>
                 </div>
 
-                {manualItems.map((it, idx) => (
+                {manualItems.map((it, idx) => {
+                  const prodManual = productos.find(pr => String(pr.id_producto) === String(it.id_producto));
+                  const infoUnidadManual = obtenerInfoUnidad(prodManual);
+                  return (
                   <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
                     <div className="sm:col-span-4">
                       <label className="block text-[10px] text-slate-400 mb-0.5">Producto:</label>
@@ -2699,16 +2708,17 @@ export default function Facturacion({ usuario }) {
                       >
                         {productos.map(pr => (
                           <option key={pr.id_producto} value={pr.id_producto}>
-                            {pr.nombre}
+                            {pr.nombre} ({obtenerInfoUnidad(pr).simbolo})
                           </option>
                         ))}
                       </select>
                     </div>
                     <div className="sm:col-span-2">
-                      <label className="block text-[10px] text-slate-400 mb-0.5">Cant:</label>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Cant ({infoUnidadManual.simbolo}):</label>
                       <input
                         type="number"
-                        min="1"
+                        min={infoUnidadManual.esEntero ? '1' : '0'}
+                        step={infoUnidadManual.esEntero ? '1' : 'any'}
                         value={it.cantidad}
                         onChange={(e) => actualizarFilaManual(idx, 'cantidad', e.target.value)}
                         className="w-full p-1.5 border border-slate-300 rounded-lg font-mono text-xs"
@@ -2718,7 +2728,7 @@ export default function Facturacion({ usuario }) {
                       <label className="block text-[10px] text-slate-400 mb-0.5">Peso (kg):</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0"
                         value={it.peso}
                         onChange={(e) => actualizarFilaManual(idx, 'peso', e.target.value)}
@@ -2730,7 +2740,7 @@ export default function Facturacion({ usuario }) {
                       <label className="block text-[10px] text-slate-400 mb-0.5">Precio (S/):</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0"
                         value={it.precio_unitario}
                         onChange={(e) => actualizarFilaManual(idx, 'precio_unitario', e.target.value)}
@@ -2753,7 +2763,8 @@ export default function Facturacion({ usuario }) {
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {manualTipoComp === '01' && (() => {
@@ -2900,7 +2911,7 @@ export default function Facturacion({ usuario }) {
                       <label className="block text-[10px] text-slate-400 mb-0.5">Peso (kg):</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0"
                         value={it.peso}
                         onChange={(e) => actualizarFilaNota(idx, 'peso', e.target.value)}
@@ -2912,7 +2923,7 @@ export default function Facturacion({ usuario }) {
                       <label className="block text-[10px] text-slate-400 mb-0.5">Precio:</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0"
                         value={it.precio_unitario}
                         onChange={(e) => actualizarFilaNota(idx, 'precio_unitario', e.target.value)}
@@ -2924,7 +2935,7 @@ export default function Facturacion({ usuario }) {
                       <label className="block text-[10px] text-slate-400 mb-0.5">Total:</label>
                       <input
                         type="number"
-                        step="0.01"
+                        step="any"
                         min="0"
                         value={it.total}
                         onChange={(e) => actualizarFilaNota(idx, 'total', e.target.value)}

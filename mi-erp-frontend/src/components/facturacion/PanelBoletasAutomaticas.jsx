@@ -676,7 +676,7 @@ export default function PanelBoletasAutomaticas({
             </label>
             <input
               type="number"
-              step="0.01"
+              step="any"
               min="1"
               disabled={!puedeEditar}
               value={form.monto_minimo}
@@ -698,7 +698,7 @@ export default function PanelBoletasAutomaticas({
             </label>
             <input
               type="number"
-              step="0.01"
+              step="any"
               min="1"
               max="699.99"
               disabled={!puedeEditar}
@@ -722,8 +722,8 @@ export default function PanelBoletasAutomaticas({
             </label>
             <input
               type="number"
-              step="0.1"
-              min="0.50"
+              step="any"
+              min="0"
               disabled={!puedeEditar}
               value={form.peso_minimo_item}
               onChange={(e) => actualizarCampo('peso_minimo_item', e.target.value)}
@@ -745,8 +745,8 @@ export default function PanelBoletasAutomaticas({
             </label>
             <input
               type="number"
-              step="0.1"
-              min="0.50"
+              step="any"
+              min="0"
               disabled={!puedeEditar}
               value={form.peso_maximo_item}
               onChange={(e) => actualizarCampo('peso_maximo_item', e.target.value)}

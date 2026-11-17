@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const { parsearCantidadPorUnidad } = require('../utils/unidades');
 
 const kardexController = {
 
@@ -78,6 +79,21 @@ const kardexController = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+
+            const resProd = await client.query(`
+                SELECT p.id_producto, p.nombre, p.unidad_medida, um.codigo AS codigo_unidad, um.simbolo AS simbolo_unidad
+                FROM productos p
+                LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                WHERE p.id_producto = $1
+            `, [id_producto]);
+            if (resProd.rows.length === 0) {
+                throw new Error('El producto seleccionado no existe.');
+            }
+            const validacionCant = parsearCantidadPorUnidad(cantidadNum, resProd.rows[0]);
+            if (!validacionCant.valido) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ exito: false, mensaje: validacionCant.mensaje });
+            }
 
             let stockCheck = await client.query(
                 'SELECT cantidad_fisica, cantidad_reservada FROM inventario WHERE id_producto = $1 AND id_ubicacion = $2 FOR UPDATE', 

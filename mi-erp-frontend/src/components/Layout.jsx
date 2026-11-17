@@ -476,6 +476,39 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
               </button>
             )}
 
+            {puedeUsarMensajes && (
+              <button
+                type="button"
+                onClick={() => setVistaActual('mensajes')}
+                title="Abrir chat con compañeros"
+                aria-label="Mensajes internos"
+                className={`relative min-w-[40px] min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  vistaActual === 'mensajes'
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200'
+                }`}
+              >
+                <MessageSquare size={16} />
+                <span className="hidden xl:inline">Mensajes</span>
+                {mensajesNoLeidos > 0 && (
+                  <span className="bg-amber-400 text-slate-950 text-[10px] font-extrabold min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center">
+                    {mensajesNoLeidos}
+                  </span>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setModalBug(true)}
+              title="Avisar de un problema o falla"
+              aria-label="Reportar problema"
+              className="min-w-[40px] min-h-[40px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Bug size={16} />
+              <span className="hidden xl:inline">Reportar falla</span>
+            </button>
+
             <div className="relative">
               <button
                 type="button"
@@ -647,7 +680,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
         </header>
 
         {/* ÁREA DE CONTENIDO */}
-        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-24 sm:pb-20 lg:pb-8">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8">
           {children}
         </main>
       </div>
@@ -990,37 +1023,6 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
           </div>
         </div>
       )}
-
-      {/* BOTÓN FLOTANTE EN LA ESQUINA PARA MENSAJES INTERNOS (TODOS LOS EMPLEADOS) */}
-      {puedeUsarMensajes && (
-        <button
-          onClick={() => setVistaActual('mensajes')}
-          className="fixed bottom-4 sm:bottom-5 right-20 z-40 bg-indigo-600 hover:bg-indigo-700 text-white p-3.5 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
-          title="Abrir chat con compañeros"
-        >
-          <MessageSquare size={20} />
-          {mensajesNoLeidos > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-slate-950 text-[10px] font-extrabold min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center border-2 border-white">
-              {mensajesNoLeidos}
-            </span>
-          )}
-          <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-xs transition-all duration-300 ease-in-out text-xs font-bold pr-1">
-            Mensajes
-          </span>
-        </button>
-      )}
-
-      {/* BOTÓN FLOTANTE EN LA ESQUINA PARA REPORTAR PROBLEMAS */}
-      <button
-        onClick={() => setModalBug(true)}
-        className="fixed bottom-4 sm:bottom-5 right-4 sm:right-5 z-40 bg-red-600 hover:bg-red-700 text-white p-3.5 sm:p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105 flex items-center gap-2 group cursor-pointer"
-        title="Avisar de un problema o falla"
-      >
-        <Bug size={20} />
-        <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-xs transition-all duration-300 ease-in-out text-xs font-bold pr-1">
-          Reportar problema
-        </span>
-      </button>
 
       {/* MODAL SIMPLE DE REPORTE DE PROBLEMAS */}
       {modalBug && (

@@ -1041,7 +1041,7 @@ export default function Calidad({ usuario }) {
                           <td className="p-2">
                             <input
                               type="number"
-                              step="0.01"
+                              step="any"
                               min="0"
                               required
                               placeholder="50.00"

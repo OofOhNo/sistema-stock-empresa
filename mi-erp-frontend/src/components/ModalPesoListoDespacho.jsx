@@ -43,7 +43,7 @@ export default function ModalPesoListoDespacho({
             <div className="relative">
               <input
                 type="number"
-                step="0.01"
+                step="any"
                 min="0"
                 autoFocus
                 placeholder="Ej: 15.50"

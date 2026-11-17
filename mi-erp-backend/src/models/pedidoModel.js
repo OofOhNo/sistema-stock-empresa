@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const { parsearCantidadPorUnidad } = require('../utils/unidades');
 
 const Pedido = {
 
@@ -14,15 +15,13 @@ const Pedido = {
             const itemsValidados = [];
 
             for (const item of items) {
-                const cant = parseInt(item.cantidad, 10);
-                if (isNaN(cant) || cant <= 0) {
-                    throw new Error(`La cantidad ingresada no es válida.`);
-                }
-
-                const resProd = await client.query(
-                    'SELECT id_producto, nombre, precio_venta, activo FROM productos WHERE id_producto = $1',
-                    [item.id_producto]
-                );
+                const resProd = await client.query(`
+                    SELECT p.id_producto, p.nombre, p.precio_venta, p.activo,
+                           p.unidad_medida, um.codigo AS codigo_unidad, um.simbolo AS simbolo_unidad
+                    FROM productos p
+                    LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
+                    WHERE p.id_producto = $1
+                `, [item.id_producto]);
 
                 if (resProd.rows.length === 0) {
                     throw new Error(`Uno de los productos seleccionados no existe.`);
@@ -32,8 +31,14 @@ const Pedido = {
                     throw new Error(`El producto "${prodDB.nombre}" está desactivado y no puede venderse.`);
                 }
 
+                const validacionCant = parsearCantidadPorUnidad(item.cantidad, prodDB);
+                if (!validacionCant.valido) {
+                    throw new Error(validacionCant.mensaje);
+                }
+                const cant = validacionCant.numero;
+
                 const precioServidor = parseFloat(prodDB.precio_venta);
-                const subtotal = cant * precioServidor;
+                const subtotal = +(cant * precioServidor).toFixed(2);
                 monto_total += subtotal;
 
                 const resStock = await client.query(

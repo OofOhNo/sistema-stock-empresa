@@ -38,6 +38,7 @@ const Stock = {
                     COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
+                    COALESCE(um.codigo, 'NIU') AS codigo_unidad,
                     $1::int AS id_ubicacion,
                     (SELECT nombre FROM ubicaciones WHERE id_ubicacion = $1::int) AS nombre_ubicacion,
                     COALESCE(i.cantidad_fisica, 0) AS cantidad_fisica,
@@ -76,6 +77,7 @@ const Stock = {
                     COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
+                    COALESCE(um.codigo, 'NIU') AS codigo_unidad,
                     COALESCE(SUM(i.cantidad_fisica), 0) AS total_fisico,
                     COALESCE(SUM(i.cantidad_reservada), 0) AS total_reservado,
                     COALESCE(SUM(i.cantidad_fisica - i.cantidad_reservada), 0) AS total_disponible
@@ -84,7 +86,7 @@ const Stock = {
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
-                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.id_tipo_producto, tp.nombre, p.unidad_medida, um.nombre, um.simbolo
+                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.id_tipo_producto, tp.nombre, p.unidad_medida, um.nombre, um.simbolo, um.codigo
                 ORDER BY p.nombre ASC;
             `;
             const resultado = await pool.query(query);
@@ -109,6 +111,7 @@ const Stock = {
                     COALESCE(tp.nombre, 'Sin Tipo') AS tipo_producto_nombre,
                     COALESCE(p.unidad_medida, um.nombre, 'Unidad') AS unidad_medida,
                     COALESCE(um.simbolo, 'und') AS simbolo_unidad,
+                    COALESCE(um.codigo, 'NIU') AS codigo_unidad,
                     s.id_ubicacion,
                     s.nombre AS nombre_ubicacion,
                     i.cantidad_fisica,

@@ -562,7 +562,7 @@ export default function CalendarioPagos({ usuario }) {
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Monto *</label>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     required
                     placeholder="0.00"

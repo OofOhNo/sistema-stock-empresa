@@ -5,6 +5,7 @@ import {
   Package, History, Plus, ArrowLeft, RotateCcw, CheckCircle, AlertCircle, Clock,
   ShieldAlert, Filter, XCircle, AlertTriangle, Check, X, Globe, Building, Lock, Search
 } from 'lucide-react';
+import { esUnidadSoloEnteros, obtenerInfoUnidad, parsearCantidadPorUnidad } from '../utils/unidades';
 
 export default function Stock({ usuario }) {
   const [inventario, setInventario] = useState([]);
@@ -184,16 +185,19 @@ export default function Stock({ usuario }) {
       return;
     }
 
-    const cantNum = Number(form.cantidad);
-    if (!cantNum || cantNum <= 0) {
-      toast.error('Ingresa una cantidad mayor a cero.');
+    const productoSel = inventario.find(p => String(p.id_producto) === String(form.id_producto));
+    const validacionCant = parsearCantidadPorUnidad(form.cantidad, productoSel);
+    if (!validacionCant.valido) {
+      toast.error(validacionCant.mensaje);
       return;
     }
+    const cantNum = validacionCant.numero;
 
     if (form.tipo_movimiento === 'SALIDA') {
       const disp = obtenerDisponibleEnSede(form.id_producto, sedeDestino);
+      const simb = obtenerInfoUnidad(productoSel).simbolo;
       if (cantNum > disp) {
-        toast.error(`No hay suficiente stock disponible en esa sede (disponible: ${disp}).`);
+        toast.error(`No hay suficiente stock disponible en esa sede (disponible: ${disp} ${simb}).`);
         return;
       }
     }
@@ -664,7 +668,7 @@ export default function Stock({ usuario }) {
               <div className="flex items-center space-x-3">
                 <ShieldAlert className="text-amber-400 shrink-0" size={24} />
                 <div>
-                  <h3 className="text-sm font-bold">Resumen de Entradas y Salidas</h3>
+                  <h3 className="text-sm font-bold text-white">Resumen de Entradas y Salidas</h3>
                   <p className="text-xs text-slate-300 mt-0.5">
                     Registros totales: {totalMovimientos} | Anulados: <b>{totalAnulados}</b> | Pedidos para deshacer pendientes: <b>{totalSolicitudes}</b>
                   </p>
@@ -909,9 +913,23 @@ export default function Stock({ usuario }) {
       )}
 
       {/* VISTA 4: REGISTRAR ENTRADA O SALIDA */}
-      {vista === 'nuevo' && puedeEditarStock && (
+      {vista === 'nuevo' && puedeEditarStock && (() => {
+        const productoSelNuevo = inventario.find(p => String(p.id_producto) === String(form.id_producto));
+        const infoUnidadNuevo = obtenerInfoUnidad(productoSelNuevo);
+
+        const handleCambiarProductoForm = (nuevoIdProd) => {
+          const nuevoProd = inventario.find(p => String(p.id_producto) === String(nuevoIdProd));
+          let nuevaCantidad = form.cantidad;
+          if (esUnidadSoloEnteros(nuevoProd)) {
+            const parsed = Number(String(form.cantidad ?? '').replace(',', '.'));
+            nuevaCantidad = Number.isFinite(parsed) && parsed >= 1 ? Math.round(parsed) : 1;
+          }
+          setForm({ ...form, id_producto: nuevoIdProd, cantidad: nuevaCantidad });
+        };
+
+        return (
         <form onSubmit={registrarMovimiento} className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8 max-w-2xl">
-          <h2 className="text-xl font-bold text-blue-950 mb-6 border-b border-slate-100 pb-4">
+          <h2 className="text-xl font-bold text-blue-950 leading-normal mb-6 border-b border-slate-100 pb-4">
             Registrar Entrada o Salida de Mercadería
           </h2>
           <div className="space-y-5">
@@ -943,7 +961,7 @@ export default function Stock({ usuario }) {
               <label className="block text-sm font-semibold text-slate-700 mb-2">Producto *</label>
               <select
                 value={form.id_producto}
-                onChange={(e) => setForm({ ...form, id_producto: e.target.value })}
+                onChange={(e) => handleCambiarProductoForm(e.target.value)}
                 className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
               >
                 {inventario.map(p => {
@@ -971,16 +989,28 @@ export default function Stock({ usuario }) {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2">Cantidad *</label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  required
-                  value={form.cantidad}
-                  onChange={(e) => setForm({ ...form, cantidad: e.target.value })}
-                  className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-500 font-bold"
-                />
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Cantidad ({infoUnidadNuevo.nombre} / {infoUnidadNuevo.simbolo}) *
+                </label>
+                <div className="flex items-stretch rounded-xl border border-slate-300 overflow-hidden bg-white focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                  <input
+                    type="number"
+                    min={infoUnidadNuevo.esEntero ? '1' : '0'}
+                    step={infoUnidadNuevo.esEntero ? '1' : 'any'}
+                    required
+                    value={form.cantidad}
+                    onChange={(e) => setForm({ ...form, cantidad: e.target.value })}
+                    className="flex-1 min-w-0 p-3 bg-white text-sm focus:outline-none font-bold"
+                  />
+                  <span className="px-3.5 bg-slate-100 border-l border-slate-300 text-xs font-extrabold text-blue-950 flex items-center select-none shrink-0">
+                    {infoUnidadNuevo.simbolo}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  {infoUnidadNuevo.esEntero
+                    ? `Añadiendo en ${infoUnidadNuevo.nombre} (${infoUnidadNuevo.simbolo}): solo números enteros.`
+                    : `Añadiendo en ${infoUnidadNuevo.nombre} (${infoUnidadNuevo.simbolo}): flechas en enteros; escribe decimales manualmente si necesitas.`}
+                </p>
               </div>
             </div>
 
@@ -1023,7 +1053,8 @@ export default function Stock({ usuario }) {
             </div>
           </div>
         </form>
-      )}
+        );
+      })()}
 
       {/* MODAL CONFIRMAR DESHACER MOVIMIENTO */}
       {movimientoAAnular && (

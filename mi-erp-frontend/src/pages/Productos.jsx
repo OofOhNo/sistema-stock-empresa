@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../api';
 import { Package, Edit, Trash, Plus, Ruler, Search, AlertTriangle, X, Check } from 'lucide-react';
+import { obtenerInfoUnidad } from '../utils/unidades';
 
 export default function Productos({ usuario }) {
   const [productos, setProductos] = useState([]);
@@ -503,7 +504,7 @@ export default function Productos({ usuario }) {
                   name="precio_costo"
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={form.precio_costo}
                   onChange={handleChange}
                   placeholder="0.00"
@@ -520,7 +521,7 @@ export default function Productos({ usuario }) {
                   name="precio_venta"
                   type="number"
                   min="0"
-                  step="0.01"
+                  step="any"
                   value={form.precio_venta}
                   onChange={handleChange}
                   placeholder="0.00"
@@ -530,20 +531,27 @@ export default function Productos({ usuario }) {
               </div>
 
               {/* Stock Mínimo */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Avisar cuando queden menos de
-                </label>
-                <input
-                  name="stock_minimo"
-                  type="number"
-                  min="0"
-                  value={form.stock_minimo}
-                  onChange={handleChange}
-                  placeholder="Ej: 5"
-                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+              {(() => {
+                const unidadForm = unidades.find(u => String(u.id_unidad) === String(form.id_unidad));
+                const infoUnidadForm = obtenerInfoUnidad(unidadForm);
+                return (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Avisar cuando queden menos de ({infoUnidadForm.simbolo})
+                    </label>
+                    <input
+                      name="stock_minimo"
+                      type="number"
+                      min="0"
+                      step={infoUnidadForm.esEntero ? '1' : 'any'}
+                      value={form.stock_minimo}
+                      onChange={handleChange}
+                      placeholder="Ej: 5"
+                      className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                );
+              })()}
 
             </div>
 

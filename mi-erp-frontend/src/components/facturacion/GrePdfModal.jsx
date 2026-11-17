@@ -138,7 +138,7 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Truck size={18} className="text-sky-400" />
-            <h3 className="font-bold text-sm">Guía de Remisión Electrónica {numeroGre}</h3>
+            <h3 className="font-bold text-sm text-white">Guía de Remisión Electrónica {numeroGre}</h3>
           </div>
           <div className="flex items-center space-x-2">
             <button

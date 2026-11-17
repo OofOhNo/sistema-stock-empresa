@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import Despacho from './Despacho';
 import ModalPesoListoDespacho from '../components/ModalPesoListoDespacho';
+import { esUnidadSoloEnteros, obtenerInfoUnidad, parsearCantidadPorUnidad } from '../utils/unidades';
 
 export default function Pedidos({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -275,11 +276,6 @@ export default function Pedidos({ usuario }) {
   };
 
   const agregarAlCarrito = () => {
-    const cantNum = parseInt(cantidad, 10);
-    if (!cantNum || cantNum <= 0) {
-      return toast.error('La cantidad debe ser mayor a cero.');
-    }
-
     const producto = productosDeLaSede.find(
       p => String(p.id_producto) === String(productoSeleccionado)
     );
@@ -287,9 +283,16 @@ export default function Pedidos({ usuario }) {
       return toast.error('Elige un producto con stock en esta sede.');
     }
 
+    const validacionCant = parsearCantidadPorUnidad(cantidad, producto);
+    if (!validacionCant.valido) {
+      return toast.error(validacionCant.mensaje);
+    }
+    const cantNum = validacionCant.numero;
+    const infoUnidad = obtenerInfoUnidad(producto);
+
     const restante = stockRestanteProducto(producto);
     if (restante < cantNum) {
-      return toast.error(`No alcanza el stock en esta sede. Quedan ${restante} disponibles.`);
+      return toast.error(`No alcanza el stock en esta sede. Quedan ${restante} ${infoUnidad.simbolo} disponibles.`);
     }
 
     const idxExistente = items.findIndex(it => Number(it.id_producto) === Number(producto.id_producto));
@@ -297,7 +300,7 @@ export default function Pedidos({ usuario }) {
       const copia = [...items];
       copia[idxExistente] = {
         ...copia[idxExistente],
-        cantidad: copia[idxExistente].cantidad + cantNum
+        cantidad: +(Number(copia[idxExistente].cantidad) + cantNum).toFixed(2)
       };
       setItems(copia);
     } else {
@@ -307,6 +310,7 @@ export default function Pedidos({ usuario }) {
           id_producto: producto.id_producto,
           nombre: producto.nombre_producto || producto.nombre,
           precio_unitario: producto.precio_venta,
+          simbolo_unidad: infoUnidad.simbolo,
           cantidad: cantNum
         }
       ]);
@@ -737,41 +741,65 @@ export default function Pedidos({ usuario }) {
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 mb-4">
                     No hay productos con stock registrado en esta sede todavía. Registra primero una entrada en la pestaña <strong>Inventario</strong>.
                   </div>
-                ) : (
-                  <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 mb-6">
-                    <div className="flex-1">
-                      <select
-                        value={productoSeleccionado}
-                        onChange={(e) => setProductoSeleccionado(e.target.value)}
-                        className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
+                ) : (() => {
+                  const prodSel = productosDeLaSede.find(p => String(p.id_producto) === String(productoSeleccionado));
+                  const infoUnidadSel = obtenerInfoUnidad(prodSel);
+                  return (
+                  <div className="space-y-2 mb-6">
+                    <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 items-stretch sm:items-center">
+                      <div className="flex-1">
+                        <select
+                          value={productoSeleccionado}
+                          onChange={(e) => {
+                            const nuevoId = e.target.value;
+                            setProductoSeleccionado(nuevoId);
+                            const nuevoProd = productosDeLaSede.find(p => String(p.id_producto) === String(nuevoId));
+                            if (esUnidadSoloEnteros(nuevoProd)) {
+                              const parsed = Number(String(cantidad ?? '').replace(',', '.'));
+                              setCantidad(Number.isFinite(parsed) && parsed >= 1 ? Math.round(parsed) : 1);
+                            }
+                          }}
+                          className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
+                        >
+                          {productosDeLaSede.map(p => (
+                            <option key={p.id_producto} value={p.id_producto}>
+                              {p.nombre_producto || p.nombre} · S/ {parseFloat(p.precio_venta).toFixed(2)} (Disp: {stockRestanteProducto(p)} {p.simbolo_unidad || 'und'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="w-full sm:w-40 flex items-stretch rounded-xl border border-slate-300 overflow-hidden bg-white focus-within:border-indigo-500">
+                        <input
+                          type="number"
+                          min={infoUnidadSel.esEntero ? '1' : '0'}
+                          step={infoUnidadSel.esEntero ? '1' : 'any'}
+                          value={cantidad}
+                          onChange={(e) => setCantidad(e.target.value)}
+                          className="flex-1 min-w-0 p-3 bg-white text-sm focus:outline-none text-center font-bold"
+                        />
+                        <span className="px-3 bg-slate-100 border-l border-slate-300 text-xs font-extrabold text-blue-950 flex items-center select-none shrink-0">
+                          {infoUnidadSel.simbolo}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={agregarAlCarrito}
+                        className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer shrink-0"
                       >
-                        {productosDeLaSede.map(p => (
-                          <option key={p.id_producto} value={p.id_producto}>
-                            {p.nombre_producto || p.nombre} · S/ {parseFloat(p.precio_venta).toFixed(2)} (Disponible: {stockRestanteProducto(p)})
-                          </option>
-                        ))}
-                      </select>
+                        + Agregar
+                      </button>
                     </div>
-
-                    <div className="w-full sm:w-32">
-                      <input
-                        type="number"
-                        min="1"
-                        value={cantidad}
-                        onChange={(e) => setCantidad(e.target.value)}
-                        className="w-full p-3 bg-white border border-slate-300 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-center font-bold"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={agregarAlCarrito}
-                      className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
-                    >
-                      + Agregar
-                    </button>
+                    <p className="text-[11px] text-slate-500">
+                      Añadiendo en <strong>{infoUnidadSel.nombre} ({infoUnidadSel.simbolo})</strong>:{' '}
+                      {infoUnidadSel.esEntero
+                        ? 'solo números enteros.'
+                        : 'las flechas suben/bajan en enteros; escribe decimales manualmente si necesitas.'}
+                    </p>
                   </div>
-                )}
+                  );
+                })()}
 
                 {items.length > 0 ? (
                   <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -789,7 +817,7 @@ export default function Pedidos({ usuario }) {
                         {items.map((item, index) => (
                           <tr key={index} className="bg-white">
                             <td className="p-3 font-medium text-slate-800">{item.nombre}</td>
-                            <td className="p-3 text-center font-bold">{item.cantidad}</td>
+                            <td className="p-3 text-center font-bold">{item.cantidad} {item.simbolo_unidad || ''}</td>
                             <td className="p-3 text-right font-mono text-slate-600">S/ {parseFloat(item.precio_unitario).toFixed(2)}</td>
                             <td className="p-3 text-right font-mono font-bold text-slate-900">
                               S/ {(item.cantidad * parseFloat(item.precio_unitario)).toFixed(2)}
