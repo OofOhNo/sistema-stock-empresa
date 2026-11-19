@@ -193,12 +193,12 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
-  const cargarDatos = useCallback(async () => {
+  const cargarDatos = useCallback(async (silencioso = false) => {
     if (!puedeVerUsuarios) {
       setCargando(false);
       return;
     }
-    setCargando(true);
+    if (!silencioso) setCargando(true);
     try {
       const promesas = [
         api.get('/usuarios'),
@@ -231,9 +231,11 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
         id_ubicacion: prev.id_ubicacion || ubList[0]?.id_ubicacion || ''
       }));
     } catch {
-      setError('No se pudo cargar la lista de personal y roles.');
+      if (!silencioso) {
+        setError('No se pudo cargar la lista de personal y roles.');
+      }
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }, [puedeVerUsuarios, puedeEditarUsuarios, esAdminCentral]);
 
@@ -1205,8 +1207,9 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       {tabActual === 'permisos' && (
         <PermisosGrid
           puedeEditar={puedeEditarUsuarios}
+          usuarioLogueado={usuarioLogueado}
           onPermisoCambiado={() => {
-            void cargarDatos();
+            void cargarDatos(true);
             onPermisosActualizados?.();
           }}
         />

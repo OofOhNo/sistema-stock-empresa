@@ -22,16 +22,19 @@ const INFO_MODULOS = {
   mensajes: { nombre: 'Chat entre Compañeros', ayuda: 'Enviar y recibir mensajes internos' }
 };
 
-export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) {
+export default function PermisosGrid({ puedeEditar = true, usuarioLogueado, onPermisoCambiado }) {
   const [permisos, setPermisos] = useState([]);
   const [rolesList, setRolesList] = useState([]);
   const [cargando, setCargando] = useState(true);
+  const [guardandoClave, setGuardandoClave] = useState(null);
   const [customRolId, setCustomRolId] = useState(null);
   const [customCantidad, setCustomCantidad] = useState('8');
   const [customUnidad, setCustomUnidad] = useState('horas'); // 'min' | 'horas' | 'dias'
 
-  const cargarPermisos = useCallback(async () => {
-    setCargando(true);
+  const rolUsuarioActual = usuarioLogueado?.rol || usuarioLogueado?.nombre_rol || '';
+
+  const cargarPermisos = useCallback(async (silencioso = false) => {
+    if (!silencioso) setCargando(true);
     try {
       const [resPermisos, resRoles] = await Promise.all([
         api.get('/usuarios/permisos'),
@@ -39,17 +42,19 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
       ]);
       setPermisos(resPermisos.data.datos || resPermisos.data.permisos || []);
       setRolesList(resRoles.data.datos || []);
-    } catch {
-      toast.error('No se pudieron cargar los permisos.');
+    } catch (err) {
+      if (!silencioso) {
+        toast.error(err.response?.data?.mensaje || 'No se pudieron cargar los permisos.');
+      }
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }, []);
 
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => {
-      if (alive) void cargarPermisos();
+      if (alive) void cargarPermisos(false);
     });
     return () => {
       alive = false;
@@ -58,6 +63,9 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
 
   const togglePermiso = async (p, campo) => {
     if (!puedeEditar) return;
+    const clave = `${p.rol_id}:${p.modulo}`;
+    if (guardandoClave === clave) return;
+
     const nuevoValor = !p[campo];
     const payload = {
       rol_id: p.rol_id,
@@ -74,13 +82,25 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
       if (!nuevoValor) payload.puede_editar = false;
     }
 
+    const estadoAnterior = permisos;
+    setGuardandoClave(clave);
+    setPermisos((prev) =>
+      prev.map((item) =>
+        item.rol_id === p.rol_id && item.modulo === p.modulo
+          ? { ...item, puede_ver: payload.puede_ver, puede_editar: payload.puede_editar }
+          : item
+      )
+    );
+
     try {
       await api.put('/usuarios/permisos', payload);
       toast.success('Permiso guardado.');
-      await cargarPermisos();
       onPermisoCambiado?.();
     } catch (err) {
+      setPermisos(estadoAnterior);
       toast.error(err.response?.data?.mensaje || 'No se pudo guardar el permiso.');
+    } finally {
+      setGuardandoClave(null);
     }
   };
 
@@ -91,7 +111,7 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
         puede_ver_otras_ubicaciones: !valorActual
       });
       toast.success('Acceso a otras sedes actualizado.');
-      await cargarPermisos();
+      await cargarPermisos(true);
       onPermisoCambiado?.();
     } catch (err) {
       toast.error('No se pudo actualizar: ' + (err.response?.data?.mensaje || err.message));
@@ -106,7 +126,7 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
       });
       toast.success(res.data?.mensaje || 'Tiempo de sesión actualizado.');
       setCustomRolId(null);
-      await cargarPermisos();
+      await cargarPermisos(true);
       onPermisoCambiado?.();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el tiempo de sesión.');
@@ -303,6 +323,9 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
                   {roles.map(rol => {
                     const p = permisos.find(x => x.nombre_rol === rol && x.modulo === modulo);
                     const esAdmin = rol === 'Admin Central';
+                    const esMiPropioRolUsuarios =
+                      rol === rolUsuarioActual && String(modulo || '').toLowerCase() === 'usuarios';
+                    const bloqueado = esAdmin || !puedeEditar || esMiPropioRolUsuarios || (p && guardandoClave === `${p.rol_id}:${p.modulo}`);
                     if (!p && !esAdmin) {
                       return <td key={rol} className="p-3.5 text-center text-slate-300">-</td>;
                     }
@@ -311,23 +334,26 @@ export default function PermisosGrid({ puedeEditar = true, onPermisoCambiado }) 
 
                     return (
                       <td key={rol} className="p-3.5 text-center">
-                        <div className="inline-flex flex-col items-start space-y-1.5 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
-                          <label className={`flex items-center space-x-2 text-xs font-medium ${esAdmin || !puedeEditar ? 'text-slate-400' : 'text-slate-700 cursor-pointer'}`}>
+                        <div
+                          className="inline-flex flex-col items-start space-y-1.5 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100"
+                          title={esMiPropioRolUsuarios ? 'No puedes quitarte a tu propio rol el acceso a Personal y Roles' : undefined}
+                        >
+                          <label className={`flex items-center space-x-2 text-xs font-medium ${bloqueado ? 'text-slate-400' : 'text-slate-700 cursor-pointer'}`}>
                             <input
                               type="checkbox"
                               checked={puedeVer}
                               onChange={() => p && togglePermiso(p, 'puede_ver')}
-                              disabled={esAdmin || !puedeEditar}
+                              disabled={bloqueado}
                               className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                             />
                             <span>Ver</span>
                           </label>
-                          <label className={`flex items-center space-x-2 text-xs font-medium ${esAdmin || !puedeEditar ? 'text-slate-400' : 'text-slate-700 cursor-pointer'}`}>
+                          <label className={`flex items-center space-x-2 text-xs font-medium ${bloqueado ? 'text-slate-400' : 'text-slate-700 cursor-pointer'}`}>
                             <input
                               type="checkbox"
                               checked={puedeEditarMod}
                               onChange={() => p && togglePermiso(p, 'puede_editar')}
-                              disabled={esAdmin || !puedeEditar}
+                              disabled={bloqueado}
                               className="rounded text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
                             />
                             <span>Crear / Editar</span>

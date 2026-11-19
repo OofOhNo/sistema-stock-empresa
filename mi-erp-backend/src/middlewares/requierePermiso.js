@@ -14,7 +14,7 @@ const requierePermiso = (modulo, accion) => {
                 return next();
             }
 
-            const modulos = Array.isArray(modulo) ? modulo : [modulo];
+            const modulos = (Array.isArray(modulo) ? modulo : [modulo]).map(m => String(m).toLowerCase());
             const etiquetaModulo = modulos.join(' / ');
 
             const query = `
@@ -25,7 +25,7 @@ const requierePermiso = (modulo, accion) => {
                 FROM roles_permisos rp
                 JOIN roles r ON rp.rol_id = r.id_rol
                 JOIN permisos p ON rp.permiso_id = p.id
-                WHERE r.nombre = $1 AND p.modulo = ANY($2::text[]);
+                WHERE r.nombre = $1 AND LOWER(p.modulo) = ANY($2::text[]);
             `;
             
             const { rows } = await pool.query(query, [nombre_rol, modulos]);

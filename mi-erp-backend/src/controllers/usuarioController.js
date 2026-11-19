@@ -1,6 +1,7 @@
 const Usuario = require('../models/usuarioModel');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const { invalidarCacheSesionTodos, invalidarCacheSesionUsuario } = require('../middlewares/authMiddleware');
 const bcrypt = require('bcryptjs');
 
 const usuarioController = {
@@ -160,6 +161,31 @@ const usuarioController = {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
+
+            const resRolObj = await client.query('SELECT id_rol, nombre FROM roles WHERE id_rol = $1::int', [rol_id]);
+            if (resRolObj.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ exito: false, mensaje: 'Rol no encontrado.' });
+            }
+            const nombreRolObjetivo = resRolObj.rows[0].nombre;
+            if (nombreRolObjetivo === 'Admin Central') {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El rol Admin Central siempre tiene acceso completo por seguridad.'
+                });
+            }
+
+            // Evitar que un usuario se quite a su propio rol el acceso a Personal y Roles (auto-bloqueo)
+            const esPropioRol = nombreRolObjetivo === adminSolicitante.nombre_rol;
+            const esModuloUsuarios = String(modulo || '').toLowerCase() === 'usuarios';
+            if (esPropioRol && esModuloUsuarios && (puede_ver === false || puede_editar === false)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'No puedes quitarte a tu propio rol el permiso de Personal y Roles porque quedarías sin acceso a esta pantalla.'
+                });
+            }
 
             const queryUpsert = `
                 INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
@@ -408,6 +434,7 @@ const usuarioController = {
             }
 
             const rolActualizado = await Usuario.actualizarDuracionSesion(idRol, valorFinal);
+            invalidarCacheSesionTodos();
 
             await registrarAuditoria(
                 pool,
@@ -456,6 +483,7 @@ const usuarioController = {
             if (!resultado.eliminado) {
                 return res.status(404).json({ exito: false, mensaje: 'Empleado no encontrado.' });
             }
+            invalidarCacheSesionUsuario(id_usuario);
 
             await registrarAuditoria(
                 pool,
