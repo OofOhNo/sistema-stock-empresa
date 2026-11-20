@@ -56,7 +56,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
 
   const tienePermisoVer = (modulo) => {
     if (esAdminCentral) return true;
-    if (!usuario?.permisos) return modulo !== 'usuarios' && modulo !== 'errores';
+    if (!usuario?.permisos) return modulo !== 'usuarios' && modulo !== 'errores' && modulo !== 'calendario_pagos';
     const perm = usuario.permisos[modulo];
     return Boolean(perm?.puede_ver || perm?.puede_editar);
   };
@@ -283,7 +283,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     { id: 'calidad', nombre: 'Calidad y Sanidad', icono: <ShieldCheck size={20} />, visible: tienePermisoVer('calidad') },
     { id: 'ubicaciones', nombre: 'Ubicaciones y Sedes', icono: <MapPin size={20} />, visible: tienePermisoVer('ubicaciones') || tienePermisoVer('organizacion') },
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} />, visible: tienePermisoVer('reuniones') },
-    { id: 'calendario_pagos', nombre: 'Calendario de Pagos', icono: <CalendarDays size={20} />, visible: usuario?.rol === 'Admin Central' },
+    { id: 'calendario_pagos', nombre: 'Calendario de Pagos', icono: <CalendarDays size={20} />, visible: tienePermisoVer('calendario_pagos') },
     {
       id: 'usuarios',
       nombre: 'Personal y Roles',

@@ -32,6 +32,11 @@ function obtenerHoyLimaISO() {
 
 export default function CalendarioPagos({ usuario }) {
   const esAdminCentral = usuario?.rol === 'Admin Central';
+  const puedeVer = esAdminCentral || Boolean(
+    usuario?.permisos?.calendario_pagos?.puede_ver ||
+    usuario?.permisos?.calendario_pagos?.puede_editar
+  );
+  const puedeEditar = esAdminCentral || Boolean(usuario?.permisos?.calendario_pagos?.puede_editar);
 
   const ahora = new Date();
   const [mes, setMes] = useState(ahora.getMonth() + 1);
@@ -56,7 +61,7 @@ export default function CalendarioPagos({ usuario }) {
   });
 
   const cargarPagos = useCallback(async () => {
-    if (!esAdminCentral) return;
+    if (!puedeVer) return;
     setCargando(true);
     try {
       const res = await api.get('/pagos-calendario', { params: { mes, anio } });
@@ -66,7 +71,7 @@ export default function CalendarioPagos({ usuario }) {
     } finally {
       setCargando(false);
     }
-  }, [esAdminCentral, mes, anio]);
+  }, [puedeVer, mes, anio]);
 
   useEffect(() => {
     let alive = true;
@@ -78,13 +83,13 @@ export default function CalendarioPagos({ usuario }) {
     };
   }, [cargarPagos]);
 
-  if (!esAdminCentral) {
+  if (!puedeVer) {
     return (
       <div className="bg-white rounded-2xl border border-rose-200 p-8 text-center">
         <AlertTriangle size={40} className="mx-auto text-rose-500 mb-3" />
         <h2 className="text-lg font-bold text-slate-900">Acceso Restringido</h2>
         <p className="text-sm text-slate-500 mt-1">
-          El Calendario de Pagos es exclusivo para Administración Central.
+          No tienes permiso asignado para acceder al Calendario de Pagos.
         </p>
       </div>
     );
@@ -105,6 +110,7 @@ export default function CalendarioPagos({ usuario }) {
   };
 
   const abrirNuevoPago = (fechaISO = obtenerHoyLimaISO()) => {
+    if (!puedeEditar) return;
     setEditando(null);
     setForm({
       titulo: '',
@@ -120,6 +126,7 @@ export default function CalendarioPagos({ usuario }) {
   };
 
   const abrirEditarPago = (pago) => {
+    if (!puedeEditar) return;
     setEditando(pago);
     setForm({
       titulo: pago.titulo || '',
@@ -136,6 +143,7 @@ export default function CalendarioPagos({ usuario }) {
 
   const guardarPago = async (e) => {
     e.preventDefault();
+    if (!puedeEditar) return;
     if (!form.titulo.trim()) return toast.error('Ingresa un título para el pago.');
     if (!form.monto || Number(form.monto) < 0) return toast.error('Ingresa un monto válido.');
 
@@ -147,7 +155,7 @@ export default function CalendarioPagos({ usuario }) {
         toast.success('Pago actualizado.');
       } else {
         await api.post('/pagos-calendario', payload);
-        toast.success('Pago programado en el calendario.');
+        toast.success('Pago programado en tu calendario.');
       }
       setModalAbierto(false);
       cargarPagos();
@@ -159,6 +167,7 @@ export default function CalendarioPagos({ usuario }) {
   };
 
   const toggleEstadoPago = async (pago) => {
+    if (!puedeEditar) return;
     const nuevoEstado = pago.estado === 'PAGADO' ? 'PENDIENTE' : 'PAGADO';
     try {
       const res = await api.patch(`/pagos-calendario/${pago.id_pago}/estado`, { estado: nuevoEstado });
@@ -170,6 +179,7 @@ export default function CalendarioPagos({ usuario }) {
   };
 
   const eliminarPago = async (pago, alcance = null) => {
+    if (!puedeEditar) return;
     let alcanceFinal = alcance;
     if (!alcanceFinal) {
       if (pago.recurrente_mensual) {
@@ -229,11 +239,11 @@ export default function CalendarioPagos({ usuario }) {
             <div className="flex items-center space-x-2">
               <h1 className="text-2xl font-bold text-blue-950">Calendario de Pagos</h1>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                Solo Admin Central
+                Calendario Personal
               </span>
             </div>
             <p className="text-sm text-slate-500">
-              Control de sueldos, proveedores, impuestos, alquileres y recordatorios automáticos en Inicio
+              Tus pagos programados son privados e individuales para <strong>{usuario?.nombre || 'tu cuenta'}</strong> — recordatorios en Inicio
             </p>
           </div>
         </div>
@@ -288,14 +298,16 @@ export default function CalendarioPagos({ usuario }) {
             label="Exportar Excel (Pagos)"
             cantidad={pagos.length}
           />
-          <button
-            type="button"
-            onClick={() => abrirNuevoPago()}
-            className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm cursor-pointer"
-          >
-            <Plus size={18} />
-            <span>Programar Pago</span>
-          </button>
+          {puedeEditar && (
+            <button
+              type="button"
+              onClick={() => abrirNuevoPago()}
+              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-sm cursor-pointer"
+            >
+              <Plus size={18} />
+              <span>Programar Pago</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -392,8 +404,8 @@ export default function CalendarioPagos({ usuario }) {
               return (
                 <div
                   key={celda.fechaISO}
-                  onClick={() => abrirNuevoPago(celda.fechaISO)}
-                  className={`min-h-[115px] p-2 hover:bg-indigo-50/30 transition-colors cursor-pointer flex flex-col ${esHoy ? 'bg-indigo-50/50 ring-1 ring-inset ring-indigo-300' : ''}`}
+                  onClick={() => puedeEditar && abrirNuevoPago(celda.fechaISO)}
+                  className={`min-h-[115px] p-2 transition-colors flex flex-col ${puedeEditar ? 'hover:bg-indigo-50/30 cursor-pointer' : ''} ${esHoy ? 'bg-indigo-50/50 ring-1 ring-inset ring-indigo-300' : ''}`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${esHoy ? 'bg-indigo-600 text-white' : 'text-slate-600'}`}>
@@ -411,9 +423,9 @@ export default function CalendarioPagos({ usuario }) {
                           key={p.id_pago}
                           onClick={(e) => {
                             e.stopPropagation();
-                            abrirEditarPago(p);
+                            if (puedeEditar) abrirEditarPago(p);
                           }}
-                          className={`px-1.5 py-1 rounded-md text-[11px] font-semibold border truncate cursor-pointer ${
+                          className={`px-1.5 py-1 rounded-md text-[11px] font-semibold border truncate ${puedeEditar ? 'cursor-pointer' : ''} ${
                             p.estado === 'PAGADO'
                               ? 'bg-emerald-50 border-emerald-200 text-emerald-800 line-through opacity-75'
                               : vencido
@@ -488,8 +500,9 @@ export default function CalendarioPagos({ usuario }) {
                         <td className="py-3.5 px-5">
                           <button
                             type="button"
+                            disabled={!puedeEditar}
                             onClick={() => toggleEstadoPago(p)}
-                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold cursor-pointer ${
+                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold ${puedeEditar ? 'cursor-pointer' : 'opacity-80 cursor-default'} ${
                               p.estado === 'PAGADO'
                                 ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                                 : 'bg-amber-100 text-amber-800 hover:bg-amber-200'
@@ -500,22 +513,28 @@ export default function CalendarioPagos({ usuario }) {
                           </button>
                         </td>
                         <td className="py-3.5 px-5 text-right space-x-2 whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => abrirEditarPago(p)}
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer"
-                            title="Editar"
-                          >
-                            <Edit2 size={15} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => eliminarPago(p)}
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                            title="Eliminar"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                          {puedeEditar ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => abrirEditarPago(p)}
+                                className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer"
+                                title="Editar"
+                              >
+                                <Edit2 size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => eliminarPago(p)}
+                                className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                                title="Eliminar"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400">Solo lectura</span>
+                          )}
                         </td>
                       </tr>
                     );

@@ -19,6 +19,7 @@ const INFO_MODULOS = {
   ubicaciones: { nombre: 'Ubicaciones y Sedes', ayuda: 'Ver sedes y configurar almacenes' },
   organizacion: { nombre: 'Gerentes de Sede', ayuda: 'Ver y asignar encargados por sede' },
   reuniones: { nombre: 'Reuniones', ayuda: 'Ver reuniones, programar actas y acuerdos' },
+  calendario_pagos: { nombre: 'Calendario de Pagos', ayuda: 'Cada usuario con acceso ve y gestiona únicamente su propio calendario personal de pagos' },
   usuarios: { nombre: 'Personal, Roles y Claves', ayuda: 'Ver personal, crear usuarios y cambiar contraseñas' },
   errores: { nombre: 'Problemas Reportados', ayuda: 'Ver y resolver avisos enviados con el botón rojo' },
   mensajes: { nombre: 'Chat entre Compañeros', ayuda: 'Enviar y recibir mensajes internos' }

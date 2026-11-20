@@ -60,8 +60,8 @@ const verificarToken = async (req, res, next) => {
         return res.status(401).json({ exito: false, mensaje: 'El token es inválido o ya expiró.' });
     }
 
+    let estadoUsuario = null;
     if (decodificado?.id_usuario) {
-        let estadoUsuario;
         try {
             estadoUsuario = await obtenerEstadoSesionUsuario(decodificado.id_usuario);
         } catch (dbErr) {

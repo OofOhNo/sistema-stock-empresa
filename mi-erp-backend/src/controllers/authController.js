@@ -11,7 +11,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 const MODULOS_TODOS = [
     'stock', 'pedidos', 'usuarios', 'facturacion', 'reuniones',
     'productos', 'ubicaciones', 'clientes', 'calidad', 'errores',
-    'organizacion', 'mensajes'
+    'organizacion', 'mensajes', 'calendario_pagos'
 ];
 
 function parsearDominiosCorporativos(texto = '') {

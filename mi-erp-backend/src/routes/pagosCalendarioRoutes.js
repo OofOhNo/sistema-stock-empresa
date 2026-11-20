@@ -1,16 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { verificarToken, esAdmin } = require('../middlewares/authMiddleware');
+const { verificarToken } = require('../middlewares/authMiddleware');
+const requierePermiso = require('../middlewares/requierePermiso');
 const pagosCalendarioController = require('../controllers/pagosCalendarioController');
 
-// Exclusivo para Admin Central
-router.use(verificarToken, esAdmin);
+// Cada usuario con permiso de calendario_pagos solo ve y gestiona su propio calendario individual
+router.use(verificarToken);
 
-router.get('/', pagosCalendarioController.listarPagos);
-router.get('/alertas-inicio', pagosCalendarioController.alertasInicio);
-router.post('/', pagosCalendarioController.crearPago);
-router.put('/:id', pagosCalendarioController.actualizarPago);
-router.patch('/:id/estado', pagosCalendarioController.cambiarEstado);
-router.delete('/:id', pagosCalendarioController.eliminarPago);
+router.get('/', requierePermiso('calendario_pagos', 'ver'), pagosCalendarioController.listarPagos);
+router.get('/alertas-inicio', requierePermiso('calendario_pagos', 'ver'), pagosCalendarioController.alertasInicio);
+router.post('/', requierePermiso('calendario_pagos', 'editar'), pagosCalendarioController.crearPago);
+router.put('/:id', requierePermiso('calendario_pagos', 'editar'), pagosCalendarioController.actualizarPago);
+router.patch('/:id/estado', requierePermiso('calendario_pagos', 'editar'), pagosCalendarioController.cambiarEstado);
+router.delete('/:id', requierePermiso('calendario_pagos', 'editar'), pagosCalendarioController.eliminarPago);
 
 module.exports = router;

@@ -142,6 +142,8 @@ export default function Dashboard({ usuario, setVistaActual }) {
   const puedeVerPedidos = esAdmin || usuario?.permisos?.pedidos?.puede_ver !== false;
   const puedeVerStock = esAdmin || usuario?.permisos?.stock?.puede_ver !== false;
   const puedeVerFacturacion = esAdmin || usuario?.permisos?.facturacion?.puede_ver !== false;
+  const puedeVerCalendarioPagos = esAdmin || Boolean(usuario?.permisos?.calendario_pagos?.puede_ver || usuario?.permisos?.calendario_pagos?.puede_editar);
+  const puedeEditarCalendarioPagos = esAdmin || Boolean(usuario?.permisos?.calendario_pagos?.puede_editar);
 
   const cargarResumen = useCallback(async () => {
     try {
@@ -152,7 +154,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
         puedeVerStock
           ? api.get('/stock/alertas').catch(() => ({ data: { alertas: [] } }))
           : Promise.resolve({ data: { alertas: [] } }),
-        esAdmin
+        puedeVerCalendarioPagos
           ? api.get('/pagos-calendario/alertas-inicio').catch(() => ({ data: { alertas: [] } }))
           : Promise.resolve({ data: { alertas: [] } }),
         puedeVerFacturacion
@@ -162,7 +164,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
 
       const pedidos = resPedidos.data.eventos || [];
       const alertas = resAlertas.data.alertas || [];
-      setAlertasPagos(esAdmin ? (resPagos.data?.alertas || []) : []);
+      setAlertasPagos(puedeVerCalendarioPagos ? (resPagos.data?.alertas || []) : []);
       setAlertasFacturasVencidas(puedeVerFacturacion ? (resVencidas.data?.vencidas || []) : []);
 
       // Filtrar entregas/pedidos urgentes de ayer, hoy y mañana
@@ -210,7 +212,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
     } finally {
       setCargando(false);
     }
-  }, [puedeVerPedidos, puedeVerStock, esAdmin, puedeVerFacturacion]);
+  }, [puedeVerPedidos, puedeVerStock, puedeVerCalendarioPagos, puedeVerFacturacion]);
 
   const cargarGraficos = useCallback(async () => {
     setCargandoGraficos(true);
@@ -395,7 +397,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
           )}
 
           {/* RECORDATORIOS Y VENCIMIENTOS DE AYER, HOY Y MAÑANA */}
-          {(esAdmin || alertasPedidos.length > 0) && (
+          {(puedeVerCalendarioPagos || alertasPedidos.length > 0) && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center space-x-2.5">
@@ -405,13 +407,13 @@ export default function Dashboard({ usuario, setVistaActual }) {
                   <div>
                     <h3 className="text-base font-bold text-blue-950">Pendientes y Vencimientos (Ayer, Hoy y Mañana)</h3>
                     <p className="text-xs text-slate-500">
-                      {esAdmin
-                        ? 'Pagos programados (sueldos, proveedores, impuestos) y entregas urgentes'
+                      {puedeVerCalendarioPagos
+                        ? 'Tus pagos programados personales y entregas urgentes'
                         : 'Entregas de pedidos urgentes para ayer, hoy o mañana'}
                     </p>
                   </div>
                 </div>
-                {esAdmin && (
+                {puedeVerCalendarioPagos && (
                   <button
                     type="button"
                     onClick={() => setVistaActual('calendario_pagos')}
@@ -435,7 +437,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
                     { key: 'HOY', titulo: 'Para Hoy', match: (u) => u === 'HOY', estilo: 'border-amber-300 bg-amber-50/80', badge: 'bg-amber-600 text-white' },
                     { key: 'MANANA', titulo: 'Para Mañana', match: (u) => u === 'MANANA', estilo: 'border-sky-200 bg-sky-50/70', badge: 'bg-sky-600 text-white' },
                   ].map((col) => {
-                    const pagosCol = esAdmin ? alertasPagos.filter((a) => col.match(a.urgencia)) : [];
+                    const pagosCol = puedeVerCalendarioPagos ? alertasPagos.filter((a) => col.match(a.urgencia)) : [];
                     const pedsCol = puedeVerPedidos ? alertasPedidos.filter((p) => col.match(p.urgencia)) : [];
                     const totalCol = pagosCol.length + pedsCol.length;
                     return (
@@ -460,13 +462,15 @@ export default function Dashboard({ usuario, setVistaActual }) {
                                   </div>
                                   <div className="text-[10px] text-slate-400">{pago.fecha_vencimiento_iso}</div>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => marcarPagoPagado(pago.id_pago)}
-                                  className="text-[10px] font-bold px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer shrink-0"
-                                >
-                                  Pagado
-                                </button>
+                                {puedeEditarCalendarioPagos && (
+                                  <button
+                                    type="button"
+                                    onClick={() => marcarPagoPagado(pago.id_pago)}
+                                    className="text-[10px] font-bold px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer shrink-0"
+                                  >
+                                    Pagado
+                                  </button>
+                                )}
                               </div>
                             ))}
                             {pedsCol.map((ped) => (
