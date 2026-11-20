@@ -1,14 +1,147 @@
 const pool = require('../config/db');
 
+function pad2(n) {
+    return String(n).padStart(2, '0');
+}
+
+function construirPeriodoYM(anio, mes) {
+    return `${anio}-${pad2(mes)}`;
+}
+
+function fechaParaMes(anio, mes, diaObjetivo) {
+    const ultimoDiaMes = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+    const dia = Math.min(Math.max(1, parseInt(diaObjetivo, 10) || 1), ultimoDiaMes);
+    return `${anio}-${pad2(mes)}-${pad2(dia)}`;
+}
+
+async function asegurarOcurrenciasMes(db, targetAnio, targetMes) {
+    const anioNum = parseInt(targetAnio, 10);
+    const mesNum = parseInt(targetMes, 10);
+    if (!Number.isFinite(anioNum) || !Number.isFinite(mesNum) || mesNum < 1 || mesNum > 12) {
+        return;
+    }
+
+    const targetYm = construirPeriodoYM(anioNum, mesNum);
+
+    const { rows: series } = await db.query(`
+        WITH resumen_series AS (
+            SELECT
+                COALESCE(id_pago_origen, id_pago) AS serie_id,
+                TO_CHAR(MIN(fecha_vencimiento), 'YYYY-MM') AS ym_inicio
+            FROM pagos_programados
+            WHERE recurrente_mensual = TRUE
+            GROUP BY COALESCE(id_pago_origen, id_pago)
+        ),
+        plantillas AS (
+            SELECT DISTINCT ON (COALESCE(p.id_pago_origen, p.id_pago))
+                COALESCE(p.id_pago_origen, p.id_pago) AS serie_id,
+                p.titulo,
+                p.categoria,
+                p.beneficiario,
+                p.monto,
+                p.moneda,
+                COALESCE(p.dia_recurrencia, EXTRACT(DAY FROM p.fecha_vencimiento)::int) AS dia_rec,
+                p.notas,
+                p.creado_por
+            FROM pagos_programados p
+            WHERE p.recurrente_mensual = TRUE
+            ORDER BY COALESCE(p.id_pago_origen, p.id_pago), p.fecha_vencimiento DESC, p.id_pago DESC
+        )
+        SELECT s.serie_id, pl.titulo, pl.categoria, pl.beneficiario, pl.monto, pl.moneda, pl.dia_rec, pl.notas, pl.creado_por
+        FROM resumen_series s
+        JOIN plantillas pl ON pl.serie_id = s.serie_id
+        WHERE s.ym_inicio <= $1::varchar;
+    `, [targetYm]);
+
+    for (const s of series) {
+        const fechaMes = fechaParaMes(anioNum, mesNum, s.dia_rec);
+        await db.query(`
+            INSERT INTO pagos_programados (
+                titulo, categoria, beneficiario, monto, moneda,
+                fecha_vencimiento, estado, recurrente_mensual, notas, creado_por,
+                id_pago_origen, periodo_ym, dia_recurrencia
+            )
+            VALUES (
+                $1::varchar, $2::varchar, $3::varchar, $4::numeric, $5::varchar,
+                $6::date, 'PENDIENTE', TRUE, $7::text, $8::int,
+                $9::int, $10::varchar, $11::smallint
+            )
+            ON CONFLICT (id_pago_origen, periodo_ym)
+            WHERE id_pago_origen IS NOT NULL AND periodo_ym IS NOT NULL
+            DO NOTHING;
+        `, [
+            s.titulo,
+            s.categoria,
+            s.beneficiario,
+            s.monto,
+            s.moneda || 'PEN',
+            fechaMes,
+            s.notas,
+            s.creado_por,
+            s.serie_id,
+            targetYm,
+            s.dia_rec
+        ]);
+    }
+}
+
+async function pregenerarMesesRecurrentes(db, serie, fechaBaseISO, mesesAdicionales = 12) {
+    const [anioStr, mesStr, diaStr] = String(fechaBaseISO).slice(0, 10).split('-');
+    let anio = parseInt(anioStr, 10);
+    let mes = parseInt(mesStr, 10);
+    const diaObjetivo = parseInt(serie.dia_recurrencia || diaStr, 10) || 1;
+    if (!Number.isFinite(anio) || !Number.isFinite(mes)) return;
+
+    for (let i = 1; i <= mesesAdicionales; i += 1) {
+        mes += 1;
+        if (mes > 12) {
+            mes = 1;
+            anio += 1;
+        }
+        const periodoYm = construirPeriodoYM(anio, mes);
+        const fechaMes = fechaParaMes(anio, mes, diaObjetivo);
+        await db.query(`
+            INSERT INTO pagos_programados (
+                titulo, categoria, beneficiario, monto, moneda,
+                fecha_vencimiento, estado, recurrente_mensual, notas, creado_por,
+                id_pago_origen, periodo_ym, dia_recurrencia
+            )
+            VALUES (
+                $1::varchar, $2::varchar, $3::varchar, $4::numeric, $5::varchar,
+                $6::date, 'PENDIENTE', TRUE, $7::text, $8::int,
+                $9::int, $10::varchar, $11::smallint
+            )
+            ON CONFLICT (id_pago_origen, periodo_ym)
+            WHERE id_pago_origen IS NOT NULL AND periodo_ym IS NOT NULL
+            DO NOTHING;
+        `, [
+            serie.titulo,
+            serie.categoria,
+            serie.beneficiario || null,
+            serie.monto,
+            serie.moneda || 'PEN',
+            fechaMes,
+            serie.notas || null,
+            serie.creado_por || null,
+            serie.id_pago_origen || serie.id_pago,
+            periodoYm,
+            diaObjetivo
+        ]);
+    }
+}
+
 const pagosCalendarioController = {
     listarPagos: async (req, res) => {
         try {
             const { mes, anio, estado, categoria } = req.query;
-            let where = [];
+            const where = [];
             const params = [];
 
             if (mes && anio) {
-                params.push(parseInt(anio, 10), parseInt(mes, 10));
+                const anioNum = parseInt(anio, 10);
+                const mesNum = parseInt(mes, 10);
+                await asegurarOcurrenciasMes(pool, anioNum, mesNum);
+                params.push(anioNum, mesNum);
                 where.push(`EXTRACT(YEAR FROM p.fecha_vencimiento) = $${params.length - 1} AND EXTRACT(MONTH FROM p.fecha_vencimiento) = $${params.length}`);
             }
             if (estado && ['PENDIENTE', 'PAGADO'].includes(estado)) {
@@ -40,6 +173,15 @@ const pagosCalendarioController = {
 
     alertasInicio: async (req, res) => {
         try {
+            const { rows: fechaHoyRows } = await pool.query(`
+                SELECT
+                    EXTRACT(YEAR FROM (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima'))::int AS anio,
+                    EXTRACT(MONTH FROM (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima'))::int AS mes;
+            `);
+            if (fechaHoyRows[0]) {
+                await asegurarOcurrenciasMes(pool, fechaHoyRows[0].anio, fechaHoyRows[0].mes);
+            }
+
             const queryPagos = `
                 WITH fechas_lima AS (
                     SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date AS hoy
@@ -73,6 +215,7 @@ const pagosCalendarioController = {
     },
 
     crearPago: async (req, res) => {
+        const client = await pool.connect();
         try {
             const {
                 titulo,
@@ -96,12 +239,20 @@ const pagosCalendarioController = {
                 return res.status(400).json({ exito: false, mensaje: 'Ingresa un monto válido.' });
             }
 
-            const { rows } = await pool.query(
+            const esRecurrente = Boolean(recurrente_mensual);
+            const fechaISO = String(fecha_vencimiento).slice(0, 10);
+            const periodoYm = fechaISO.slice(0, 7);
+            const diaRec = parseInt(fechaISO.slice(8, 10), 10) || 1;
+
+            await client.query('BEGIN');
+
+            const { rows } = await client.query(
                 `INSERT INTO pagos_programados (
                     titulo, categoria, beneficiario, monto, moneda,
-                    fecha_vencimiento, recurrente_mensual, notas, creado_por
+                    fecha_vencimiento, recurrente_mensual, notas, creado_por,
+                    periodo_ym, dia_recurrencia
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9)
+                VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11)
                 RETURNING *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso;`,
                 [
                     titulo.trim(),
@@ -109,23 +260,53 @@ const pagosCalendarioController = {
                     beneficiario ? beneficiario.trim() : null,
                     montoNum,
                     moneda || 'PEN',
-                    fecha_vencimiento,
-                    Boolean(recurrente_mensual),
+                    fechaISO,
+                    esRecurrente,
                     notas ? notas.trim() : null,
-                    req.usuario.id_usuario
+                    req.usuario.id_usuario,
+                    esRecurrente ? periodoYm : null,
+                    esRecurrente ? diaRec : null
                 ]
             );
 
-            return res.status(201).json({ exito: true, mensaje: 'Pago programado correctamente.', pago: rows[0] });
+            let pagoCreado = rows[0];
+            if (esRecurrente) {
+                const { rows: updRows } = await client.query(
+                    `UPDATE pagos_programados
+                     SET id_pago_origen = id_pago
+                     WHERE id_pago = $1::int
+                     RETURNING *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso;`,
+                    [pagoCreado.id_pago]
+                );
+                pagoCreado = updRows[0];
+                await pregenerarMesesRecurrentes(client, pagoCreado, pagoCreado.fecha_vencimiento_iso, 12);
+            }
+
+            await client.query('COMMIT');
+            return res.status(201).json({
+                exito: true,
+                mensaje: esRecurrente
+                    ? 'Pago recurrente programado para este mes y los siguientes meses.'
+                    : 'Pago programado correctamente.',
+                pago: pagoCreado
+            });
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             console.error('Error al crear pago:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al programar pago.' });
+        } finally {
+            client.release();
         }
     },
 
     actualizarPago: async (req, res) => {
+        const client = await pool.connect();
         try {
             const id = parseInt(req.params.id, 10);
+            if (!Number.isFinite(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de pago inválido.' });
+            }
+
             const {
                 titulo,
                 categoria,
@@ -137,39 +318,95 @@ const pagosCalendarioController = {
                 notas
             } = req.body;
 
-            const { rows } = await pool.query(
+            await client.query('BEGIN');
+            const actualRes = await client.query(
+                `SELECT *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso FROM pagos_programados WHERE id_pago = $1::int FOR UPDATE;`,
+                [id]
+            );
+            if (actualRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ exito: false, mensaje: 'Pago no encontrado.' });
+            }
+            const actual = actualRes.rows[0];
+            const fechaFinalISO = fecha_vencimiento ? String(fecha_vencimiento).slice(0, 10) : actual.fecha_vencimiento_iso;
+            const periodoYm = fechaFinalISO.slice(0, 7);
+            const diaRec = parseInt(fechaFinalISO.slice(8, 10), 10) || 1;
+            const nuevoRecurrente = recurrente_mensual !== undefined ? Boolean(recurrente_mensual) : Boolean(actual.recurrente_mensual);
+            const serieId = actual.id_pago_origen || actual.id_pago;
+
+            const { rows } = await client.query(
                 `UPDATE pagos_programados
                  SET titulo = COALESCE($1, titulo),
                      categoria = COALESCE($2, categoria),
                      beneficiario = $3,
                      monto = COALESCE($4, monto),
                      moneda = COALESCE($5, moneda),
-                     fecha_vencimiento = COALESCE($6::date, fecha_vencimiento),
-                     recurrente_mensual = COALESCE($7, recurrente_mensual),
-                     notas = $8
-                 WHERE id_pago = $9
+                     fecha_vencimiento = $6::date,
+                     recurrente_mensual = $7::boolean,
+                     notas = $8,
+                     id_pago_origen = CASE WHEN $7::boolean THEN COALESCE(id_pago_origen, id_pago) ELSE id_pago_origen END,
+                     periodo_ym = CASE WHEN $7::boolean THEN $9::varchar ELSE periodo_ym END,
+                     dia_recurrencia = CASE WHEN $7::boolean THEN $10::smallint ELSE dia_recurrencia END
+                 WHERE id_pago = $11::int
                  RETURNING *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso;`,
                 [
                     titulo ? titulo.trim() : null,
                     categoria || null,
-                    beneficiario !== undefined ? (beneficiario ? beneficiario.trim() : null) : null,
+                    beneficiario !== undefined ? (beneficiario ? beneficiario.trim() : null) : actual.beneficiario,
                     monto !== undefined ? Number(monto) : null,
                     moneda || null,
-                    fecha_vencimiento || null,
-                    recurrente_mensual !== undefined ? Boolean(recurrente_mensual) : null,
-                    notas !== undefined ? (notas ? notas.trim() : null) : null,
+                    fechaFinalISO,
+                    nuevoRecurrente,
+                    notas !== undefined ? (notas ? notas.trim() : null) : actual.notas,
+                    periodoYm,
+                    diaRec,
                     id
                 ]
             );
 
-            if (rows.length === 0) {
-                return res.status(404).json({ exito: false, mensaje: 'Pago no encontrado.' });
+            const actualizado = rows[0];
+            if (nuevoRecurrente) {
+                await client.query(
+                    `UPDATE pagos_programados
+                     SET titulo = $1, categoria = $2, beneficiario = $3, monto = $4, moneda = $5, notas = $6, recurrente_mensual = TRUE
+                     WHERE id_pago_origen = $7::int
+                       AND fecha_vencimiento > $8::date
+                       AND estado = 'PENDIENTE';`,
+                    [
+                        actualizado.titulo,
+                        actualizado.categoria,
+                        actualizado.beneficiario,
+                        actualizado.monto,
+                        actualizado.moneda,
+                        actualizado.notas,
+                        serieId,
+                        actualizado.fecha_vencimiento_iso
+                    ]
+                );
+                await pregenerarMesesRecurrentes(client, actualizado, actualizado.fecha_vencimiento_iso, 12);
+            } else if (actual.recurrente_mensual) {
+                await client.query(
+                    `UPDATE pagos_programados SET recurrente_mensual = FALSE WHERE id_pago_origen = $1::int OR id_pago = $1::int;`,
+                    [serieId]
+                );
+                await client.query(
+                    `DELETE FROM pagos_programados
+                     WHERE id_pago_origen = $1::int
+                       AND id_pago != $2::int
+                       AND fecha_vencimiento > $3::date
+                       AND estado = 'PENDIENTE';`,
+                    [serieId, id, actual.fecha_vencimiento_iso]
+                );
             }
 
-            return res.status(200).json({ exito: true, mensaje: 'Pago actualizado.', pago: rows[0] });
+            await client.query('COMMIT');
+            return res.status(200).json({ exito: true, mensaje: 'Pago actualizado.', pago: actualizado });
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             console.error('Error al actualizar pago:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al actualizar pago.' });
+        } finally {
+            client.release();
         }
     },
 
@@ -201,50 +438,18 @@ const pagosCalendarioController = {
             }
 
             const pago = rows[0];
-            let siguienteCreado = null;
-
             if (estado === 'PAGADO' && pago.recurrente_mensual) {
-                const checkDup = await client.query(
-                    `SELECT id_pago FROM pagos_programados
-                     WHERE titulo = $1
-                       AND fecha_vencimiento = ($2::date + INTERVAL '1 month')::date
-                     LIMIT 1;`,
-                    [pago.titulo, pago.fecha_vencimiento_iso]
-                );
-                if (checkDup.rows.length === 0) {
-                    const nextRes = await client.query(
-                        `INSERT INTO pagos_programados (
-                            titulo, categoria, beneficiario, monto, moneda,
-                            fecha_vencimiento, recurrente_mensual, notas, creado_por
-                        )
-                        VALUES ($1, $2, $3, $4, $5, ($6::date + INTERVAL '1 month')::date, TRUE, $7, $8)
-                        RETURNING *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso;`,
-                        [
-                            pago.titulo,
-                            pago.categoria,
-                            pago.beneficiario,
-                            pago.monto,
-                            pago.moneda,
-                            pago.fecha_vencimiento_iso,
-                            pago.notas,
-                            req.usuario.id_usuario
-                        ]
-                    );
-                    siguienteCreado = nextRes.rows[0];
-                }
+                await pregenerarMesesRecurrentes(client, pago, pago.fecha_vencimiento_iso, 12);
             }
 
             await client.query('COMMIT');
             return res.status(200).json({
                 exito: true,
-                mensaje: estado === 'PAGADO'
-                    ? (siguienteCreado ? 'Pago marcado como PAGADO y programado para el próximo mes.' : 'Pago marcado como PAGADO.')
-                    : 'Pago marcado como PENDIENTE.',
-                pago,
-                siguiente_pago: siguienteCreado
+                mensaje: estado === 'PAGADO' ? 'Pago marcado como PAGADO.' : 'Pago marcado como PENDIENTE.',
+                pago
             });
         } catch (error) {
-            await client.query('ROLLBACK');
+            await client.query('ROLLBACK').catch(() => {});
             console.error('Error al cambiar estado de pago:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al cambiar estado del pago.' });
         } finally {
@@ -253,19 +458,54 @@ const pagosCalendarioController = {
     },
 
     eliminarPago: async (req, res) => {
+        const client = await pool.connect();
         try {
             const id = parseInt(req.params.id, 10);
             if (Number.isNaN(id)) {
                 return res.status(400).json({ exito: false, mensaje: 'ID de pago inválido.' });
             }
-            const { rows } = await pool.query('DELETE FROM pagos_programados WHERE id_pago = $1 RETURNING *;', [id]);
-            if (rows.length === 0) {
+            const alcance = String(req.query?.alcance || 'unico');
+
+            await client.query('BEGIN');
+            const { rows: found } = await client.query(
+                `SELECT *, TO_CHAR(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento_iso FROM pagos_programados WHERE id_pago = $1::int FOR UPDATE;`,
+                [id]
+            );
+            if (found.length === 0) {
+                await client.query('ROLLBACK');
                 return res.status(404).json({ exito: false, mensaje: 'Pago no encontrado.' });
             }
-            return res.status(200).json({ exito: true, mensaje: 'Pago eliminado.' });
+            const pago = found[0];
+            const serieId = pago.id_pago_origen || pago.id_pago;
+
+            if (alcance === 'serie' && pago.id_pago_origen) {
+                await client.query(
+                    `UPDATE pagos_programados SET recurrente_mensual = FALSE WHERE id_pago_origen = $1::int;`,
+                    [serieId]
+                );
+                await client.query(
+                    `DELETE FROM pagos_programados
+                     WHERE id_pago = $1::int
+                        OR (id_pago_origen = $2::int AND fecha_vencimiento >= $3::date AND estado = 'PENDIENTE');`,
+                    [id, serieId, pago.fecha_vencimiento_iso]
+                );
+            } else {
+                await client.query('DELETE FROM pagos_programados WHERE id_pago = $1::int;', [id]);
+            }
+
+            await client.query('COMMIT');
+            return res.status(200).json({
+                exito: true,
+                mensaje: alcance === 'serie'
+                    ? 'Pago y futuras repeticiones eliminados.'
+                    : 'Pago de este mes eliminado.'
+            });
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             console.error('Error al eliminar pago:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al eliminar pago.' });
+        } finally {
+            client.release();
         }
     }
 };

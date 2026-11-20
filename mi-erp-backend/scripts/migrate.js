@@ -123,7 +123,11 @@ function getSslConfig(connectionUrl) {
                 console.log('✔ Estructura base inicializada exitosamente desde schema.sql.');
             }
             const bcrypt = require('bcryptjs');
-            const defaultHash = await bcrypt.hash('admin123', 10);
+            const initialAdminPass = process.env.ADMIN_INITIAL_PASSWORD && String(process.env.ADMIN_INITIAL_PASSWORD).trim().length >= 8
+                ? String(process.env.ADMIN_INITIAL_PASSWORD).trim()
+                : crypto.randomBytes(9).toString('base64url');
+            const defaultHash = await bcrypt.hash(initialAdminPass, 10);
+            console.log(`ℹ Usuario inicial admin@erp.local creado. Contraseña inicial generada: ${initialAdminPass} (cámbiala inmediatamente tras el primer inicio de sesión).`);
             await client.query(`
                 INSERT INTO divisiones (id_division, nombre) VALUES (1, 'División Central') ON CONFLICT (id_division) DO NOTHING;
                 INSERT INTO ubicaciones (id_ubicacion, id_division, nombre) VALUES (1, 1, 'Sede Principal') ON CONFLICT (id_ubicacion) DO NOTHING;

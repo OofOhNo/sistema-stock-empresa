@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { escaparHtml } from '../utils/htmlPrint';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 const crearFormularioInicial = (hoyStr, idUbicacion = '') => ({
   codigo_certificado: '',
@@ -433,16 +435,42 @@ export default function Calidad({ usuario }) {
           </div>
         </div>
 
-        {puedeEditarCalidad && (
-          <button
-            type="button"
-            onClick={() => setModalNuevo(true)}
-            className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
-          >
-            <Plus size={16} />
-            <span>Crear Certificado</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'calidad_certificados',
+                nombreHoja: 'Certificados',
+                filas: certificados,
+                columnas: [
+                  { header: 'Código Certificado', key: 'codigo_certificado' },
+                  { header: 'Tipo', value: (c) => c.tipo_certificado || 'Certificado de Calidad' },
+                  { header: 'Cliente', value: (c) => c.cliente_nombre || 'Cliente General' },
+                  { header: 'RUC Cliente', value: (c) => c.cliente_ruc || '' },
+                  { header: 'Producto / Lote', value: (c) => c.lote_o_producto || '' },
+                  { header: 'Entidad Emisora', value: (c) => c.entidad_emisora || 'SENASA' },
+                  { header: 'Autorización', value: (c) => c.senasa_resolucion || '' },
+                  { header: 'Fecha Emisión', value: (c) => formatearFechaCorta(c.fecha_emision) },
+                  { header: 'Fecha Vencimiento', value: (c) => formatearFechaCorta(c.fecha_vencimiento) },
+                  { header: 'Estado', value: (c) => c.estado_actualizado || c.estado || '' },
+                  { header: 'Observaciones', value: (c) => c.observaciones || '' }
+                ]
+              })
+            }
+            label="Exportar Excel (Calidad)"
+            cantidad={certificados.length}
+          />
+          {puedeEditarCalidad && (
+            <button
+              type="button"
+              onClick={() => setModalNuevo(true)}
+              className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
+            >
+              <Plus size={16} />
+              <span>Crear Certificado</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tarjetas Resumen */}

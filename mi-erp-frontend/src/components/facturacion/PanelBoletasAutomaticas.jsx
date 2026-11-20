@@ -18,6 +18,8 @@ import {
 import toast from 'react-hot-toast';
 import api from '../../api';
 import { imprimirBoletaEnIframe } from '../../utils/boletaTicketHtml';
+import { exportarTablaExcel } from '../../utils/excelExport';
+import BotonExportarExcel from '../BotonExportarExcel';
 
 const CONFIG_INICIAL = {
   activo: false,
@@ -906,6 +908,32 @@ export default function PanelBoletasAutomaticas({
             >
               <RefreshCw size={15} className={cargando ? 'animate-spin' : ''} />
             </button>
+
+            <BotonExportarExcel
+              onClick={() =>
+                exportarTablaExcel({
+                  nombreArchivo: 'facturacion_boletas_automaticas_cola',
+                  nombreHoja: 'Boletas Auto',
+                  filas: cola,
+                  columnas: [
+                    { header: 'Boleta', value: (r) => `${r.serie}-${String(r.correlativo).padStart(8, '0')}` },
+                    { header: 'Cliente', value: (r) => r.cliente_nombre || 'CLIENTES VARIOS' },
+                    { header: 'Fecha / Hora (Lima)', value: (r) => formatearFechaLima(r.creado_en, true) || '' },
+                    {
+                      header: 'Productos',
+                      value: (r) =>
+                        Array.isArray(r.items_json)
+                          ? r.items_json.map((it) => `${it.descripcion} (${Number(it.cantidad || 0).toFixed(2)} kg)`).join(', ')
+                          : ''
+                    },
+                    { header: 'Total (S/)', value: (r) => Number(r.monto_total || 0) },
+                    { header: 'Estado Cola', key: 'estado' }
+                  ]
+                })
+              }
+              label="Exportar Excel (Cola)"
+              cantidad={cola.length}
+            />
           </div>
         </div>
 

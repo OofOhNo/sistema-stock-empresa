@@ -257,11 +257,22 @@ const usuarioController = {
     },
 
     crearRol: async (req, res) => {
-        const { nombre, descripcion, duracion_sesion_minutos } = req.body;
+        const { nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia } = req.body;
         const usuarioSolicitante = req.usuario;
+        const esAdminCentral = usuarioSolicitante.nombre_rol === 'Admin Central';
 
         if (!nombre || !nombre.trim()) {
             return res.status(400).json({ exito: false, mensaje: 'El nombre del rol es obligatorio.' });
+        }
+
+        const nivelParsed = nivel_jerarquia !== undefined && nivel_jerarquia !== ''
+            ? parseInt(nivel_jerarquia, 10)
+            : 4;
+        if (Number.isNaN(nivelParsed) || nivelParsed < 1 || nivelParsed > 10) {
+            return res.status(400).json({ exito: false, mensaje: 'El nivel jerárquico debe estar entre 1 (más alto) y 10 (más bajo).' });
+        }
+        if (!esAdminCentral && nivelParsed < Number(usuarioSolicitante.nivel_jerarquia || 4)) {
+            return res.status(403).json({ exito: false, mensaje: 'No puedes crear un rol con un nivel jerárquico superior al tuyo.' });
         }
 
         try {
@@ -270,7 +281,7 @@ const usuarioController = {
                 return res.status(400).json({ exito: false, mensaje: 'Ya existe un rol con ese nombre.' });
             }
 
-            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion, duracion_sesion_minutos);
+            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion, duracion_sesion_minutos, nivelParsed);
 
             await registrarAuditoria(
                 pool,
@@ -306,10 +317,10 @@ const usuarioController = {
             });
         }
 
-        if (String(password).trim().length < 4) {
+        if (String(password).trim().length < 8) {
             return res.status(400).json({
                 exito: false,
-                mensaje: 'La contraseña debe tener al menos 4 letras o números.'
+                mensaje: 'La contraseña debe tener al menos 8 caracteres.'
             });
         }
 
@@ -459,6 +470,62 @@ const usuarioController = {
         }
     },
 
+    actualizarNivelJerarquiaRol: async (req, res) => {
+        const idRol = parseInt(req.params.id_rol, 10);
+        const nivel = parseInt(req.body?.nivel_jerarquia, 10);
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante.nombre_rol === 'Admin Central';
+
+        if (!idRol || Number.isNaN(idRol)) {
+            return res.status(400).json({ exito: false, mensaje: 'Rol inválido.' });
+        }
+        if (Number.isNaN(nivel) || nivel < 1 || nivel > 10) {
+            return res.status(400).json({ exito: false, mensaje: 'El nivel jerárquico debe estar entre 1 (más alto) y 10.' });
+        }
+
+        try {
+            const rolCheck = await pool.query('SELECT id_rol, nombre, nivel_jerarquia FROM roles WHERE id_rol = $1::int', [idRol]);
+            if (rolCheck.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Rol no encontrado.' });
+            }
+            const rolObjetivo = rolCheck.rows[0];
+            if (rolObjetivo.nombre === 'Admin Central' || idRol === 1) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El rol Admin Central siempre conserva el Nivel 1 (máxima jerarquía).'
+                });
+            }
+            if (!esAdminCentral && nivel < Number(solicitante.nivel_jerarquia || 4)) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'No puedes asignar a un rol un nivel jerárquico superior al tuyo.'
+                });
+            }
+
+            const rolActualizado = await Usuario.actualizarNivelJerarquia(idRol, nivel);
+            invalidarCacheSesionTodos();
+
+            await registrarAuditoria(
+                pool,
+                solicitante.id_usuario,
+                'ACTUALIZAR_JERARQUIA_ROL',
+                'roles',
+                idRol,
+                { nivel_jerarquia: rolObjetivo.nivel_jerarquia },
+                { nivel_jerarquia: nivel }
+            );
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: `Jerarquía de "${rolActualizado.nombre}" actualizada a Nivel ${nivel}.`,
+                rol: rolActualizado
+            });
+        } catch (error) {
+            console.error('Error al actualizar jerarquía del rol:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al guardar la jerarquía del rol.' });
+        }
+    },
+
     eliminarUsuario: async (req, res) => {
         const { id_usuario } = req.params;
         const solicitante = req.usuario;
@@ -556,10 +623,10 @@ const usuarioController = {
         const encargado = req.usuario;
         const esAdminCentral = encargado.nombre_rol === 'Admin Central';
 
-        if (!nueva_password || String(nueva_password).trim().length < 4) {
+        if (!nueva_password || String(nueva_password).trim().length < 8) {
             return res.status(400).json({
                 exito: false,
-                mensaje: 'La nueva contraseña debe tener al menos 4 letras o números.'
+                mensaje: 'La nueva contraseña debe tener al menos 8 caracteres.'
             });
         }
 
@@ -593,10 +660,14 @@ const usuarioController = {
 
             const passwordHash = await bcrypt.hash(String(nueva_password), 10);
 
-            await client.query(
-                'UPDATE usuarios SET password_hash = $1 WHERE id_usuario = $2',
-                [passwordHash, id_usuario]
-            );
+            await client.query(`
+                UPDATE usuarios
+                SET password_hash = $1,
+                    password_actualizada_en = CURRENT_TIMESTAMP,
+                    token_version = COALESCE(token_version, 1) + 1
+                WHERE id_usuario = $2
+            `, [passwordHash, id_usuario]);
+            invalidarCacheSesionUsuario(id_usuario);
 
             // Marcar como atendidas todas las solicitudes pendientes de este usuario
             await client.query(`

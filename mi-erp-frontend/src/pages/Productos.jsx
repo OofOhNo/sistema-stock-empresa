@@ -3,11 +3,14 @@ import toast from 'react-hot-toast';
 import api from '../api';
 import { Package, Edit, Trash, Plus, Ruler, Search, AlertTriangle, X, Check } from 'lucide-react';
 import { obtenerInfoUnidad } from '../utils/unidades';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Productos({ usuario }) {
   const [productos, setProductos] = useState([]);
   const [unidades, setUnidades] = useState([]);
   const [tiposProducto, setTiposProducto] = useState([]);
+  const [clientesLista, setClientesLista] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [puedeEditarBackend, setPuedeEditarBackend] = useState(null);
@@ -25,7 +28,8 @@ export default function Productos({ usuario }) {
     precio_costo: '',
     stock_minimo: '',
     id_unidad: '',
-    tipo_afectacion_igv: '10'
+    tipo_afectacion_igv: '10',
+    cliente_habitual: ''
   });
   const [editando, setEditando] = useState(null);
   const [guardandoProd, setGuardandoProd] = useState(false);
@@ -51,10 +55,11 @@ export default function Productos({ usuario }) {
   const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
-      const [resProd, resUni, resTipos] = await Promise.all([
+      const [resProd, resUni, resTipos, resCli] = await Promise.all([
         api.get('/productos'),
         api.get('/productos/unidades'),
-        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } }))
+        api.get('/productos/tipos').catch(() => ({ data: { tipos: [] } })),
+        api.get('/clientes').catch(() => ({ data: { datos: [] } }))
       ]);
       const listaProds = Array.isArray(resProd.data)
         ? resProd.data
@@ -68,6 +73,7 @@ export default function Productos({ usuario }) {
       const listaUnidades = resUni.data?.unidades || [];
       setUnidades(listaUnidades);
       setTiposProducto(resTipos.data?.tipos || []);
+      setClientesLista(resCli.data?.datos || resCli.data?.clientes || []);
       if (listaUnidades.length > 0) {
         setForm((f) => (f.id_unidad ? f : { ...f, id_unidad: listaUnidades[0].id_unidad }));
       }
@@ -143,7 +149,8 @@ export default function Productos({ usuario }) {
         precio_costo: form.precio_costo !== '' ? parseFloat(form.precio_costo) : 0,
         stock_minimo: form.stock_minimo !== '' ? parseInt(form.stock_minimo, 10) : 5,
         id_unidad: form.id_unidad ? parseInt(form.id_unidad, 10) : null,
-        unidad_medida: unidadSeleccionada ? unidadSeleccionada.nombre : 'Unidad'
+        unidad_medida: unidadSeleccionada ? unidadSeleccionada.nombre : 'Unidad',
+        cliente_habitual: form.cliente_habitual ? form.cliente_habitual.trim() : ''
       };
 
       if (editando) {
@@ -164,7 +171,8 @@ export default function Productos({ usuario }) {
         precio_costo: '',
         stock_minimo: '',
         id_unidad: unidades[0]?.id_unidad || '',
-        tipo_afectacion_igv: '10'
+        tipo_afectacion_igv: '10',
+        cliente_habitual: ''
       });
       setEditando(null);
       cargarProductos();
@@ -187,7 +195,8 @@ export default function Productos({ usuario }) {
       precio_costo: prod.precio_costo ?? '',
       stock_minimo: prod.stock_minimo ?? '',
       id_unidad: prod.id_unidad || unidades[0]?.id_unidad || '',
-      tipo_afectacion_igv: prod.tipo_afectacion_igv || '10'
+      tipo_afectacion_igv: prod.tipo_afectacion_igv || '10',
+      cliente_habitual: prod.cliente_habitual || ''
     });
     setEditando(prod.id_producto);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -210,7 +219,8 @@ export default function Productos({ usuario }) {
           precio_venta: '',
           precio_costo: '',
           stock_minimo: '',
-          id_unidad: unidades[0]?.id_unidad || ''
+          id_unidad: unidades[0]?.id_unidad || '',
+          cliente_habitual: ''
         });
       }
       setProductoADesactivar(null);
@@ -328,7 +338,8 @@ export default function Productos({ usuario }) {
     return (
       (p.sku || '').toLowerCase().includes(q) ||
       (p.nombre || '').toLowerCase().includes(q) ||
-      (p.descripcion || '').toLowerCase().includes(q)
+      (p.descripcion || '').toLowerCase().includes(q) ||
+      (p.cliente_habitual || '').toLowerCase().includes(q)
     );
   });
 
@@ -351,16 +362,43 @@ export default function Productos({ usuario }) {
           </div>
         </div>
 
-        {puedeEditar && (
-          <button
-            type="button"
-            onClick={() => setModalUnidad(true)}
-            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-2 transition-colors self-start sm:self-auto cursor-pointer"
-          >
-            <Ruler size={16} />
-            <span>+ Unidades de Medida</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'productos_catalogo',
+                nombreHoja: 'Productos',
+                filas: productos,
+                columnas: [
+                  { header: 'ID', key: 'id_producto' },
+                  { header: 'SKU', key: 'sku' },
+                  { header: 'Producto', key: 'nombre' },
+                  { header: 'Tipo de Producto', value: (p) => p.tipo_producto_nombre || p.tipo_nombre || '' },
+                  { header: 'Unidad Medida', value: (p) => p.unidad_medida || p.simbolo_unidad || 'Unidad' },
+                  { header: 'Símbolo', value: (p) => p.simbolo_unidad || 'und' },
+                  { header: 'Código SUNAT', value: (p) => p.codigo_unidad || 'NIU' },
+                  { header: 'Precio Venta (S/)', value: (p) => Number(p.precio_venta || 0) },
+                  { header: 'Stock Mínimo', value: (p) => Number(p.stock_minimo || 0) },
+                  { header: 'Peso Promedio (kg)', value: (p) => Number(p.peso_promedio || 0) },
+                  { header: 'Cliente Habitual', value: (p) => p.cliente_habitual || '' },
+                  { header: 'Estado', value: (p) => (p.activo === false ? 'Inactivo' : 'Activo') }
+                ]
+              })
+            }
+            label="Exportar Excel (Productos)"
+            cantidad={productos.length}
+          />
+          {puedeEditar && (
+            <button
+              type="button"
+              onClick={() => setModalUnidad(true)}
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-2 transition-colors cursor-pointer"
+            >
+              <Ruler size={16} />
+              <span>+ Unidades de Medida</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* FORMULARIO DE PRODUCTO (SOLO SI TIENE PERMISO DE EDICIÓN) */}
@@ -553,6 +591,26 @@ export default function Productos({ usuario }) {
                 );
               })()}
 
+              {/* Cliente habitual que suele consumir este producto */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Cliente habitual (Quién suele pedirlo)
+                </label>
+                <input
+                  name="cliente_habitual"
+                  list="lista-clientes-habituales"
+                  value={form.cliente_habitual}
+                  onChange={handleChange}
+                  placeholder="Ej: Parrilla El Vikingo, Restaurante Sur..."
+                  className="w-full border border-slate-300 p-2.5 rounded-xl text-sm focus:outline-none focus:border-indigo-500"
+                />
+                <datalist id="lista-clientes-habituales">
+                  {clientesLista.map((c) => (
+                    <option key={c.id_cliente} value={c.nombre_comercial || c.razon_social_o_nombre} />
+                  ))}
+                </datalist>
+              </div>
+
             </div>
 
             <div className="flex items-center space-x-3 pt-2">
@@ -577,7 +635,9 @@ export default function Productos({ usuario }) {
                       precio_venta: '',
                       precio_costo: '',
                       stock_minimo: '',
-                      id_unidad: unidades[0]?.id_unidad || ''
+                      id_unidad: unidades[0]?.id_unidad || '',
+                      tipo_afectacion_igv: '10',
+                      cliente_habitual: ''
                     });
                   }}
                   className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
@@ -628,6 +688,7 @@ export default function Productos({ usuario }) {
               <tr className="bg-slate-50/50 text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                 <th className="p-4">Código</th>
                 <th className="p-4">Producto</th>
+                <th className="p-4">Cliente Habitual</th>
                 <th className="p-4 text-center">Unidad de Medida</th>
                 <th className="p-4 text-right">Costo</th>
                 <th className="p-4 text-right">Precio Venta</th>
@@ -639,7 +700,7 @@ export default function Productos({ usuario }) {
             <tbody className="divide-y divide-slate-100 text-sm">
               {productosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={puedeEditar ? 8 : 7} className="p-10 text-center text-slate-500 text-sm">
+                  <td colSpan={puedeEditar ? 9 : 8} className="p-10 text-center text-slate-500 text-sm">
                     No se encontraron productos con esa búsqueda.
                   </td>
                 </tr>
@@ -650,6 +711,15 @@ export default function Productos({ usuario }) {
                     <td className="p-4">
                       <div className="font-semibold text-slate-800">{p.nombre}</div>
                       {p.descripcion && <div className="text-xs text-slate-400">{p.descripcion}</div>}
+                    </td>
+                    <td className="p-4 text-xs">
+                      {p.cliente_habitual ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          {p.cliente_habitual}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">Sin asignar</span>
+                      )}
                     </td>
 
                     <td className="p-4 text-center">

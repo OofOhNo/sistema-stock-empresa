@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import api from '../../api';
 import { Truck, Plus, Edit2, Trash2, RefreshCw, X, ShieldCheck } from 'lucide-react';
+import { exportarTablaExcel } from '../../utils/excelExport';
+import BotonExportarExcel from '../BotonExportarExcel';
 
 export default function PanelVehiculosTransporte({ puedeEditar = false }) {
   const [vehiculos, setVehiculos] = useState([]);
@@ -102,7 +104,25 @@ export default function PanelVehiculosTransporte({ puedeEditar = false }) {
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'vehiculos_transporte',
+                nombreHoja: 'Vehículos',
+                filas: vehiculos,
+                columnas: [
+                  { header: 'ID', key: 'id_vehiculo' },
+                  { header: 'Placa', key: 'placa' },
+                  { header: 'Descripción', value: (v) => v.descripcion || '' },
+                  { header: 'Entidad Emisora', value: (v) => v.entidad_emisora || '' },
+                  { header: 'Nro Autorización', value: (v) => v.numero_autorizacion || '' }
+                ]
+              })
+            }
+            label="Exportar Excel (Vehículos)"
+            cantidad={vehiculos.length}
+          />
           <button
             type="button"
             onClick={cargarVehiculos}

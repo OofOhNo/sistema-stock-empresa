@@ -47,26 +47,31 @@ class ProductoModel {
             precio_venta, precio_costo, stock_minimo,
             id_unidad, unidad_medida,
             id_tipo_producto,
-            tipo_afectacion_igv, codigo_producto_sunat
+            tipo_afectacion_igv, codigo_producto_sunat,
+            cliente_habitual
         } = data;
         
         const query = `
             INSERT INTO productos (
                 sku, nombre, descripcion, id_categoria, 
                 precio_venta, precio_costo, stock_minimo, 
-                id_unidad, unidad_medida, id_tipo_producto, tipo_afectacion_igv, codigo_producto_sunat, activo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
+                id_unidad, unidad_medida, id_tipo_producto, tipo_afectacion_igv, codigo_producto_sunat, cliente_habitual, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
             RETURNING *
         `;
         const precioCostoVal = (precio_costo === undefined || precio_costo === null || precio_costo === '') ? 0 : precio_costo;
         const stockMinimoVal = (stock_minimo === undefined || stock_minimo === null || stock_minimo === '') ? 5 : stock_minimo;
+        const clienteHabitualVal = cliente_habitual && String(cliente_habitual).trim()
+            ? String(cliente_habitual).trim().slice(0, 255)
+            : null;
         const values = [
             sku, nombre, descripcion, id_categoria || null,
             precio_venta, precioCostoVal, stockMinimoVal,
             id_unidad || null, unidad_medida || 'Unidad',
             id_tipo_producto ? parseInt(id_tipo_producto, 10) : 1,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : '10',
-            codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null
+            codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null,
+            clienteHabitualVal
         ];
         
         const { rows } = await db.query(query, values);
@@ -78,8 +83,14 @@ class ProductoModel {
             sku, nombre, descripcion, id_categoria, 
             precio_venta, precio_costo, stock_minimo, activo,
             id_unidad, unidad_medida, id_tipo_producto,
-            tipo_afectacion_igv, codigo_producto_sunat
+            tipo_afectacion_igv, codigo_producto_sunat,
+            cliente_habitual
         } = data;
+
+        const actualizaClienteHabitual = cliente_habitual !== undefined;
+        const clienteHabitualVal = actualizaClienteHabitual && String(cliente_habitual || '').trim()
+            ? String(cliente_habitual).trim().slice(0, 255)
+            : null;
 
         const query = `
             UPDATE productos 
@@ -96,8 +107,9 @@ class ProductoModel {
                 unidad_medida = COALESCE($10, unidad_medida),
                 id_tipo_producto = COALESCE($11, id_tipo_producto),
                 tipo_afectacion_igv = COALESCE($12, tipo_afectacion_igv),
-                codigo_producto_sunat = COALESCE($13, codigo_producto_sunat)
-            WHERE id_producto = $14
+                codigo_producto_sunat = COALESCE($13, codigo_producto_sunat),
+                cliente_habitual = CASE WHEN $14::boolean THEN $15::varchar ELSE cliente_habitual END
+            WHERE id_producto = $16
             RETURNING *
         `;
         const values = [
@@ -107,6 +119,8 @@ class ProductoModel {
             id_tipo_producto ? parseInt(id_tipo_producto, 10) : null,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : null,
             codigo_producto_sunat !== undefined ? (codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null) : null,
+            actualizaClienteHabitual,
+            clienteHabitualVal,
             id
         ];
 

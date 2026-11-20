@@ -3,9 +3,12 @@ import toast from 'react-hot-toast';
 import api from '../api';
 import {
   Package, History, Plus, ArrowLeft, RotateCcw, CheckCircle, AlertCircle, Clock,
-  ShieldAlert, Filter, XCircle, AlertTriangle, Check, X, Globe, Building, Lock, Search
+  ShieldAlert, Filter, XCircle, AlertTriangle, Check, X, Globe, Building, Lock, Search,
+  TrendingUp
 } from 'lucide-react';
 import { esUnidadSoloEnteros, obtenerInfoUnidad, parsearCantidadPorUnidad } from '../utils/unidades';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Stock({ usuario }) {
   const [inventario, setInventario] = useState([]);
@@ -17,6 +20,7 @@ export default function Stock({ usuario }) {
   const [filtroSede, setFiltroSede] = useState('todas');
   const [tiposProducto, setTiposProducto] = useState([]);
   const [filtroTipoProducto, setFiltroTipoProducto] = useState('todos');
+  const [filtroRotacionVentas, setFiltroRotacionVentas] = useState('todos');
   const [busquedaStock, setBusquedaStock] = useState('');
 
   const [historial, setHistorial] = useState([]);
@@ -301,6 +305,124 @@ export default function Stock({ usuario }) {
     return coincideTexto && coincideTipo;
   };
 
+  const ordenarPorVentas = (lista) => {
+    if (filtroRotacionVentas === 'mas_vendidas') {
+      return [...lista].sort((a, b) => {
+        const diff = Number(b.total_vendido || 0) - Number(a.total_vendido || 0);
+        if (diff !== 0) return diff;
+        return String(a.nombre_producto || '').localeCompare(String(b.nombre_producto || ''));
+      });
+    }
+    if (filtroRotacionVentas === 'menos_vendidas') {
+      return [...lista].sort((a, b) => {
+        const diff = Number(a.total_vendido || 0) - Number(b.total_vendido || 0);
+        if (diff !== 0) return diff;
+        return String(a.nombre_producto || '').localeCompare(String(b.nombre_producto || ''));
+      });
+    }
+    return lista;
+  };
+
+  const stockTotalMostrado = ordenarPorVentas(stockTotal).filter(filtrarPorTexto);
+  const stockUbicacionBase = stockPorUbicacion.filter((item) => {
+    if (puedeVerOtrasUbicaciones && filtroSede !== 'todas') {
+      return String(item.id_ubicacion) === String(filtroSede);
+    }
+    return true;
+  });
+  const stockUbicacionMostrado = ordenarPorVentas(stockUbicacionBase).filter(filtrarPorTexto);
+
+  const exportarSubVistaStockTotal = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'inventario_stock_total',
+      nombreHoja: 'Stock Total',
+      filas: ordenarPorVentas(stockTotal),
+      columnas: [
+        { header: 'Código SKU', key: 'sku' },
+        { header: 'Producto', value: (r) => r.nombre_producto || r.nombre },
+        { header: 'Tipo', value: (r) => r.tipo_producto_nombre || 'Sin Tipo' },
+        { header: 'Unidad', value: (r) => r.simbolo_unidad || r.unidad_medida || 'und' },
+        { header: 'En Almacén', value: (r) => Number(r.total_fisico ?? r.cantidad_fisica ?? 0) },
+        { header: 'Separado en Pedidos', value: (r) => Number(r.total_reservado ?? r.cantidad_reservada ?? 0) },
+        { header: 'Libre para Vender', value: (r) => Number(r.total_disponible ?? r.cantidad_disponible ?? 0) },
+        { header: 'Stock Mínimo', value: (r) => Number(r.stock_minimo ?? 5) },
+        { header: 'Unidades Vendidas', value: (r) => Number(r.total_vendido || 0) },
+        { header: 'Precio Venta (S/)', value: (r) => Number(r.precio_venta || 0) },
+        {
+          header: 'Estado',
+          value: (r) => {
+            const disp = Number(r.total_disponible ?? r.cantidad_disponible ?? 0);
+            const min = Number(r.stock_minimo ?? 5);
+            return disp <= 0 ? 'Sin Stock' : disp <= min ? 'Queda Poco' : 'Bien';
+          }
+        }
+      ]
+    });
+  };
+
+  const exportarSubVistaStockUbicacion = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'inventario_por_sede',
+      nombreHoja: 'Stock por Sede',
+      filas: ordenarPorVentas(stockUbicacionBase),
+      columnas: [
+        { header: 'Sede / Almacén', value: (r) => r.nombre_ubicacion || usuario?.nombre_ubicacion || 'Sede' },
+        { header: 'Código SKU', key: 'sku' },
+        { header: 'Producto', value: (r) => r.nombre_producto || r.nombre },
+        { header: 'Unidad', value: (r) => r.simbolo_unidad || r.unidad_medida || 'und' },
+        { header: 'En Almacén', value: (r) => Number(r.cantidad_fisica ?? r.total_fisico ?? 0) },
+        { header: 'Separado', value: (r) => Number(r.cantidad_reservada ?? r.total_reservado ?? 0) },
+        { header: 'Libre', value: (r) => Number(r.cantidad_disponible ?? r.total_disponible ?? 0) },
+        { header: 'Mínimo', value: (r) => Number(r.stock_minimo ?? 5) },
+        { header: 'Vendido en Sede', value: (r) => Number(r.total_vendido || 0) },
+        {
+          header: 'Estado',
+          value: (r) => {
+            const disp = Number(r.cantidad_disponible ?? r.total_disponible ?? 0);
+            const min = Number(r.stock_minimo ?? 5);
+            return disp <= 0 ? 'Sin Stock' : disp <= min ? 'Queda Poco' : 'Bien';
+          }
+        }
+      ]
+    });
+  };
+
+  const exportarPestanaHistorial = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'inventario_entradas_salidas',
+      nombreHoja: 'Entradas y Salidas',
+      filas: historial,
+      columnas: [
+        { header: 'Fecha y Hora', value: (r) => fechaHoraLocalTexto(r.fecha_movimiento) },
+        { header: 'Registrado por', value: (r) => r.usuario_creador || 'Sistema' },
+        { header: 'Sede', value: (r) => r.nombre_ubicacion || 'Principal' },
+        { header: 'Producto', key: 'nombre_producto' },
+        { header: 'Operación', key: 'tipo_movimiento' },
+        { header: 'Cantidad', value: (r) => Number(r.cantidad || 0) },
+        { header: 'Motivo', key: 'motivo' },
+        { header: 'Estado', key: 'estado' }
+      ]
+    });
+  };
+
+  const exportarPestanaAlertas = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'inventario_poco_stock',
+      nombreHoja: 'Poco Stock',
+      filas: alertas,
+      columnas: [
+        { header: 'Urgencia', value: (r) => (r.nivel_alerta === 'CRITICO' ? 'AGOTADO (0)' : 'QUEDA POCO') },
+        { header: 'Código', key: 'sku' },
+        { header: 'Producto', key: 'nombre_producto' },
+        { header: 'Sede', key: 'nombre_ubicacion' },
+        { header: 'En Almacén', value: (r) => Number(r.cantidad_fisica || 0) },
+        { header: 'Separado', value: (r) => Number(r.cantidad_reservada || 0) },
+        { header: 'Libre', value: (r) => Number(r.cantidad_disponible || 0) },
+        { header: 'Mínimo', value: (r) => Number(r.stock_minimo || 0) }
+      ]
+    });
+  };
+
   const totalAnulados = historial.filter(m => m.estado === 'ANULADO').length;
   const totalSolicitudes = historial.filter(m => m.estado === 'SOLICITUD_ANULACION').length;
   const totalMovimientos = historial.length;
@@ -469,6 +591,20 @@ export default function Stock({ usuario }) {
                 </select>
               </div>
 
+              <div className="flex items-center space-x-1.5">
+                <TrendingUp size={14} className="text-indigo-500 shrink-0" />
+                <span className="text-xs font-medium text-slate-500">Ventas:</span>
+                <select
+                  value={filtroRotacionVentas}
+                  onChange={(e) => setFiltroRotacionVentas(e.target.value)}
+                  className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="todos">Orden Alfabético</option>
+                  <option value="mas_vendidas">Más vendidas primero</option>
+                  <option value="menos_vendidas">Menos vendidas primero</option>
+                </select>
+              </div>
+
               {subVistaInventario === 'ubicacion' && (
                 puedeVerOtrasUbicaciones ? (
                   <div className="flex items-center space-x-2">
@@ -499,7 +635,7 @@ export default function Stock({ usuario }) {
           {/* SUBVISTA 1: TOTAL */}
           {subVistaInventario === 'total' && (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
                 <div>
                   <h3 className="text-sm font-bold text-blue-950">
                     {puedeVerOtrasUbicaciones ? 'Stock Total de la Empresa' : `Inventario en ${usuario?.nombre_ubicacion || 'Mi Sede'}`}
@@ -510,9 +646,16 @@ export default function Stock({ usuario }) {
                       : 'Cantidades disponibles para usar o vender en tu sede'}
                   </p>
                 </div>
-                <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">
-                  {stockTotal.filter(filtrarPorTexto).length} productos
-                </span>
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">
+                    {stockTotalMostrado.length} productos
+                  </span>
+                  <BotonExportarExcel
+                    onClick={exportarSubVistaStockTotal}
+                    label="Exportar Excel (Stock Total)"
+                    cantidad={stockTotal.length}
+                  />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -524,22 +667,24 @@ export default function Stock({ usuario }) {
                       <th className="p-4 font-semibold text-center">En Almacén</th>
                       <th className="p-4 font-semibold text-center">Separado en Pedidos</th>
                       <th className="p-4 font-semibold text-center text-indigo-600">Libre para Vender</th>
+                      <th className="p-4 font-semibold text-center text-emerald-700">Vendido</th>
                       <th className="p-4 font-semibold text-center">Mínimo</th>
                       <th className="p-4 font-semibold text-center">Estado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {stockTotal.filter(filtrarPorTexto).length === 0 ? (
+                    {stockTotalMostrado.length === 0 ? (
                       <tr>
-                        <td colSpan="8" className="p-8 text-center text-slate-500 text-xs">
+                        <td colSpan="9" className="p-8 text-center text-slate-500 text-xs">
                           No se encontraron productos en el inventario.
                         </td>
                       </tr>
                     ) : (
-                      stockTotal.filter(filtrarPorTexto).map((item, index) => {
+                      stockTotalMostrado.map((item, index) => {
                         const disponible = Number(item.total_disponible ?? item.cantidad_disponible ?? 0);
                         const minimo = Number(item.stock_minimo ?? 5);
                         const esBajo = disponible <= minimo;
+                        const vendido = Number(item.total_vendido || 0);
 
                         return (
                           <tr key={item.id_producto || index} className="hover:bg-slate-50 transition-colors">
@@ -560,6 +705,11 @@ export default function Stock({ usuario }) {
                             <td className="p-4 text-center text-slate-900 font-semibold">{item.total_fisico ?? item.cantidad_fisica ?? 0}</td>
                             <td className="p-4 text-center text-orange-600 font-medium">{item.total_reservado ?? item.cantidad_reservada ?? 0}</td>
                             <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
+                            <td className="p-4 text-center">
+                              <span className={`px-2 py-0.5 rounded-md text-xs font-bold tabular-nums ${vendido > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                                {vendido}
+                              </span>
+                            </td>
                             <td className="p-4 text-center text-slate-500">{minimo}</td>
                             <td className="p-4 text-center">
                               {disponible <= 0 ? (
@@ -583,7 +733,7 @@ export default function Stock({ usuario }) {
           {/* SUBVISTA 2: POR UBICACIÓN */}
           {subVistaInventario === 'ubicacion' && (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
                 <div>
                   <h3 className="text-sm font-bold text-blue-950">Inventario por Sede / Almacén</h3>
                   <p className="text-xs text-slate-500">
@@ -592,6 +742,11 @@ export default function Stock({ usuario }) {
                       : `Mostrando únicamente tu sede (${usuario?.nombre_ubicacion || 'asignada'})`}
                   </p>
                 </div>
+                <BotonExportarExcel
+                  onClick={exportarSubVistaStockUbicacion}
+                  label="Exportar Excel (Por Sede)"
+                  cantidad={stockUbicacionBase.length}
+                />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -604,23 +759,17 @@ export default function Stock({ usuario }) {
                       <th className="p-4 font-semibold text-center">En Almacén</th>
                       <th className="p-4 font-semibold text-center">Separado</th>
                       <th className="p-4 font-semibold text-center text-indigo-600">Libre</th>
+                      <th className="p-4 font-semibold text-center text-emerald-700">Vendido</th>
                       <th className="p-4 font-semibold text-center">Mínimo</th>
                       <th className="p-4 font-semibold text-center">Estado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {stockPorUbicacion
-                      .filter(item => {
-                        if (puedeVerOtrasUbicaciones && filtroSede !== 'todas') {
-                          return String(item.id_ubicacion) === String(filtroSede);
-                        }
-                        return true;
-                      })
-                      .filter(filtrarPorTexto)
-                      .map((item, index) => {
+                    {stockUbicacionMostrado.map((item, index) => {
                         const disponible = Number(item.cantidad_disponible ?? item.total_disponible ?? 0);
                         const minimo = Number(item.stock_minimo ?? 5);
                         const esBajo = disponible <= minimo;
+                        const vendido = Number(item.total_vendido || 0);
 
                         return (
                           <tr key={`${item.id_ubicacion}-${item.id_producto}-${index}`} className="hover:bg-slate-50 transition-colors">
@@ -639,6 +788,11 @@ export default function Stock({ usuario }) {
                             <td className="p-4 text-center text-slate-900">{item.cantidad_fisica ?? item.total_fisico ?? 0}</td>
                             <td className="p-4 text-center text-orange-600 font-medium">{item.cantidad_reservada ?? item.total_reservado ?? 0}</td>
                             <td className="p-4 text-center text-indigo-600 font-bold bg-indigo-50/30">{disponible}</td>
+                            <td className="p-4 text-center">
+                              <span className={`px-2 py-0.5 rounded-md text-xs font-bold tabular-nums ${vendido > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
+                                {vendido}
+                              </span>
+                            </td>
                             <td className="p-4 text-center text-slate-500">{minimo}</td>
                             <td className="p-4 text-center">
                               {disponible <= 0 ? (
@@ -677,43 +831,50 @@ export default function Stock({ usuario }) {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2 bg-slate-100 p-1 rounded-xl w-max max-w-full">
-            <button
-              type="button"
-              onClick={() => setFiltroKardex('todos')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
-                filtroKardex === 'todos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Filter size={14} className="mr-1" /> Todos
-            </button>
-            <button
-              type="button"
-              onClick={() => setFiltroKardex('vigentes')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
-                filtroKardex === 'vigentes' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <CheckCircle size={14} className="mr-1" /> Activos
-            </button>
-            <button
-              type="button"
-              onClick={() => setFiltroKardex('solicitudes')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
-                filtroKardex === 'solicitudes' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <Clock size={14} className="mr-1" /> Por Aprobar ({totalSolicitudes})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFiltroKardex('anulados')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
-                filtroKardex === 'anulados' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <XCircle size={14} className="mr-1" /> Deshechos
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2 bg-slate-100 p-1 rounded-xl w-max max-w-full">
+              <button
+                type="button"
+                onClick={() => setFiltroKardex('todos')}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
+                  filtroKardex === 'todos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Filter size={14} className="mr-1" /> Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroKardex('vigentes')}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
+                  filtroKardex === 'vigentes' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <CheckCircle size={14} className="mr-1" /> Activos
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroKardex('solicitudes')}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
+                  filtroKardex === 'solicitudes' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Clock size={14} className="mr-1" /> Por Aprobar ({totalSolicitudes})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroKardex('anulados')}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1 cursor-pointer ${
+                  filtroKardex === 'anulados' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <XCircle size={14} className="mr-1" /> Deshechos
+              </button>
+            </div>
+            <BotonExportarExcel
+              onClick={exportarPestanaHistorial}
+              label="Exportar Excel (Kárdex)"
+              cantidad={historial.length}
+            />
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -850,16 +1011,23 @@ export default function Stock({ usuario }) {
       {/* VISTA 3: ALERTAS DE POCO STOCK */}
       {vista === 'alertas' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+          <div className="p-6 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-blue-950">Productos con poco stock</h2>
               <p className="text-slate-500 text-sm mt-0.5">
                 Estos productos tienen igual o menos unidades que su mínimo recomendado
               </p>
             </div>
-            <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full font-bold text-xs border border-red-200">
-              {alertas.length} avisos
-            </span>
+            <div className="flex items-center gap-2.5">
+              <BotonExportarExcel
+                onClick={exportarPestanaAlertas}
+                label="Exportar Excel (Poco Stock)"
+                cantidad={alertas.length}
+              />
+              <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full font-bold text-xs border border-red-200">
+                {alertas.length} avisos
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">

@@ -14,6 +14,7 @@ const Usuario = {
                     ub.nombre AS nombre_ubicacion,
                     u.rol_id,
                     r.nombre AS nombre_rol,
+                    COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia,
                     u.puede_ver_celulares,
                     u.area,
                     u.telefono_whatsapp,
@@ -46,7 +47,12 @@ const Usuario = {
                 if (resCheck.rows.length === 0) throw new Error('El ID de rol no existe.');
             }
 
-            const query = "UPDATE usuarios SET rol_id = $1 WHERE id_usuario = $2 RETURNING *";
+            const query = `
+                UPDATE usuarios
+                SET rol_id = $1
+                WHERE id_usuario = $2
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp, activo, creado_en;
+            `;
             const res = await pool.query(query, [rolId, id_usuario]);
             return res.rows[0];
         } catch (error) {
@@ -83,6 +89,7 @@ const Usuario = {
                     r.nombre AS nombre_rol,
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
                     r.duracion_sesion_minutos,
+                    COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia,
                     ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
@@ -145,6 +152,7 @@ const Usuario = {
                     r.nombre AS nombre_rol,
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
                     r.duracion_sesion_minutos,
+                    COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia,
                     ub.nombre AS nombre_ubicacion
                 FROM usuarios u
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
@@ -167,12 +175,13 @@ const Usuario = {
                     r.descripcion, 
                     COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
                     r.duracion_sesion_minutos,
+                    COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia,
                     r.creado_en,
                     COUNT(u.id_usuario)::int AS total_usuarios
                 FROM roles r
                 LEFT JOIN usuarios u ON u.rol_id = r.id_rol AND COALESCE(u.activo, true) = true
-                GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.duracion_sesion_minutos, r.creado_en
-                ORDER BY r.id_rol ASC;
+                GROUP BY r.id_rol, r.nombre, r.descripcion, r.puede_ver_otras_ubicaciones, r.duracion_sesion_minutos, r.nivel_jerarquia, r.creado_en
+                ORDER BY COALESCE(r.nivel_jerarquia, 4) ASC, r.id_rol ASC;
             `;
             const res = await pool.query(query);
             return res.rows;
@@ -208,16 +217,32 @@ const Usuario = {
         }
     },
 
-    crearRol: async (nombre, descripcion, duracion_sesion_minutos = null) => {
+    actualizarNivelJerarquia: async (rol_id, nivel_jerarquia) => {
+        try {
+            const valor = parseInt(nivel_jerarquia, 10);
+            const res = await pool.query(
+                'UPDATE roles SET nivel_jerarquia = $1::int WHERE id_rol = $2::int RETURNING *',
+                [valor, rol_id]
+            );
+            return res.rows[0];
+        } catch (error) {
+            throw error;
+        }
+    },
+
+    crearRol: async (nombre, descripcion, duracion_sesion_minutos = null, nivel_jerarquia = 4) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
             const duracion = duracion_sesion_minutos && Number(duracion_sesion_minutos) > 0
                 ? parseInt(duracion_sesion_minutos, 10)
                 : null;
+            const nivel = Number(nivel_jerarquia) >= 1 && Number(nivel_jerarquia) <= 10
+                ? parseInt(nivel_jerarquia, 10)
+                : 4;
             const insertRol = await client.query(
-                `INSERT INTO roles (nombre, descripcion, duracion_sesion_minutos) VALUES ($1, $2, $3) RETURNING *`,
-                [nombre, descripcion || null, duracion]
+                `INSERT INTO roles (nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia) VALUES ($1, $2, $3, $4) RETURNING *`,
+                [nombre, descripcion || null, duracion, nivel]
             );
             const nuevoRol = insertRol.rows[0];
 
@@ -273,7 +298,11 @@ const Usuario = {
             await pool.query('DELETE FROM solicitudes_recuperacion_password WHERE id_usuario = $1', [id_usuario]).catch(() => {});
 
             try {
-                const resDelete = await pool.query('DELETE FROM usuarios WHERE id_usuario = $1 RETURNING *', [id_usuario]);
+                const resDelete = await pool.query(`
+                    DELETE FROM usuarios
+                    WHERE id_usuario = $1
+                    RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp, activo, creado_en;
+                `, [id_usuario]);
                 if (resDelete.rows.length > 0) {
                     return { eliminado: true, softDelete: false, usuario: resDelete.rows[0] };
                 }
@@ -284,7 +313,7 @@ const Usuario = {
                     SET activo = false, 
                         email = email || '.desactivado.' || $2
                     WHERE id_usuario = $1 
-                    RETURNING *
+                    RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp, activo, creado_en;
                 `, [id_usuario, timestamp]);
                 
                 if (resSoft.rows.length > 0) {

@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, Layers } from 'lucide-react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import {
   OPCIONES_DURACION_SESION,
   formatearDuracionSesionLegible
 } from '../utils/sesionRol';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from './BotonExportarExcel';
 
 const INFO_MODULOS = {
   stock: { nombre: 'Inventario', ayuda: 'Ver stock y registrar entradas o salidas' },
@@ -160,6 +162,57 @@ export default function PermisosGrid({ puedeEditar = true, usuarioLogueado, onPe
     void guardarDuracionSesionRol(rolId, totalMin);
   };
 
+  const guardarNivelJerarquiaRol = async (rolId, nivel) => {
+    if (!puedeEditar) return;
+    try {
+      const res = await api.put(`/usuarios/roles/${rolId}/jerarquia`, {
+        nivel_jerarquia: Number(nivel)
+      });
+      toast.success(res.data?.mensaje || 'Nivel jerárquico actualizado.');
+      await cargarPermisos(true);
+      onPermisoCambiado?.();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el nivel jerárquico.');
+    }
+  };
+
+  const exportarRolesYPermisosExcel = () => {
+    const filas = [];
+    for (const rolObj of rolesList) {
+      const modulosRol = modulos.map((mod) => {
+        const p = permisos.find((x) => x.nombre_rol === rolObj.nombre && x.modulo === mod);
+        const esAdmin = rolObj.nombre === 'Admin Central';
+        const ver = esAdmin || Boolean(p?.puede_ver);
+        const editar = esAdmin || Boolean(p?.puede_editar);
+        const nombreMod = INFO_MODULOS[mod]?.nombre || mod;
+        return `${nombreMod}: ${editar ? 'Ver+Editar' : ver ? 'Solo Ver' : 'Sin acceso'}`;
+      }).join(' | ');
+      filas.push({
+        rol: rolObj.nombre,
+        descripcion: rolObj.descripcion || '',
+        nivel_jerarquia: Number(rolObj.nivel_jerarquia || (rolObj.nombre === 'Admin Central' ? 1 : 4)),
+        ve_todas_sedes: rolObj.nombre === 'Admin Central' || rolObj.puede_ver_otras_ubicaciones ? 'Sí' : 'No',
+        expiracion_sesion: formatearDuracionSesionLegible(rolObj.duracion_sesion_minutos),
+        usuarios_activos: Number(rolObj.total_usuarios || 0),
+        permisos_detalle: modulosRol
+      });
+    }
+    exportarTablaExcel({
+      nombreArchivo: 'roles_y_permisos',
+      nombreHoja: 'Roles y Permisos',
+      filas,
+      columnas: [
+        { header: 'Rol', key: 'rol' },
+        { header: 'Descripción', key: 'descripcion' },
+        { header: 'Nivel Jerarquía', key: 'nivel_jerarquia' },
+        { header: 'Ve Otras Sedes', key: 've_todas_sedes' },
+        { header: 'Duración Sesión', key: 'expiracion_sesion' },
+        { header: 'Usuarios Activos', key: 'usuarios_activos' },
+        { header: 'Permisos por Pantalla', key: 'permisos_detalle' }
+      ]
+    });
+  };
+
   if (cargando) return <div className="p-6 text-slate-500 font-medium">Cargando tabla de permisos...</div>;
 
   const roles = rolesList.length > 0
@@ -293,13 +346,72 @@ export default function PermisosGrid({ puedeEditar = true, usuarioLogueado, onPe
         </div>
       </div>
 
+      {/* NIVEL JERÁRQUICO POR ROL (PARA REUNIONES Y CONVOCATORIAS) */}
+      <div className="p-4 bg-violet-50/60 rounded-xl border border-violet-200/80">
+        <div className="mb-3 flex items-start gap-2.5">
+          <Layers size={18} className="text-violet-700 mt-0.5 shrink-0" />
+          <div>
+            <h4 className="text-sm font-bold text-blue-950">
+              Nivel jerárquico de cada rol (Reuniones y convocatorias)
+            </h4>
+            <p className="text-xs text-slate-600 mt-0.5">
+              <strong>Nivel 1</strong> es la jerarquía más alta. En Reuniones, cada usuario solo puede convocar e invitar a personas de su mismo nivel o de un nivel inferior (número igual o mayor).
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {rolesList.map((r) => {
+            const esAdmin = r.nombre === 'Admin Central';
+            const nivelActual = esAdmin ? 1 : Number(r.nivel_jerarquia || 4);
+            return (
+              <div
+                key={`jerarquia-${r.id_rol}`}
+                className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-800 truncate">{r.nombre}</p>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 shrink-0">
+                    Nivel {nivelActual}
+                  </span>
+                </div>
+                <select
+                  disabled={esAdmin || !puedeEditar}
+                  value={nivelActual}
+                  onChange={(e) => guardarNivelJerarquiaRol(r.id_rol, e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold bg-white text-slate-700 focus:outline-hidden focus:border-violet-500 disabled:opacity-60 cursor-pointer"
+                >
+                  {[
+                    { val: 1, label: 'Nivel 1 — Máxima jerarquía (Dirección / Admin)' },
+                    { val: 2, label: 'Nivel 2 — Gerencia / Subgerencia' },
+                    { val: 3, label: 'Nivel 3 — Jefatura / Supervisión' },
+                    { val: 4, label: 'Nivel 4 — Operativo / Base' },
+                    { val: 5, label: 'Nivel 5 — Apoyo / Auxiliar' },
+                    { val: 6, label: 'Nivel 6 — Externo / Prácticas' }
+                  ].map((opt) => (
+                    <option key={opt.val} value={opt.val}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* TABLA DE PERMISOS POR PANTALLA */}
       <div className="overflow-x-auto">
-        <div className="mb-4">
-          <h3 className="text-lg font-bold text-blue-950">¿Qué pantallas puede ver o modificar cada Rol?</h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            <strong>Ver:</strong> permite abrir esa pestaña y mirar los datos. · <strong>Crear / Editar:</strong> permite agregar, cambiar o anular registros (en <em>Personal, Roles y Claves</em> también permite restablecer contraseñas olvidadas).
-          </p>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-blue-950">¿Qué pantallas puede ver o modificar cada Rol?</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              <strong>Ver:</strong> permite abrir esa pestaña y mirar los datos. · <strong>Crear / Editar:</strong> permite agregar, cambiar o anular registros (en <em>Personal, Roles y Claves</em> también permite restablecer contraseñas olvidadas).
+            </p>
+          </div>
+          <BotonExportarExcel
+            onClick={exportarRolesYPermisosExcel}
+            label="Exportar Excel (Roles y Permisos)"
+            cantidad={rolesList.length}
+          />
         </div>
 
         <table className="w-full text-left border-collapse min-w-[650px]">

@@ -6,6 +6,8 @@ import {
   ChevronLeft, ChevronRight, Repeat, List, Calendar as CalendarIcon,
   DollarSign, AlertTriangle, X, RefreshCw
 } from 'lucide-react';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 const CATEGORIAS = [
   { id: 'SUELDOS', label: 'Sueldos y Planilla', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
@@ -167,11 +169,26 @@ export default function CalendarioPagos({ usuario }) {
     }
   };
 
-  const eliminarPago = async (pago) => {
-    if (!window.confirm(`¿Eliminar "${pago.titulo}" del calendario?`)) return;
+  const eliminarPago = async (pago, alcance = null) => {
+    let alcanceFinal = alcance;
+    if (!alcanceFinal) {
+      if (pago.recurrente_mensual) {
+        const confirmarSerie = window.confirm(
+          `Este pago es recurrente ("${pago.titulo}"). ¿Eliminar este mes y también todas las repeticiones futuras pendientes?`
+        );
+        if (!confirmarSerie) return;
+        alcanceFinal = 'serie';
+      } else if (!window.confirm(`¿Eliminar "${pago.titulo}" del calendario?`)) {
+        return;
+      } else {
+        alcanceFinal = 'unico';
+      }
+    }
     try {
-      await api.delete(`/pagos-calendario/${pago.id_pago}`);
-      toast.success('Pago eliminado.');
+      const res = await api.delete(`/pagos-calendario/${pago.id_pago}`, {
+        params: { alcance: alcanceFinal }
+      });
+      toast.success(res.data?.mensaje || 'Pago eliminado.');
       cargarPagos();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo eliminar.');
@@ -248,6 +265,29 @@ export default function CalendarioPagos({ usuario }) {
               <span>Lista</span>
             </button>
           </div>
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'calendario_pagos',
+                nombreHoja: 'Pagos Programados',
+                filas: pagos,
+                columnas: [
+                  { header: 'ID', key: 'id_pago' },
+                  { header: 'Título / Concepto', key: 'titulo' },
+                  { header: 'Categoría', key: 'categoria' },
+                  { header: 'Beneficiario', value: (p) => p.beneficiario || '' },
+                  { header: 'Moneda', value: (p) => p.moneda || 'PEN' },
+                  { header: 'Monto', value: (p) => Number(p.monto || 0) },
+                  { header: 'Fecha Vencimiento', key: 'fecha_vencimiento_iso' },
+                  { header: 'Estado', key: 'estado' },
+                  { header: 'Recurrente Mensual', value: (p) => (p.recurrente_mensual ? 'Sí' : 'No') },
+                  { header: 'Notas', value: (p) => p.notas || '' }
+                ]
+              })
+            }
+            label="Exportar Excel (Pagos)"
+            cantidad={pagos.length}
+          />
           <button
             type="button"
             onClick={() => abrirNuevoPago()}
@@ -593,7 +633,7 @@ export default function CalendarioPagos({ usuario }) {
                 />
                 <div>
                   <span className="text-xs font-bold text-slate-800 block">Pago recurrente todos los meses</span>
-                  <span className="text-[11px] text-slate-500">Al marcarlo como Pagado, se programará automáticamente para el mes siguiente.</span>
+                  <span className="text-[11px] text-slate-500">Aparecerá automáticamente en todos los meses siguientes aunque este mes aún siga pendiente.</span>
                 </div>
               </label>
 
@@ -625,17 +665,44 @@ export default function CalendarioPagos({ usuario }) {
                     >
                       {editando.estado === 'PAGADO' ? 'Marcar Pendiente' : 'Marcar como Pagado'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await eliminarPago(editando);
-                        setModalAbierto(false);
-                      }}
-                      className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl cursor-pointer"
-                      title="Eliminar pago"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    {editando.recurrente_mensual ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await eliminarPago(editando, 'unico');
+                            setModalAbierto(false);
+                          }}
+                          className="px-2.5 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl cursor-pointer"
+                          title="Eliminar solo este mes"
+                        >
+                          Borrar solo mes
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await eliminarPago(editando, 'serie');
+                            setModalAbierto(false);
+                          }}
+                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl cursor-pointer"
+                          title="Eliminar este mes y futuras repeticiones"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await eliminarPago(editando, 'unico');
+                          setModalAbierto(false);
+                        }}
+                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl cursor-pointer"
+                        title="Eliminar pago"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                 ) : <div />}
                 <div className="flex space-x-2">

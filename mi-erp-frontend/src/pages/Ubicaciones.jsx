@@ -4,6 +4,8 @@ import api from '../api';
 import { MapPin, Plus, Edit2, Trash2, Building2, Users, Package, RefreshCw, X, AlertTriangle, Truck } from 'lucide-react';
 import Organizacion from './Organizacion';
 import PanelVehiculosTransporte from '../components/ubicaciones/PanelVehiculosTransporte';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Ubicaciones({ usuario }) {
   const [subTab, setSubTab] = useState('sedes'); // 'sedes' | 'almacenes'
@@ -200,7 +202,25 @@ export default function Ubicaciones({ usuario }) {
               </div>
             </div>
 
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <BotonExportarExcel
+                onClick={() =>
+                  exportarTablaExcel({
+                    nombreArchivo: 'ubicaciones_almacenes',
+                    nombreHoja: 'Almacenes y Sedes',
+                    filas: ubicaciones,
+                    columnas: [
+                      { header: 'ID', key: 'id_ubicacion' },
+                      { header: 'Nombre Sede / Almacén', key: 'nombre' },
+                      { header: 'División / Tipo', value: (u) => u.nombre_division || u.tipo || '' },
+                      { header: 'Dirección', value: (u) => u.direccion_completa || '' },
+                      { header: 'Teléfono', value: (u) => u.telefono_contacto || '' }
+                    ]
+                  })
+                }
+                label="Exportar Excel (Almacenes)"
+                cantidad={ubicaciones.length}
+              />
               <button
                 type="button"
                 onClick={cargarDatos}

@@ -13,6 +13,8 @@ import {
   OPCIONES_DURACION_SESION,
   formatearDuracionSesionLegible
 } from '../utils/sesionRol';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 const TRADUCCION_ACCION = {
   CREAR_USUARIO: 'Creó un nuevo empleado',
@@ -24,9 +26,13 @@ const TRADUCCION_ACCION = {
   ACTUALIZAR_PERMISOS: 'Modificó permisos de un rol',
   ACTUALIZAR_PERMISO_UBICACIONES_ROL: 'Cambió acceso a otras sedes de un rol',
   ACTUALIZAR_DURACION_SESION_ROL: 'Cambió el tiempo máximo de sesión de un rol',
+  ACTUALIZAR_JERARQUIA_ROL: 'Cambió el nivel jerárquico de un rol',
   CONFIGURAR_LOGIN_GOOGLE: 'Configuró el acceso con correo corporativo (Google)',
   LOGIN_GOOGLE: 'Inició sesión con correo corporativo (Google)',
   CREAR_ROL: 'Creó un nuevo rol',
+  CREAR_REUNION: 'Programó una reunión',
+  EDITAR_REUNION: 'Editó una reunión',
+  ACTUALIZAR_ESTADO_PAGO_COMPROBANTE: 'Actualizó el estado de pago de un comprobante',
   CREAR_PEDIDO: 'Registró un nuevo pedido',
   CAMBIAR_ESTADO_PEDIDO: 'Marcó pedido listo para despacho',
   DESPACHAR_PEDIDO: 'Entregó / despachó un pedido',
@@ -160,7 +166,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
   const [formRol, setFormRol] = useState({
     nombre: '',
     descripcion: '',
-    duracion_sesion_minutos: ''
+    duracion_sesion_minutos: '',
+    nivel_jerarquia: 4
   });
 
   const [editandoWhatsappUser, setEditandoWhatsappUser] = useState(null); // { id_usuario, telefono }
@@ -384,8 +391,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
   const handleGuardarResetPassword = async (e) => {
     e.preventDefault();
     if (!modalResetUsuario?.usuario) return;
-    if (!nuevaClaveReset || nuevaClaveReset.trim().length < 4) {
-      toast.error('La nueva contraseña debe tener al menos 4 letras o números.');
+    if (!nuevaClaveReset || nuevaClaveReset.trim().length < 8) {
+      toast.error('La nueva contraseña debe tener al menos 8 caracteres.');
       return;
     }
 
@@ -535,8 +542,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     if (!formUsuario.nombre_completo.trim() || !formUsuario.email.trim() || !formUsuario.password) {
       return toast.error('Completa el nombre, el correo y la contraseña del nuevo empleado.');
     }
-    if (formUsuario.password.trim().length < 4) {
-      return toast.error('La contraseña debe tener al menos 4 letras o números.');
+    if (formUsuario.password.trim().length < 8) {
+      return toast.error('La contraseña debe tener al menos 8 caracteres.');
     }
     setGuardando(true);
     try {
@@ -562,11 +569,12 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
         ...formRol,
         duracion_sesion_minutos: formRol.duracion_sesion_minutos
           ? parseInt(formRol.duracion_sesion_minutos, 10)
-          : null
+          : null,
+        nivel_jerarquia: Number(formRol.nivel_jerarquia || 4)
       });
       toast.success(res.data.mensaje || 'Rol creado con éxito.');
       setModalNuevoRol(false);
-      setFormRol({ nombre: '', descripcion: '', duracion_sesion_minutos: '' });
+      setFormRol({ nombre: '', descripcion: '', duracion_sesion_minutos: '', nivel_jerarquia: 4 });
       await cargarDatos();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo crear el rol.');
@@ -839,25 +847,26 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       {/* TAB 1: PERSONAL Y ROLES */}
       {tabActual === 'personal' && (
         <div className="space-y-6">
-          {/* Filtro por Rol */}
-          <div className="flex flex-wrap items-center gap-2 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
-            <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider mr-2">
-              <Layers size={14} className="text-indigo-600" />
-              <span>Ver por Rol:</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setFiltroRolPersonal('todos')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filtroRolPersonal === 'todos'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              Todos ({usuarios.length})
-            </button>
-            {rolesDinamicos.map(rol => {
-              const cant = usuarios.filter(u => u.rol_id === rol.id_rol).length;
+          {/* Filtro por Rol + Exportar Excel */}
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-500 uppercase tracking-wider mr-2">
+                <Layers size={14} className="text-indigo-600" />
+                <span>Ver por Rol:</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFiltroRolPersonal('todos')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  filtroRolPersonal === 'todos'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Todos ({usuarios.length})
+              </button>
+              {rolesDinamicos.map(rol => {
+                const cant = usuarios.filter(u => u.rol_id === rol.id_rol).length;
               const activo = filtroRolPersonal === rol.id_rol;
               return (
                 <button
@@ -879,6 +888,29 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                 </button>
               );
             })}
+            </div>
+            <BotonExportarExcel
+              onClick={() =>
+                exportarTablaExcel({
+                  nombreArchivo: 'personal_usuarios',
+                  nombreHoja: 'Personal',
+                  filas: usuarios,
+                  columnas: [
+                    { header: 'ID', key: 'id_usuario' },
+                    { header: 'Nombre Completo', key: 'nombre_completo' },
+                    { header: 'Correo', key: 'email' },
+                    { header: 'Rol', key: 'nombre_rol' },
+                    { header: 'Nivel Jerarquía', value: (r) => Number(r.nivel_jerarquia || (r.nombre_rol === 'Admin Central' ? 1 : 4)) },
+                    { header: 'Sede / Ubicación', value: (r) => r.nombre_ubicacion || 'Sede Central' },
+                    { header: 'Área', value: (r) => r.area || 'ADMINISTRACION' },
+                    { header: 'WhatsApp', value: (r) => r.telefono_whatsapp || '' },
+                    { header: 'Estado', value: (r) => (r.activo === false ? 'Inactivo' : 'Activo') }
+                  ]
+                })
+              }
+              label="Exportar Excel (Personal)"
+              cantidad={usuarios.length}
+            />
           </div>
 
           {/* Lista de Empleados Separada por Rol */}
@@ -1312,26 +1344,49 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       {/* TAB 3: HISTORIAL LEGIBLE */}
       {tabActual === 'auditoria' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 bg-white p-3 rounded-xl border border-slate-200 shadow-xs">
-            {[
-              { id: 'todas', label: `Todo (${auditorias.length})` },
-              { id: 'movimientos_kardex', label: 'Inventario' },
-              { id: 'comprobantes', label: 'Facturación' },
-              { id: 'pedidos', label: 'Pedidos' },
-              { id: 'usuarios', label: 'Personal y Claves' },
-              { id: 'productos', label: 'Productos' },
-              { id: 'ubicaciones', label: 'Ubicaciones' }
-            ].map(f => (
-              <button
-                key={f.id}
-                onClick={() => setFiltroEntidad(f.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                  filtroEntidad === f.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-3 rounded-xl border border-slate-200 shadow-xs">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'todas', label: `Todo (${auditorias.length})` },
+                { id: 'movimientos_kardex', label: 'Inventario' },
+                { id: 'comprobantes', label: 'Facturación' },
+                { id: 'pedidos', label: 'Pedidos' },
+                { id: 'usuarios', label: 'Personal y Claves' },
+                { id: 'productos', label: 'Productos' },
+                { id: 'ubicaciones', label: 'Ubicaciones' }
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setFiltroEntidad(f.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                    filtroEntidad === f.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <BotonExportarExcel
+              onClick={() =>
+                exportarTablaExcel({
+                  nombreArchivo: 'historial_auditoria',
+                  nombreHoja: 'Auditoría',
+                  filas: auditorias,
+                  columnas: [
+                    { header: 'Fecha y Hora', value: (r) => fechaHoraLocalTexto(r.fecha || r.creado_en) },
+                    { header: 'Usuario', value: (r) => r.usuario_nombre || 'Aviso desde Inicio de Sesión' },
+                    { header: 'Correo', value: (r) => r.usuario_email || '-' },
+                    { header: 'Rol', value: (r) => r.usuario_rol || '-' },
+                    { header: 'Acción', value: (r) => TRADUCCION_ACCION[r.accion] || formatearClaveHumana(r.accion) },
+                    { header: 'Sección', value: (r) => TRADUCCION_ENTIDAD[r.entidad] || formatearClaveHumana(r.entidad) },
+                    { header: 'ID Registro', key: 'id_entidad' },
+                    { header: 'Detalle Nuevo', value: (r) => (r.despues ? JSON.stringify(r.despues) : '') }
+                  ]
+                })
+              }
+              label="Exportar Excel (Historial)"
+              cantidad={auditorias.length}
+            />
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1464,8 +1519,8 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                       name="clave_inicial_nuevo_empleado_erp"
                       autoComplete="new-password"
                       required
-                      minLength={4}
-                      placeholder="Mínimo 4 letras o números"
+                      minLength={8}
+                      placeholder="Mínimo 8 caracteres"
                       value={formUsuario.password}
                       onChange={(e) => setFormUsuario({ ...formUsuario, password: e.target.value })}
                       className="w-full border border-slate-300 rounded-xl pl-3.5 pr-10 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
@@ -1644,7 +1699,7 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                   )}
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1.5">
-                  Mínimo 4 letras o números. Esta contraseña ya quedará fija para que entre sin problemas (y después podrá cambiarla desde su menú si quiere).
+                  Mínimo 8 caracteres. Esta contraseña ya quedará fija para que entre sin problemas (y cerrará sesiones anteriores del usuario).
                 </p>
               </div>
 
@@ -1739,6 +1794,24 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                   onChange={(e) => setFormRol({ ...formRol, descripcion: e.target.value })}
                   className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Nivel jerárquico (Reuniones)
+                </label>
+                <select
+                  value={formRol.nivel_jerarquia}
+                  onChange={(e) => setFormRol({ ...formRol, nivel_jerarquia: Number(e.target.value) })}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm bg-white focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
+                >
+                  <option value={1}>Nivel 1 — Máxima jerarquía</option>
+                  <option value={2}>Nivel 2 — Gerencia / Subgerencia</option>
+                  <option value={3}>Nivel 3 — Jefatura / Supervisión</option>
+                  <option value={4}>Nivel 4 — Operativo / Base</option>
+                  <option value={5}>Nivel 5 — Apoyo / Auxiliar</option>
+                  <option value={6}>Nivel 6 — Externo / Prácticas</option>
+                </select>
               </div>
 
               <div>

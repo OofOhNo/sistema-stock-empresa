@@ -8,8 +8,44 @@ const CAMPOS_NUMERICOS_STOCK = [
     'cantidad_disponible',
     'total_fisico',
     'total_reservado',
-    'total_disponible'
+    'total_disponible',
+    'total_vendido'
 ];
+
+// CTE compartida para ventas reales por producto y sede (excluye cancelados, anulados y boletas automáticas simuladas)
+const CTE_VENTAS_REALES = `
+    WITH ventas_reales AS (
+        SELECT
+            dp.id_producto,
+            p_ped.id_ubicacion,
+            COALESCE(dp.cantidad, 0)::numeric AS cantidad
+        FROM detalle_pedidos dp
+        JOIN pedidos p_ped ON dp.id_pedido = p_ped.id_pedido
+        WHERE COALESCE(p_ped.estado_pedido, '') != 'CANCELADO'
+
+        UNION ALL
+
+        SELECT
+            (elem->>'id_producto')::int AS id_producto,
+            c.id_ubicacion,
+            COALESCE((elem->>'cantidad')::numeric, 0) AS cantidad
+        FROM comprobantes c
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(c.items_json) = 'array' THEN c.items_json ELSE '[]'::jsonb END
+        ) AS elem
+        WHERE c.id_pedido IS NULL
+          AND c.tipo_comprobante IN ('01', '03')
+          AND COALESCE(c.estado_sunat, '') != 'ANULADO'
+          AND COALESCE(c.origen_facturacion, 'MANUAL') != 'AUTOMATICA'
+          AND COALESCE(elem->>'id_producto', '') ~ '^[0-9]+$'
+    )
+`;
+
+const resolverOrderBy = (orden, columnaFallback) => {
+    if (orden === 'mas_vendidas') return `total_vendido DESC, ${columnaFallback}`;
+    if (orden === 'menos_vendidas') return `total_vendido ASC, ${columnaFallback}`;
+    return columnaFallback;
+};
 
 const normalizarStockRow = (row) => {
     const normalizada = { ...row };
@@ -24,9 +60,17 @@ const normalizarStockRow = (row) => {
 const Stock = {
 
     // Ver el stock de una ubicación específica
-    obtenerStockPorUbicacion: async (idUbicacion) => {
+    obtenerStockPorUbicacion: async (idUbicacion, orden = 'nombre') => {
         try {
+            const orderBy = resolverOrderBy(orden, 'p.nombre ASC');
             const query = `
+                ${CTE_VENTAS_REALES},
+                ventas_sede AS (
+                    SELECT id_producto, COALESCE(SUM(cantidad), 0) AS total_vendido
+                    FROM ventas_reales
+                    WHERE id_ubicacion = $1::int
+                    GROUP BY id_producto
+                )
                 SELECT 
                     p.id_producto,
                     p.sku,
@@ -47,13 +91,15 @@ const Stock = {
                     COALESCE(i.cantidad_fisica, 0) AS total_fisico,
                     COALESCE(i.cantidad_reservada, 0) AS total_reservado,
                     COALESCE(i.cantidad_fisica - i.cantidad_reservada, 0) AS total_disponible,
+                    COALESCE(vs.total_vendido, 0) AS total_vendido,
                     i.ultima_actualizacion
                 FROM productos p
                 LEFT JOIN inventario i ON p.id_producto = i.id_producto AND i.id_ubicacion = $1::int
+                LEFT JOIN ventas_sede vs ON p.id_producto = vs.id_producto
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
-                ORDER BY p.nombre ASC;
+                ORDER BY ${orderBy};
             `;
             const resultado = await pool.query(query, [idUbicacion]);
             return resultado.rows.map(normalizarStockRow);
@@ -63,9 +109,16 @@ const Stock = {
     },
 
     // Ver el stock global consolidado de toda la empresa (total en primera vista)
-    obtenerStockGlobal: async () => {
+    obtenerStockGlobal: async (orden = 'nombre') => {
         try {
+            const orderBy = resolverOrderBy(orden, 'p.nombre ASC');
             const query = `
+                ${CTE_VENTAS_REALES},
+                ventas_global AS (
+                    SELECT id_producto, COALESCE(SUM(cantidad), 0) AS total_vendido
+                    FROM ventas_reales
+                    GROUP BY id_producto
+                )
                 SELECT 
                     p.id_producto,
                     p.sku,
@@ -80,14 +133,16 @@ const Stock = {
                     COALESCE(um.codigo, 'NIU') AS codigo_unidad,
                     COALESCE(SUM(i.cantidad_fisica), 0) AS total_fisico,
                     COALESCE(SUM(i.cantidad_reservada), 0) AS total_reservado,
-                    COALESCE(SUM(i.cantidad_fisica - i.cantidad_reservada), 0) AS total_disponible
+                    COALESCE(SUM(i.cantidad_fisica - i.cantidad_reservada), 0) AS total_disponible,
+                    COALESCE(vg.total_vendido, 0) AS total_vendido
                 FROM productos p
                 LEFT JOIN inventario i ON p.id_producto = i.id_producto
+                LEFT JOIN ventas_global vg ON p.id_producto = vg.id_producto
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
-                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.id_tipo_producto, tp.nombre, p.unidad_medida, um.nombre, um.simbolo, um.codigo
-                ORDER BY p.nombre ASC;
+                GROUP BY p.id_producto, p.sku, p.nombre, p.precio_venta, p.stock_minimo, p.id_unidad, p.id_tipo_producto, tp.nombre, p.unidad_medida, um.nombre, um.simbolo, um.codigo, vg.total_vendido
+                ORDER BY ${orderBy};
             `;
             const resultado = await pool.query(query);
             return resultado.rows.map(normalizarStockRow);
@@ -97,9 +152,17 @@ const Stock = {
     },
 
     // Ver el stock desglosado por todas las ubicaciones
-    obtenerStockPorTodasUbicaciones: async () => {
+    obtenerStockPorTodasUbicaciones: async (orden = 'nombre') => {
         try {
+            const orderBy = resolverOrderBy(orden, 's.nombre ASC, p.nombre ASC');
             const query = `
+                ${CTE_VENTAS_REALES},
+                ventas_por_sede AS (
+                    SELECT id_producto, id_ubicacion, COALESCE(SUM(cantidad), 0) AS total_vendido
+                    FROM ventas_reales
+                    WHERE id_ubicacion IS NOT NULL
+                    GROUP BY id_producto, id_ubicacion
+                )
                 SELECT 
                     p.id_producto,
                     p.sku,
@@ -120,14 +183,16 @@ const Stock = {
                     i.cantidad_fisica AS total_fisico,
                     i.cantidad_reservada AS total_reservado,
                     (i.cantidad_fisica - i.cantidad_reservada) AS total_disponible,
+                    COALESCE(vps.total_vendido, 0) AS total_vendido,
                     i.ultima_actualizacion
                 FROM inventario i
                 JOIN productos p ON i.id_producto = p.id_producto
                 JOIN ubicaciones s ON i.id_ubicacion = s.id_ubicacion
+                LEFT JOIN ventas_por_sede vps ON i.id_producto = vps.id_producto AND i.id_ubicacion = vps.id_ubicacion
                 LEFT JOIN unidades_medida um ON p.id_unidad = um.id_unidad
                 LEFT JOIN tipos_producto tp ON p.id_tipo_producto = tp.id_tipo_producto
                 WHERE p.activo = true
-                ORDER BY s.nombre ASC, p.nombre ASC;
+                ORDER BY ${orderBy};
             `;
             const resultado = await pool.query(query);
             return resultado.rows.map(normalizarStockRow);

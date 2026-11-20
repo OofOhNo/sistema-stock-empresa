@@ -4,13 +4,16 @@ const facturaController = require('../controllers/facturaController');
 const { verificarToken, esAdmin } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
-// Listar comprobantes emitidos
+// Listar comprobantes emitidos y alertas de crédito vencidas
 router.get('/', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarComprobantes);
+router.get('/vencidas', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarFacturasVencidas);
+router.get('/estado-sunat', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.consultarEstadoSunat);
+router.patch('/:id/estado-pago', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.actualizarEstadoPagoComprobante);
 
-// Configuración tributaria del emisor, credenciales NubeFact y Catálogos SUNAT
+// Configuración tributaria del emisor, credenciales NubeFact (edición/prueba solo Admin Central) y Catálogos SUNAT
 router.get('/configuracion', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerConfiguracionYCatalogos);
-router.put('/configuracion', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.actualizarConfiguracionSunat);
-router.post('/probar-conexion', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.probarConexionNubefact);
+router.put('/configuracion', verificarToken, esAdmin, facturaController.actualizarConfiguracionSunat);
+router.post('/probar-conexion', verificarToken, esAdmin, facturaController.probarConexionNubefact);
 
 // Gráficos y métricas de facturación (Semanal, Mensual, Trimestral, Anual)
 router.get('/graficos', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerGraficosFacturacion);

@@ -6,6 +6,8 @@ import {
   Search, RefreshCw, Calendar, User, Phone
 } from 'lucide-react';
 import ModalPesoListoDespacho from '../components/ModalPesoListoDespacho';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Despacho({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -141,14 +143,37 @@ export default function Despacho({ usuario }) {
           </div>
         </div>
 
-        <button
-          onClick={cargarPedidos}
-          disabled={cargando}
-          className="p-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors cursor-pointer w-max"
-          title="Actualizar lista"
-        >
-          <RefreshCw size={18} className={cargando ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'pedidos_despacho',
+                nombreHoja: 'Despacho',
+                filas: pedidos,
+                columnas: [
+                  { header: 'ID Pedido', key: 'id_pedido' },
+                  { header: 'Fecha Programada', value: (p) => fechaHoraLocalTexto(p.fecha_entrega_programada || p.fecha_pedido) },
+                  { header: 'Cliente', value: (p) => p.cliente || p.razon_social_o_nombre || '' },
+                  { header: 'Sede', value: (p) => p.nombre_ubicacion || '' },
+                  { header: 'Dirección Entrega', value: (p) => p.direccion_entrega || '' },
+                  { header: 'Estado', key: 'estado_pedido' },
+                  { header: 'Peso (kg)', value: (p) => Number(p.peso_total || 0) },
+                  { header: 'Monto (S/)', value: (p) => Number(p.monto_total || 0) }
+                ]
+              })
+            }
+            label="Exportar Excel (Despacho)"
+            cantidad={pedidos.length}
+          />
+          <button
+            onClick={cargarPedidos}
+            disabled={cargando}
+            className="p-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors cursor-pointer w-max"
+            title="Actualizar lista"
+          >
+            <RefreshCw size={18} className={cargando ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* RESUMEN */}

@@ -9,7 +9,10 @@ import {
 } from 'lucide-react';
 import Despacho from './Despacho';
 import ModalPesoListoDespacho from '../components/ModalPesoListoDespacho';
+import ImagenAutenticada from '../components/ImagenAutenticada';
 import { esUnidadSoloEnteros, obtenerInfoUnidad, parsearCantidadPorUnidad } from '../utils/unidades';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Pedidos({ usuario }) {
   const [pedidos, setPedidos] = useState([]);
@@ -565,15 +568,41 @@ export default function Pedidos({ usuario }) {
             </div>
 
             {vista === 'lista' ? (
-              puedeEditarPedidos && (
-                <button
-                  onClick={abrirFormularioNuevo}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-colors cursor-pointer"
-                >
-                  <Plus size={18} />
-                  <span>Nuevo Pedido</span>
-                </button>
-              )
+              <div className="flex flex-wrap items-center gap-2.5">
+                <BotonExportarExcel
+                  onClick={() =>
+                    exportarTablaExcel({
+                      nombreArchivo: 'pedidos_gestion',
+                      nombreHoja: 'Pedidos',
+                      filas: pedidos,
+                      columnas: [
+                        { header: 'ID Pedido', key: 'id_pedido' },
+                        { header: 'Fecha / Hora Programada', value: (p) => fechaHoraLocalTexto(p.fecha_entrega_programada || p.fecha_pedido) },
+                        { header: 'Cliente', value: (p) => p.cliente || p.razon_social_o_nombre || '' },
+                        { header: 'Documento', value: (p) => p.ruc_cliente || '' },
+                        { header: 'Sede / Origen', value: (p) => p.nombre_ubicacion || '' },
+                        { header: 'Dirección Entrega', value: (p) => p.direccion_entrega || '' },
+                        { header: 'Encargado', value: (p) => p.nombre_vendedor || p.solicitado_por || '' },
+                        { header: 'Estado Pedido', key: 'estado_pedido' },
+                        { header: 'Peso Total (kg)', value: (p) => Number(p.peso_total || 0) },
+                        { header: 'Total (S/)', value: (p) => Number(p.monto_total || 0) },
+                        { header: 'Observaciones', value: (p) => p.observaciones || '' }
+                      ]
+                    })
+                  }
+                  label="Exportar Excel (Pedidos)"
+                  cantidad={pedidos.length}
+                />
+                {puedeEditarPedidos && (
+                  <button
+                    onClick={abrirFormularioNuevo}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center space-x-2 shadow-lg shadow-indigo-600/30 transition-colors cursor-pointer"
+                  >
+                    <Plus size={18} />
+                    <span>Nuevo Pedido</span>
+                  </button>
+                )}
+              </div>
             ) : (
               <button
                 onClick={() => setVista('lista')}
@@ -1596,11 +1625,10 @@ export default function Pedidos({ usuario }) {
                                     onClick={() => setFotoEnGrande({ ...f, urlCompleta })}
                                     className="relative h-44 bg-slate-900 cursor-pointer group flex items-center justify-center overflow-hidden"
                                   >
-                                    <img
-                                      src={urlCompleta}
+                                    <ImagenAutenticada
+                                      urlFoto={f.url_foto}
                                       alt={f.descripcion}
                                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                                      loading="lazy"
                                     />
                                     <div className="absolute inset-0 bg-black/25 opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
                                       <Eye size={24} />
@@ -1696,8 +1724,8 @@ export default function Pedidos({ usuario }) {
                     >
                       <X size={26} />
                     </button>
-                    <img
-                      src={fotoEnGrande.urlCompleta}
+                    <ImagenAutenticada
+                      urlFoto={fotoEnGrande.url_foto}
                       alt={fotoEnGrande.descripcion}
                       className="max-h-[80vh] w-auto max-w-full rounded-xl object-contain shadow-2xl"
                     />

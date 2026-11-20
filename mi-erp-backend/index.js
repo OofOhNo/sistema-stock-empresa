@@ -1,11 +1,65 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
+
+if (!process.env.JWT_SECRET || String(process.env.JWT_SECRET).trim().length < 32) {
+  console.error('FATAL: Debes definir JWT_SECRET en .env con al menos 32 caracteres antes de iniciar el servidor.');
+  process.exit(1);
+}
+
 const db = require('./src/config/db'); //solo con importarlo, se conecta a la BD
+const { verificarToken } = require('./src/middlewares/authMiddleware');
+const requierePermiso = require('./src/middlewares/requierePermiso');
 
 const app = express();
+app.set('trust proxy', 1);
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'same-site' },
+  contentSecurityPolicy: false,
+  hsts: process.env.ENABLE_HSTS === 'true'
+}));
+
+const origenesPermitidos = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:80,http://localhost')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+if (!process.env.CORS_ORIGIN) {
+  console.warn('AVISO: CORS_ORIGIN no está definido en .env; usando solo orígenes locales por defecto.');
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || origenesPermitidos.includes(origin)) {
+      return callback(null, true);
+    }
+    const err = new Error(`Origen no permitido por CORS: ${origin}`);
+    err.status = 403;
+    return callback(err);
+  },
+  credentials: true
+}));
+
+const limiterGeneralApi = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 6000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Las rutas públicas de autenticación tienen limitadores propios en authRoutes.js
+  skip: (req) =>
+    req.path.startsWith('/auth/login') ||
+    req.path.startsWith('/auth/google') ||
+    req.path.startsWith('/auth/solicitar-recuperacion'),
+  message: {
+    exito: false,
+    mensaje: 'Demasiadas peticiones desde esta dirección. Espera unos minutos e intenta de nuevo.'
+  }
+});
 
 // Asegurar carpeta de uploads
 const uploadsDir = path.join(__dirname, 'uploads/pedidos');
@@ -13,13 +67,14 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Servir archivos estáticos de subida (fotos de pedidos y evidencias)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-//middlewares globales (para que el servidor entienda JSON y acepte peticiones)
-app.use(cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use('/api', limiterGeneralApi);
+
+// Archivos de evidencias protegidos: solo usuarios autenticados con permiso de Pedidos
+const servirUploadsProtegidos = express.static(path.join(__dirname, 'uploads'));
+app.use('/uploads', verificarToken, requierePermiso('pedidos', 'ver'), servirUploadsProtegidos);
+app.use('/api/uploads', verificarToken, requierePermiso('pedidos', 'ver'), servirUploadsProtegidos);
 
 //ruta de prueba para ver si el servidor responde
 app.get('/', (req, res) => {
@@ -93,6 +148,13 @@ app.use('/api/mensajes', mensajeRoutes);
 
 const pagosCalendarioRoutes = require('./src/routes/pagosCalendarioRoutes.js');
 app.use('/api/pagos-calendario', pagosCalendarioRoutes);
+
+app.use((err, req, res, next) => {
+  if (err && err.status === 403) {
+    return res.status(403).json({ exito: false, mensaje: err.message });
+  }
+  return next(err);
+});
 
 //configurar el puerto y encender el servidor
 const { iniciarCronBoletasAutomaticas } = require('./src/utils/boletaAutoService');

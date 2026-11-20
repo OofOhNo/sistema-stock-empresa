@@ -4,6 +4,9 @@ const { OAuth2Client } = require('google-auth-library');
 const Usuario = require('../models/usuarioModel');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const { invalidarCacheSesionUsuario } = require('../middlewares/authMiddleware');
+
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 
 const MODULOS_TODOS = [
     'stock', 'pedidos', 'usuarios', 'facturacion', 'reuniones',
@@ -44,6 +47,9 @@ async function construirPayloadUsuario(usuario, loginAtMs = Date.now()) {
     const puedeVerCelulares = usuario.puede_ver_celulares === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
     const puedeVerOtrasUbicaciones = usuario.puede_ver_otras_ubicaciones === true || usuario.rol_id === 1 || usuario.nombre_rol === 'Admin Central';
     const area = usuario.area || 'ADMINISTRACION';
+    const nivelJerarquia = usuario.nombre_rol === 'Admin Central'
+        ? 1
+        : Number(usuario.nivel_jerarquia || 4);
     const duracionMin = usuario.duracion_sesion_minutos && Number(usuario.duracion_sesion_minutos) > 0
         ? Number(usuario.duracion_sesion_minutos)
         : null;
@@ -77,8 +83,10 @@ async function construirPayloadUsuario(usuario, loginAtMs = Date.now()) {
             nombre_ubicacion: usuario.nombre_ubicacion || 'Sede Central',
             puede_ver_celulares: puedeVerCelulares,
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
+            nivel_jerarquia: nivelJerarquia,
             area: area,
             seccion_facturacion: usuario.seccion_facturacion || 'AMBAS',
+            token_version: Number(usuario.token_version || 1),
             login_at: loginAtMs
         },
         usuarioFront: {
@@ -90,6 +98,7 @@ async function construirPayloadUsuario(usuario, loginAtMs = Date.now()) {
             nombre_ubicacion: usuario.nombre_ubicacion || 'Sede Central',
             puede_ver_celulares: puedeVerCelulares,
             puede_ver_otras_ubicaciones: puedeVerOtrasUbicaciones,
+            nivel_jerarquia: nivelJerarquia,
             area: area,
             seccion_facturacion: usuario.seccion_facturacion || 'AMBAS',
             telefono_whatsapp: usuario.telefono_whatsapp || null,
@@ -144,7 +153,7 @@ const authController = {
 
             const loginAtMs = Date.now();
             const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
-            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
             res.status(200).json({
                 exito: true,
@@ -208,7 +217,7 @@ const authController = {
 
             const loginAtMs = Date.now();
             const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
-            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
             await registrarAuditoria(
                 pool,
@@ -305,7 +314,7 @@ const authController = {
                 || (req.usuario?.iat ? Number(req.usuario.iat) * 1000 : Date.now());
 
             const { datosToken, usuarioFront } = await construirPayloadUsuario(usuario, loginAtMs);
-            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: '3650d' });
+            const token = jwt.sign(datosToken, process.env.JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
             res.status(200).json({
                 exito: true,
@@ -397,10 +406,10 @@ const authController = {
             }
 
             const nuevaLimpia = String(password_nueva);
-            if (nuevaLimpia.trim().length < 4) {
+            if (nuevaLimpia.trim().length < 8) {
                 return res.status(400).json({
                     exito: false,
-                    mensaje: 'La nueva contraseña debe tener al menos 4 letras o números.'
+                    mensaje: 'La nueva contraseña debe tener al menos 8 caracteres.'
                 });
             }
 
@@ -420,7 +429,14 @@ const authController = {
             }
 
             const nuevoHash = await bcrypt.hash(nuevaLimpia, 10);
-            await pool.query('UPDATE usuarios SET password_hash = $1 WHERE id_usuario = $2', [nuevoHash, id_usuario]);
+            await pool.query(`
+                UPDATE usuarios
+                SET password_hash = $1,
+                    password_actualizada_en = CURRENT_TIMESTAMP,
+                    token_version = COALESCE(token_version, 1) + 1
+                WHERE id_usuario = $2
+            `, [nuevoHash, id_usuario]);
+            invalidarCacheSesionUsuario(id_usuario);
 
             await pool.query(`
                 UPDATE solicitudes_recuperacion_password

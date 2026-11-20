@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import api from '../api';
 import {
   DollarSign, ShoppingCart, Package, ArrowUpRight, Clock,
@@ -133,6 +134,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
   const [datosGraficos, setDatosGraficos] = useState(null);
   const [alertasPagos, setAlertasPagos] = useState([]);
   const [alertasPedidos, setAlertasPedidos] = useState([]);
+  const [alertasFacturasVencidas, setAlertasFacturasVencidas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [cargandoGraficos, setCargandoGraficos] = useState(false);
 
@@ -143,7 +145,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
 
   const cargarResumen = useCallback(async () => {
     try {
-      const [resPedidos, resAlertas, resPagos] = await Promise.all([
+      const [resPedidos, resAlertas, resPagos, resVencidas] = await Promise.all([
         puedeVerPedidos
           ? api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } }))
           : Promise.resolve({ data: { eventos: [] } }),
@@ -152,12 +154,16 @@ export default function Dashboard({ usuario, setVistaActual }) {
           : Promise.resolve({ data: { alertas: [] } }),
         esAdmin
           ? api.get('/pagos-calendario/alertas-inicio').catch(() => ({ data: { alertas: [] } }))
-          : Promise.resolve({ data: { alertas: [] } })
+          : Promise.resolve({ data: { alertas: [] } }),
+        puedeVerFacturacion
+          ? api.get('/facturacion/vencidas').catch(() => ({ data: { vencidas: [] } }))
+          : Promise.resolve({ data: { vencidas: [] } })
       ]);
 
       const pedidos = resPedidos.data.eventos || [];
       const alertas = resAlertas.data.alertas || [];
       setAlertasPagos(esAdmin ? (resPagos.data?.alertas || []) : []);
+      setAlertasFacturasVencidas(puedeVerFacturacion ? (resVencidas.data?.vencidas || []) : []);
 
       // Filtrar entregas/pedidos urgentes de ayer, hoy y mañana
       const ahoraLima = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
@@ -204,7 +210,7 @@ export default function Dashboard({ usuario, setVistaActual }) {
     } finally {
       setCargando(false);
     }
-  }, [puedeVerPedidos, puedeVerStock, esAdmin]);
+  }, [puedeVerPedidos, puedeVerStock, esAdmin, puedeVerFacturacion]);
 
   const cargarGraficos = useCallback(async () => {
     setCargandoGraficos(true);
@@ -251,6 +257,17 @@ export default function Dashboard({ usuario, setVistaActual }) {
       cargarResumen();
     } catch (err) {
       console.error('Error al marcar pago como pagado', err);
+    }
+  };
+
+  const marcarFacturaCreditoPagada = async (idComprobante) => {
+    try {
+      const res = await api.patch(`/facturacion/${idComprobante}/estado-pago`, { estado_pago: 'PAGADO' });
+      toast.success(res.data?.mensaje || 'Comprobante marcado como Pagado.');
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+      cargarResumen();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el pago del comprobante.');
     }
   };
 
@@ -312,6 +329,71 @@ export default function Dashboard({ usuario, setVistaActual }) {
       {/* SUB-PESTAÑA 1: RESUMEN GENERAL OPERATIVO */}
       {subTab === 'resumen' && (
         <div className="space-y-6">
+          {/* AVISOS DE FACTURAS A CRÉDITO CON PLAZO DE PAGO VENCIDO */}
+          {puedeVerFacturacion && alertasFacturasVencidas.length > 0 && (
+            <div className="bg-rose-50 border border-rose-300 rounded-2xl p-5 shadow-xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 rounded-xl bg-rose-600 text-white shrink-0">
+                    <AlertTriangle size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-extrabold text-rose-950">
+                      Facturas a Crédito Vencidas ({alertasFacturasVencidas.length})
+                    </h3>
+                    <p className="text-xs text-rose-800">
+                      Comprobantes cuyo plazo de pago ya pasó la fecha de vencimiento y siguen pendientes.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sessionStorage.setItem('facturacion_filtro_vencidas', '1');
+                    setVistaActual('facturacion');
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer self-start sm:self-auto"
+                >
+                  Ver en Facturación
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {alertasFacturasVencidas.map((f) => (
+                  <div
+                    key={f.id_comprobante}
+                    className="bg-white rounded-xl p-3 border border-rose-200 shadow-2xs flex items-start justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-extrabold text-rose-900">
+                          {f.serie}-{String(f.correlativo).padStart(8, '0')}
+                        </span>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-700">
+                          Vencida hace {f.dias_vencido}d
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-900 truncate mt-0.5">{f.nombre_cliente}</p>
+                      <p className="text-[11px] text-slate-500">
+                        Venció: <span className="font-mono font-semibold">{f.fecha_vencimiento_iso}</span> •{' '}
+                        <span className="font-mono font-bold text-slate-900">S/ {Number(f.monto_total || 0).toFixed(2)}</span>
+                      </p>
+                    </div>
+                    {(esAdmin || usuario?.permisos?.facturacion?.puede_editar === true) && (
+                      <button
+                        type="button"
+                        onClick={() => marcarFacturaCreditoPagada(f.id_comprobante)}
+                        className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 cursor-pointer shrink-0"
+                      >
+                        Marcar Pagada
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* RECORDATORIOS Y VENCIMIENTOS DE AYER, HOY Y MAÑANA */}
           {(esAdmin || alertasPedidos.length > 0) && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">

@@ -7,7 +7,7 @@ import {
   X, Printer, Eye, Loader2, Settings, Download, CheckCircle2,
   Trash2, Layers, Tag, CreditCard, ChevronRight,
   ShieldAlert, Lock, Unlock, ShoppingBag, Zap, Banknote, Minus,
-  Truck, Bot
+  Truck, Bot, AlertTriangle, Wifi, WifiOff
 } from 'lucide-react';
 import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
 import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
@@ -15,6 +15,8 @@ import GrePdfModal from '../components/facturacion/GrePdfModal';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
 import { escaparHtml } from '../utils/htmlPrint';
 import { esUnidadSoloEnteros, obtenerInfoUnidad } from '../utils/unidades';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 // Logo oficial PROCESOS CÁRNICOS S.A.C.
 function LogoProcesosCarnicos({ className = "h-20 w-auto" }) {
@@ -58,6 +60,10 @@ export default function Facturacion({ usuario }) {
   const [configSunat, setConfigSunat] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
+  const [procesandoEstadoPagoId, setProcesandoEstadoPagoId] = useState(null);
+  const [estadoSunat, setEstadoSunat] = useState(null);
+  const [verificandoSunat, setVerificandoSunat] = useState(false);
+  const [advertenciaSunatModal, setAdvertenciaSunatModal] = useState(null); // { origen: 'pedido' | 'manual' } | null
   const [filtroTipo, setFiltroTipo] = useState('todos');
 
   // Permisos y secciones
@@ -168,6 +174,7 @@ export default function Facturacion({ usuario }) {
   const [greFormManual, setGreFormManual] = useState(() => crearEstadoGreInicial());
   const [guiaPreview, setGuiaPreview] = useState(null);
   const yaSeleccionoPedidoRef = useRef(false);
+  const catalogosGreRef = useRef({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
 
   const seleccionarPedido = useCallback((ped, catGre = null) => {
     setPedidoSeleccionado(ped);
@@ -206,13 +213,36 @@ export default function Facturacion({ usuario }) {
     // Resetear pagos divididos
     setEsPagoDividido(false);
     setPagosDivididos([]);
-    setGreFormPedido(crearEstadoGreInicial(catGre || catalogosGre, ped.direccion_cliente || ''));
-  }, [catalogosGre]);
+    setGreFormPedido(crearEstadoGreInicial(catGre || catalogosGreRef.current, ped.direccion_cliente || ''));
+  }, []);
+
+  const verificarEstadoSunat = useCallback(async (mostrarToast = false) => {
+    setVerificandoSunat(true);
+    try {
+      const res = await api.get('/facturacion/estado-sunat');
+      setEstadoSunat(res.data || null);
+      if (mostrarToast) {
+        if (res.data?.estado === 'ONLINE') {
+          toast.success(res.data.mensaje || 'SUNAT responde correctamente.');
+        } else {
+          toast.error(res.data?.mensaje || 'SUNAT presenta demoras o podría estar caída.');
+        }
+      }
+    } catch {
+      setEstadoSunat({
+        estado: 'CAIDO',
+        mensaje: 'No se pudo comprobar el estado de SUNAT. Revisa manualmente antes de emitir.'
+      });
+      if (mostrarToast) toast.error('No se pudo consultar el estado de SUNAT.');
+    } finally {
+      setVerificandoSunat(false);
+    }
+  }, []);
 
   const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
-      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic, resGreCat, resGres] = await Promise.all([
+      const [resComp, resNotas, resPed, resConf, resCli, resProd, resUbic, resGreCat, resGres, resSunat] = await Promise.all([
         api.get('/facturacion'),
         api.get('/facturacion/notas-pedido').catch(() => ({ data: { notas: [] } })),
         api.get('/pedidos/calendario').catch(() => ({ data: { eventos: [] } })),
@@ -221,12 +251,16 @@ export default function Facturacion({ usuario }) {
         api.get('/productos').catch(() => ({ data: { datos: [] } })),
         api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
         api.get('/facturacion/gre/catalogos').catch(() => ({ data: {} })),
-        api.get('/facturacion/gre').catch(() => ({ data: { guias: [] } }))
+        api.get('/facturacion/gre').catch(() => ({ data: { guias: [] } })),
+        api.get('/facturacion/estado-sunat').catch(() => ({ data: null }))
       ]);
+
+      if (resSunat?.data) setEstadoSunat(resSunat.data);
 
       setComprobantes(resComp.data.comprobantes || []);
       setNotasPedido(resNotas.data.notas || []);
       if (resGreCat.data?.puntos_partida) {
+        catalogosGreRef.current = resGreCat.data;
         setCatalogosGre(resGreCat.data);
         setGreFormPedido((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
         setGreFormManual((prev) => prev.id_punto_partida ? prev : crearEstadoGreInicial(resGreCat.data, prev.punto_llegada_direccion));
@@ -280,6 +314,19 @@ export default function Facturacion({ usuario }) {
       alive = false;
     };
   }, [cargarDatos]);
+
+  useEffect(() => {
+    const abrirVencidasSiCorresponde = () => {
+      if (sessionStorage.getItem('facturacion_filtro_vencidas') === '1') {
+        sessionStorage.removeItem('facturacion_filtro_vencidas');
+        setTabActiva('historial');
+        setFiltroTipo('vencidas');
+      }
+    };
+    abrirVencidasSiCorresponde();
+    window.addEventListener('facturacion_ver_vencidas', abrirVencidasSiCorresponde);
+    return () => window.removeEventListener('facturacion_ver_vencidas', abrirVencidasSiCorresponde);
+  }, []);
 
   useEffect(() => {
     const onRestaurar = () => setModoEmergencia(false);
@@ -462,31 +509,7 @@ export default function Facturacion({ usuario }) {
   };
 
   // Emitir Comprobante de Pedido
-  const handleEmitirComprobante = async (e) => {
-    e.preventDefault();
-    if (!pedidoSeleccionado) {
-      return toast.error('Selecciona un pedido para facturar.');
-    }
-
-    // Validación Boleta con RUC (Req 17)
-    const docPedido = pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente;
-    const errorTrib = validarTributarioAntesDeEmitir(tipoComprobante, docPedido);
-    if (errorTrib) {
-      return toast.error(errorTrib);
-    }
-
-    // Validación pago dividido
-    if (esPagoDividido) {
-      const sumaMontos = pagosDivididos.reduce((acc, p) => acc + (parseFloat(p.monto) || 0), 0);
-      const totalEsp = totalItemsCalculado || parseFloat(pedidoSeleccionado.monto_total);
-      if (Math.abs(sumaMontos - totalEsp) > 0.05) {
-        return toast.error(`La suma de los pagos divididos (S/ ${sumaMontos.toFixed(2)}) debe coincidir con el total del pedido (S/ ${totalEsp.toFixed(2)}).`);
-      }
-      for (const p of pagosDivididos) {
-        if (!p.id_cliente) return toast.error('Selecciona el cliente para todas las partes del pago dividido.');
-      }
-    }
-
+  const ejecutarEmisionPedido = async () => {
     setProcesando(true);
     try {
       const payload = {
@@ -514,6 +537,40 @@ export default function Facturacion({ usuario }) {
     } finally {
       setProcesando(false);
     }
+  };
+
+  const handleEmitirComprobante = async (e) => {
+    e.preventDefault();
+    if (!pedidoSeleccionado) {
+      return toast.error('Selecciona un pedido para facturar.');
+    }
+
+    // Validación Boleta con RUC (Req 17)
+    const docPedido = pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente;
+    const errorTrib = validarTributarioAntesDeEmitir(tipoComprobante, docPedido);
+    if (errorTrib) {
+      return toast.error(errorTrib);
+    }
+
+    // Validación pago dividido
+    if (esPagoDividido) {
+      const sumaMontos = pagosDivididos.reduce((acc, p) => acc + (parseFloat(p.monto) || 0), 0);
+      const totalEsp = totalItemsCalculado || parseFloat(pedidoSeleccionado.monto_total);
+      if (Math.abs(sumaMontos - totalEsp) > 0.05) {
+        return toast.error(`La suma de los pagos divididos (S/ ${sumaMontos.toFixed(2)}) debe coincidir con el total del pedido (S/ ${totalEsp.toFixed(2)}).`);
+      }
+      for (const p of pagosDivididos) {
+        if (!p.id_cliente) return toast.error('Selecciona el cliente para todas las partes del pago dividido.');
+      }
+    }
+
+    if (tipoComprobante === '01') {
+      void verificarEstadoSunat(false);
+      setAdvertenciaSunatModal({ origen: 'pedido' });
+      return;
+    }
+
+    await ejecutarEmisionPedido();
   };
 
   // Handlers para Facturación Manual
@@ -574,22 +631,7 @@ export default function Facturacion({ usuario }) {
     return manualItems.reduce((acc, it) => acc + (parseFloat(it.subtotal) || 0), 0);
   }, [manualItems]);
 
-  const handleEmitirManual = async (e) => {
-    e.preventDefault();
-    if (!manualClienteId) return toast.error('Selecciona un cliente o "Clientes Varios".');
-    if (manualClienteId === 'CLIENTES_VARIOS') {
-      if (manualTipoComp === '01') {
-        return toast.error('No se puede emitir Factura (01) a Clientes Varios. Debe emitirse con Boleta de Venta (03).');
-      }
-      if (totalManualCalculado >= 700) {
-        return toast.error('Por normativa de SUNAT (RS 007-99), para importes de S/ 700.00 a más en Boleta es obligatorio ingresar el DNI del cliente.');
-      }
-    } else {
-      const cli = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
-      const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
-      if (errorTrib) return toast.error(errorTrib);
-    }
-
+  const ejecutarEmisionManual = async () => {
     setProcesando(true);
     try {
       const res = await api.post('/facturacion/emitir-manual', {
@@ -615,6 +657,31 @@ export default function Facturacion({ usuario }) {
     } finally {
       setProcesando(false);
     }
+  };
+
+  const handleEmitirManual = async (e) => {
+    e.preventDefault();
+    if (!manualClienteId) return toast.error('Selecciona un cliente o "Clientes Varios".');
+    if (manualClienteId === 'CLIENTES_VARIOS') {
+      if (manualTipoComp === '01') {
+        return toast.error('No se puede emitir Factura (01) a Clientes Varios. Debe emitirse con Boleta de Venta (03).');
+      }
+      if (totalManualCalculado >= 700) {
+        return toast.error('Por normativa de SUNAT (RS 007-99), para importes de S/ 700.00 a más en Boleta es obligatorio ingresar el DNI del cliente.');
+      }
+    } else {
+      const cli = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
+      const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
+      if (errorTrib) return toast.error(errorTrib);
+    }
+
+    if (manualTipoComp === '01') {
+      void verificarEstadoSunat(false);
+      setAdvertenciaSunatModal({ origen: 'manual' });
+      return;
+    }
+
+    await ejecutarEmisionManual();
   };
 
   // Handlers para Notas de Pedido (Req 13, 16)
@@ -1130,9 +1197,18 @@ export default function Facturacion({ usuario }) {
     return comprobantes;
   }, [comprobantes, modoEmergencia]);
 
+  const comprobantesVencidos = useMemo(
+    () => comprobantesVisibles.filter(c => c.esta_vencida === true),
+    [comprobantesVisibles]
+  );
+
   // Filtros del historial
   const comprobantesFiltrados = comprobantesVisibles.filter(c => {
-    if (filtroTipo !== 'todos' && c.tipo_comprobante !== filtroTipo) return false;
+    if (filtroTipo === 'vencidas') {
+      if (!c.esta_vencida) return false;
+    } else if (filtroTipo !== 'todos' && c.tipo_comprobante !== filtroTipo) {
+      return false;
+    }
     if (busqueda.trim() !== '') {
       const q = busqueda.toLowerCase();
       const serieCorr = `${c.serie}-${c.correlativo}`.toLowerCase();
@@ -1142,6 +1218,97 @@ export default function Facturacion({ usuario }) {
     }
     return true;
   });
+
+  const cambiarEstadoPagoComprobante = async (comp, nuevoEstado) => {
+    setProcesandoEstadoPagoId(comp.id_comprobante);
+    try {
+      const res = await api.patch(`/facturacion/${comp.id_comprobante}/estado-pago`, {
+        estado_pago: nuevoEstado
+      });
+      toast.success(res.data?.mensaje || 'Estado de cobranza actualizado.');
+      window.dispatchEvent(new Event('actualizar_alertas_layout'));
+      await cargarDatos();
+    } catch (error) {
+      toast.error(error.response?.data?.mensaje || 'No se pudo actualizar el estado de pago.');
+    } finally {
+      setProcesandoEstadoPagoId(null);
+    }
+  };
+
+  const exportarPedidosFacturablesExcel = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'facturacion_pedidos_pendientes',
+      nombreHoja: 'Pedidos por Facturar',
+      filas: pedidosFacturables,
+      columnas: [
+        { header: 'Pedido', value: (p) => formatearEtiquetaPedido(p.id_pedido, p.fecha_limite_despacho || p.creado_en) },
+        { header: 'Cliente', key: 'cliente' },
+        { header: 'Documento Cliente', key: 'ruc_cliente' },
+        { header: 'Sede', value: (p) => p.nombre_ubicacion || '' },
+        { header: 'Estado Preparación', key: 'estado_pedido' },
+        { header: 'Peso Balanza (kg)', value: (p) => Number(p.peso_total || 0) },
+        { header: 'Monto Total (S/)', value: (p) => Number(p.monto_total || 0) }
+      ]
+    });
+  };
+
+  const exportarNotasPedidoExcel = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'facturacion_notas_pedido',
+      nombreHoja: 'Notas de Pedido',
+      filas: notasPedido,
+      columnas: [
+        { header: 'Número Documento', value: (r) => r.numero_nota || r.numero_correlativo || `NotaPedido#${r.id_nota_pedido}` },
+        { header: 'Cliente', key: 'cliente_nombre' },
+        { header: 'Fecha Emisión', value: (r) => fechaHoraLocalTexto(r.fecha_emision || r.creado_en) },
+        { header: 'Sede / Emisor', value: (r) => r.nombre_ubicacion || 'Sede Principal' },
+        { header: 'Importe Total (S/)', value: (r) => Number(r.monto_total || 0) }
+      ]
+    });
+  };
+
+  const exportarGreExcel = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'facturacion_guias_remision',
+      nombreHoja: 'Guías EG07',
+      filas: guiasRemision,
+      columnas: [
+        { header: 'GRE N°', value: (g) => `${g.serie}-${String(g.correlativo).padStart(8, '0')}` },
+        { header: 'Factura Asociada', value: (g) => (g.factura_serie ? `${g.factura_serie}-${String(g.factura_correlativo).padStart(8, '0')}` : '') },
+        { header: 'Destinatario', key: 'destinatario_razon_social' },
+        { header: 'Doc Destinatario', key: 'destinatario_num_doc' },
+        { header: 'Fecha Traslado', key: 'fecha_inicio_traslado_iso' },
+        { header: 'Punto Llegada', key: 'punto_llegada_direccion' },
+        { header: 'Placa Vehículo', value: (g) => g.vehiculo_placa || '' },
+        { header: 'Conductor', value: (g) => g.conductor_nombres || '' },
+        { header: 'Peso Bruto', value: (g) => Number(g.peso_bruto_total || 0) }
+      ]
+    });
+  };
+
+  const exportarComprobantesExcel = () => {
+    exportarTablaExcel({
+      nombreArchivo: 'facturacion_comprobantes',
+      nombreHoja: 'Comprobantes',
+      filas: comprobantesVisibles,
+      columnas: [
+        { header: 'Comprobante', value: (c) => `${c.serie}-${String(c.correlativo).padStart(8, '0')}` },
+        { header: 'Tipo', value: (c) => nombreTipo(c.tipo_comprobante) },
+        { header: 'Cliente', key: 'nombre_cliente' },
+        { header: 'Documento Cliente', key: 'documento_cliente' },
+        { header: 'Sede', key: 'nombre_ubicacion' },
+        { header: 'Fecha Emisión', value: (c) => fechaHoraLocalTexto(c.fecha_emision) },
+        { header: 'Forma de Pago', value: (c) => c.forma_pago || 'CONTADO' },
+        { header: 'Días Crédito', value: (c) => Number(c.dias_credito || 0) },
+        { header: 'Fecha Vencimiento Crédito', value: (c) => c.fecha_vencimiento_iso || '' },
+        { header: 'Estado Cobranza', value: (c) => (c.forma_pago === 'CREDITO' ? (c.estado_pago || 'PENDIENTE') : 'PAGADO') },
+        { header: 'Vencida', value: (c) => (c.esta_vencida ? `SÍ (${c.dias_vencido}d)` : 'No') },
+        { header: 'Peso Total (kg)', value: (c) => Number(c.peso_total || 0) },
+        { header: 'Importe Total (S/)', value: (c) => Number(c.monto_total || 0) },
+        { header: 'Estado SUNAT', key: 'estado_sunat' }
+      ]
+    });
+  };
 
   const totalFacturas = comprobantesVisibles.filter(c => c.tipo_comprobante === '01').length;
   const totalBoletas = comprobantesVisibles.filter(c => c.tipo_comprobante === '03').length;
@@ -1202,7 +1369,7 @@ export default function Facturacion({ usuario }) {
             <RefreshCw size={18} className={cargando ? 'animate-spin' : ''} />
           </button>
 
-          {puedeEditarFacturacion && (
+          {esAdminCentral && (
             <button
               type="button"
               onClick={() => setModalConfig(true)}
@@ -1299,6 +1466,81 @@ export default function Facturacion({ usuario }) {
           <span className="text-xs text-emerald-600 font-bold">Aceptado SUNAT</span>
         </div>
       </div>
+
+      {/* MONITOR EN VIVO DE DISPONIBILIDAD DE SUNAT */}
+      <div
+        className={`rounded-2xl border p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs ${
+          estadoSunat?.estado === 'CAIDO'
+            ? 'bg-rose-50 border-rose-300 text-rose-950'
+            : estadoSunat?.estado === 'INESTABLE'
+            ? 'bg-amber-50 border-amber-300 text-amber-950'
+            : 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          {estadoSunat?.estado === 'CAIDO' ? (
+            <WifiOff size={17} className="text-rose-600 shrink-0" />
+          ) : estadoSunat?.estado === 'INESTABLE' ? (
+            <AlertTriangle size={17} className="text-amber-600 shrink-0" />
+          ) : (
+            <Wifi size={17} className="text-emerald-600 shrink-0" />
+          )}
+          <div>
+            <span className="font-extrabold">
+              Estado SUNAT:{' '}
+              {estadoSunat?.estado === 'CAIDO'
+                ? 'Posible caída / sin respuesta'
+                : estadoSunat?.estado === 'INESTABLE'
+                ? 'Lenta / Inestable'
+                : estadoSunat?.estado === 'ONLINE'
+                ? `En línea (${estadoSunat.latencia_ms} ms)`
+                : 'Verificando...'}
+            </span>
+            {estadoSunat?.mensaje && (
+              <span className="ml-2 text-[11px] opacity-85">{estadoSunat.mensaje}</span>
+            )}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => verificarEstadoSunat(true)}
+          disabled={verificandoSunat}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-slate-800 font-bold text-xs cursor-pointer disabled:opacity-50 self-start sm:self-auto shrink-0"
+        >
+          <RefreshCw size={13} className={verificandoSunat ? 'animate-spin' : ''} />
+          <span>{verificandoSunat ? 'Revisando...' : 'Revisar SUNAT ahora'}</span>
+        </button>
+      </div>
+
+      {/* AVISO DE FACTURAS A CRÉDITO CON PLAZO DE PAGO VENCIDO */}
+      {comprobantesVencidos.length > 0 && (
+        <div className="bg-rose-50 border border-rose-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2 rounded-xl bg-rose-600 text-white shrink-0">
+              <AlertCircle size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-extrabold text-rose-950">
+                Tienes {comprobantesVencidos.length} comprobante{comprobantesVencidos.length === 1 ? '' : 's'} a crédito con plazo de pago vencido
+              </p>
+              <p className="text-xs text-rose-800">
+                Revisa la pestaña Comprobantes Emitidos para gestionar el cobro o marcarlos como Pagados.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setTabActiva('historial');
+              setFiltroTipo('vencidas');
+            }}
+            className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer shrink-0 self-start sm:self-auto"
+          >
+            Ver vencidas ({comprobantesVencidos.length})
+          </button>
+        </div>
+      )}
 
       {/* SELECTOR DE PESTAÑAS (SECCIONES FACTURACIÓN SEGÚN ASIGNACIÓN - Req 18 & 13) */}
       <div className="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-xs">
@@ -1399,6 +1641,11 @@ export default function Facturacion({ usuario }) {
                 Selecciona un pedido para emitir su factura o boleta electrónica SUNAT.
               </p>
             </div>
+            <BotonExportarExcel
+              onClick={exportarPedidosFacturablesExcel}
+              label="Exportar Excel (Pedidos)"
+              cantidad={pedidosFacturables.length}
+            />
           </div>
 
           <div className="overflow-x-auto">
@@ -1858,16 +2105,23 @@ export default function Facturacion({ usuario }) {
                 Documentos comerciales internos con formato oficial de Proceso Cárnicos para impresión rápida.
               </p>
             </div>
-            {puedeEditarFacturacion && (
-              <button
-                type="button"
-                onClick={abrirModalNotaPedido}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
-              >
-                <Plus size={15} />
-                <span>+ Emitir Nota de Pedido</span>
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <BotonExportarExcel
+                onClick={exportarNotasPedidoExcel}
+                label="Exportar Excel (Notas)"
+                cantidad={notasPedido.length}
+              />
+              {puedeEditarFacturacion && (
+                <button
+                  type="button"
+                  onClick={abrirModalNotaPedido}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <Plus size={15} />
+                  <span>+ Emitir Nota de Pedido</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1936,6 +2190,11 @@ export default function Facturacion({ usuario }) {
                 Emitidas automáticamente junto a cada Factura (01) • Documentos relacionados vinculados automáticamente en SUNAT
               </p>
             </div>
+            <BotonExportarExcel
+              onClick={exportarGreExcel}
+              label="Exportar Excel (Guías EG07)"
+              cantidad={guiasRemision.length}
+            />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
@@ -2052,16 +2311,36 @@ export default function Facturacion({ usuario }) {
                   Notas de Crédito ({totalNotas})
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setFiltroTipo('vencidas')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                  filtroTipo === 'vencidas'
+                    ? 'bg-rose-600 text-white'
+                    : comprobantesVencidos.length > 0
+                    ? 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200'
+                    : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                }`}
+              >
+                Vencidas ({comprobantesVencidos.length})
+              </button>
             </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={busqueda}
-                onChange={(e) => handleCambioBusqueda(e.target.value)}
-                placeholder="Buscar por serie, número o cliente..."
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-full sm:w-64">
+                <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => handleCambioBusqueda(e.target.value)}
+                  placeholder="Buscar por serie, número o cliente..."
+                  className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+              </div>
+              <BotonExportarExcel
+                onClick={exportarComprobantesExcel}
+                label="Exportar Excel"
+                cantidad={comprobantesVisibles.length}
               />
             </div>
           </div>
@@ -2073,6 +2352,7 @@ export default function Facturacion({ usuario }) {
                   <th className="p-4 font-semibold">Comprobante</th>
                   <th className="p-4 font-semibold">Cliente / Razón Social</th>
                   <th className="p-4 font-semibold text-center">Fecha Emisión</th>
+                  <th className="p-4 font-semibold">Cobranza / Plazo</th>
                   <th className="p-4 font-semibold text-center">Peso</th>
                   <th className="p-4 font-semibold text-right">Importe Total</th>
                   <th className="p-4 font-semibold text-center">Estado SUNAT</th>
@@ -2082,13 +2362,19 @@ export default function Facturacion({ usuario }) {
               <tbody className="divide-y divide-slate-100 text-sm">
                 {comprobantesFiltrados.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="p-8 text-center text-slate-400 text-xs">
+                    <td colSpan="8" className="p-8 text-center text-slate-400 text-xs">
                       No hay comprobantes para mostrar.
                     </td>
                   </tr>
                 ) : (
-                  comprobantesFiltrados.map(comp => (
-                    <tr key={comp.id_comprobante} className="hover:bg-slate-50 transition-colors">
+                  comprobantesFiltrados.map(comp => {
+                    const esCredito = comp.forma_pago === 'CREDITO';
+                    const estaAnulado = comp.estado_sunat === 'ANULADO';
+                    const pagado = !esCredito || comp.estado_pago === 'PAGADO';
+                    const estaVencida = Boolean(comp.esta_vencida);
+
+                    return (
+                    <tr key={comp.id_comprobante} className={`${estaVencida ? 'bg-rose-50/70 hover:bg-rose-50' : 'hover:bg-slate-50'} transition-colors`}>
                       <td className="p-4">
                         <div className="font-mono font-bold text-slate-900">
                           {comp.serie}-{String(comp.correlativo).padStart(8, '0')}
@@ -2104,6 +2390,50 @@ export default function Facturacion({ usuario }) {
                       <td className="p-4 text-center text-xs text-slate-600">
                         {new Date(comp.fecha_emision).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </td>
+                      <td className="p-4 text-xs">
+                        {esCredito && !estaAnulado && comp.tipo_comprobante !== '07' ? (
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  pagado
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : estaVencida
+                                    ? 'bg-rose-600 text-white border-rose-600'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                }`}
+                              >
+                                {pagado
+                                  ? 'Crédito · Pagada'
+                                  : estaVencida
+                                  ? `VENCIDA (${comp.dias_vencido}d)`
+                                  : 'Crédito · Pendiente'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono">
+                              Vence: {comp.fecha_vencimiento_iso || '-'}
+                            </div>
+                            {puedeEditarFacturacion && (
+                              <button
+                                type="button"
+                                disabled={procesandoEstadoPagoId === comp.id_comprobante}
+                                onClick={() => cambiarEstadoPagoComprobante(comp, pagado ? 'PENDIENTE' : 'PAGADO')}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md border cursor-pointer disabled:opacity-50 ${
+                                  pagado
+                                    ? 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                                }`}
+                              >
+                                {pagado ? 'Marcar Pendiente' : 'Marcar Pagada'}
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600">
+                            {estaAnulado ? 'Anulado' : 'Contado'}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-4 text-center">
                         {comp.peso_total ? (
                           <span className="font-bold text-amber-900 text-xs font-mono bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
@@ -2117,10 +2447,17 @@ export default function Facturacion({ usuario }) {
                         S/ {parseFloat(comp.monto_total || 0).toFixed(2)}
                       </td>
                       <td className="p-4 text-center">
-                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                          <CheckCircle2 size={13} />
-                          <span>Aceptado</span>
-                        </span>
+                        {estaAnulado ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200">
+                            <X size={13} />
+                            <span>Anulado</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                            <CheckCircle2 size={13} />
+                            <span>Aceptado</span>
+                          </span>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
@@ -2142,7 +2479,8 @@ export default function Facturacion({ usuario }) {
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -2548,6 +2886,28 @@ export default function Facturacion({ usuario }) {
                 </div>
               </div>
 
+              {tipoComprobante === '01' && (
+                <div className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+                  estadoSunat?.estado === 'CAIDO'
+                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : 'bg-amber-50 border-amber-300 text-amber-900'
+                }`}>
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                    <span>
+                      <strong>Recordatorio previo (no bloqueante):</strong> antes de emitir una Factura (01), verifica si la SUNAT está operando con normalidad ({estadoSunat?.estado || 'revisar'}).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => verificarEstadoSunat(true)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-bold text-[11px] cursor-pointer"
+                  >
+                    Revisar SUNAT
+                  </button>
+                </div>
+              )}
+
               <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -2799,6 +3159,28 @@ export default function Facturacion({ usuario }) {
                   </span>
                 </div>
               </div>
+
+              {manualTipoComp === '01' && (
+                <div className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+                  estadoSunat?.estado === 'CAIDO'
+                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : 'bg-amber-50 border-amber-300 text-amber-900'
+                }`}>
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                    <span>
+                      <strong>Recordatorio previo (no bloqueante):</strong> antes de emitir una Factura (01), verifica si la SUNAT está operando con normalidad ({estadoSunat?.estado || 'revisar'}).
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => verificarEstadoSunat(true)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-bold text-[11px] cursor-pointer"
+                  >
+                    Revisar SUNAT
+                  </button>
+                </div>
+              )}
 
               <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
                 <button
@@ -3539,6 +3921,102 @@ export default function Facturacion({ usuario }) {
           emisor={configSunat || {}}
           onClose={() => setGuiaPreview(null)}
         />
+      )}
+
+      {/* ADVERTENCIA PREVIA NO BLOQUEANTE ANTES DE EMITIR FACTURA (01) */}
+      {advertenciaSunatModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 backdrop-blur-xs p-4"
+          onClick={() => setAdvertenciaSunatModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-amber-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-amber-50 border-b border-amber-200 flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500 text-white shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-amber-950">
+                  Revisar estado de SUNAT antes de emitir
+                </h3>
+                <p className="text-xs text-amber-800 mt-0.5">
+                  Advertencia preventiva (no bloquea la emisión de la factura)
+                </p>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs text-slate-700">
+              <p className="leading-relaxed">
+                Antes de emitir cualquier Factura electrónica, recuerda revisar si los servidores de <strong>SUNAT</strong> se encuentran operando normalmente o si sufrieron una caída.
+              </p>
+
+              <div
+                className={`p-3 rounded-xl border font-semibold ${
+                  estadoSunat?.estado === 'CAIDO'
+                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                    : estadoSunat?.estado === 'INESTABLE'
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                }`}
+              >
+                <div>
+                  Estado actual:{' '}
+                  {verificandoSunat
+                    ? 'Verificando conexión...'
+                    : estadoSunat?.estado === 'CAIDO'
+                    ? 'Posible caída / sin respuesta'
+                    : estadoSunat?.estado === 'INESTABLE'
+                    ? 'Lenta / inestable'
+                    : estadoSunat?.estado === 'ONLINE'
+                    ? `En línea (${estadoSunat.latencia_ms} ms)`
+                    : 'Sin datos recientes'}
+                </div>
+                {estadoSunat?.mensaje && (
+                  <p className="text-[11px] font-normal mt-1 opacity-90">{estadoSunat.mensaje}</p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => verificarEstadoSunat(true)}
+                  disabled={verificandoSunat}
+                  className="px-3 py-2 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800 font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw size={13} className={verificandoSunat ? 'animate-spin' : ''} />
+                  <span>Revisar SUNAT</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAdvertenciaSunatModal(null)}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold cursor-pointer"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const origen = advertenciaSunatModal.origen;
+                      setAdvertenciaSunatModal(null);
+                      if (origen === 'pedido') {
+                        await ejecutarEmisionPedido();
+                      } else {
+                        await ejecutarEmisionManual();
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xs cursor-pointer"
+                  >
+                    Emitir Factura de todas formas
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -6,6 +6,8 @@ import {
   Briefcase, MapPin, Shield, RefreshCw, X, Folder, FolderPlus,
   FolderOpen, ArrowLeft, Trash2, Users
 } from 'lucide-react';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 const COLORES_CARPETA = {
   indigo: { bg: 'bg-indigo-50', border: 'border-indigo-200 hover:border-indigo-400', icon: 'text-indigo-600 bg-indigo-100', badge: 'bg-indigo-100 text-indigo-700' },
@@ -283,6 +285,46 @@ export default function Clientes({ usuario }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <BotonExportarExcel
+            onClick={() => {
+              const filasExport = carpetaActiva === null || carpetaActiva === 'all'
+                ? clientes
+                : carpetaActiva === 'none'
+                ? clientes.filter((c) => !c.id_carpeta)
+                : clientes.filter((c) => String(c.id_carpeta) === String(carpetaActiva));
+              const nombreCarpeta = carpetaSeleccionadaObj
+                ? `clientes_${carpetaSeleccionadaObj.nombre}`
+                : carpetaActiva === 'none'
+                ? 'clientes_sin_carpeta'
+                : 'clientes_directorio';
+              exportarTablaExcel({
+                nombreArchivo: nombreCarpeta,
+                nombreHoja: 'Clientes',
+                filas: filasExport,
+                columnas: [
+                  { header: 'ID', key: 'id_cliente' },
+                  { header: 'Tipo Doc', key: 'tipo_documento' },
+                  { header: 'Nro Documento', key: 'numero_documento' },
+                  { header: 'Razón Social / Nombre', key: 'razon_social_o_nombre' },
+                  { header: 'Nombre Comercial', value: (c) => c.nombre_comercial || '' },
+                  { header: 'Contacto', value: (c) => c.contacto || '' },
+                  { header: 'Cargo', value: (c) => c.cargo || '' },
+                  { header: 'Celular', value: (c) => c.celular || 'Restringido / Sin dato' },
+                  { header: 'Correo', value: (c) => c.email || '' },
+                  { header: 'Dirección', value: (c) => c.direccion || '' },
+                  { header: 'Carpeta', value: (c) => c.nombre_carpeta || 'Sin carpeta' }
+                ]
+              });
+            }}
+            label="Exportar Excel (Clientes)"
+            cantidad={
+              carpetaActiva === null || carpetaActiva === 'all'
+                ? clientes.length
+                : carpetaActiva === 'none'
+                ? clientes.filter((c) => !c.id_carpeta).length
+                : clientes.filter((c) => String(c.id_carpeta) === String(carpetaActiva)).length
+            }
+          />
           <button
             type="button"
             onClick={cargarClientes}

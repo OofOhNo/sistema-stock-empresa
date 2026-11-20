@@ -5,6 +5,8 @@ import {
   Wrench, X, CheckCircle2, Bug
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Errores({ usuario }) {
   const [errores, setErrores] = useState([]);
@@ -187,13 +189,38 @@ export default function Errores({ usuario }) {
           </div>
         </div>
 
-        <button
-          onClick={() => setModalNuevo(true)}
-          className="flex items-center space-x-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-red-600/20 cursor-pointer"
-        >
-          <Plus size={16} />
-          <span>+ Registrar Problema</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <BotonExportarExcel
+            onClick={() =>
+              exportarTablaExcel({
+                nombreArchivo: 'reportes_errores',
+                nombreHoja: 'Problemas Reportados',
+                filas: errores,
+                columnas: [
+                  { header: 'Código', key: 'codigo_incidencia' },
+                  { header: 'Fecha Reporte', value: (r) => fechaHoraLocalTexto(r.fecha_reporte) },
+                  { header: 'Título', key: 'titulo' },
+                  { header: 'Módulo / Área', key: 'area_modulo' },
+                  { header: 'Severidad', key: 'severidad' },
+                  { header: 'Estado', key: 'estado' },
+                  { header: 'Reportado por', value: (r) => r.nombre_reporta || 'Empleado' },
+                  { header: 'Atiende', value: (r) => r.nombre_asigna || '' },
+                  { header: 'Descripción', value: (r) => r.descripcion || '' },
+                  { header: 'Solución Adoptada', value: (r) => r.solucion_adoptada || '' }
+                ]
+              })
+            }
+            label="Exportar Excel (Reportes)"
+            cantidad={errores.length}
+          />
+          <button
+            onClick={() => setModalNuevo(true)}
+            className="flex items-center space-x-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-red-600/20 cursor-pointer"
+          >
+            <Plus size={16} />
+            <span>+ Registrar Problema</span>
+          </button>
+        </div>
       </div>
 
       {/* Tarjetas de Resumen */}

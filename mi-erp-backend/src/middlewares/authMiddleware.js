@@ -24,7 +24,10 @@ async function obtenerEstadoSesionUsuario(idUsuario) {
 
     const resRol = await pool.query(`
         SELECT COALESCE(u.activo, true) AS activo,
-               r.duracion_sesion_minutos
+               u.password_actualizada_en,
+               COALESCE(u.token_version, 1)::int AS token_version,
+               r.duracion_sesion_minutos,
+               COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia
         FROM usuarios u
         LEFT JOIN roles r ON u.rol_id = r.id_rol
         WHERE u.id_usuario = $1::int
@@ -77,6 +80,27 @@ const verificarToken = async (req, res, next) => {
             });
         }
 
+        // Invalidar sesiones emitidas antes de un cambio o restablecimiento de contraseña
+        if (decodificado.token_version !== undefined) {
+            if (Number(decodificado.token_version) !== Number(estadoUsuario.token_version || 1)) {
+                return res.status(401).json({
+                    exito: false,
+                    codigo: 'PASSWORD_ACTUALIZADA',
+                    mensaje: 'Tu sesión expiró porque la contraseña de la cuenta fue cambiada. Inicia sesión nuevamente.'
+                });
+            }
+        } else if (estadoUsuario.password_actualizada_en) {
+            const pwdMs = new Date(estadoUsuario.password_actualizada_en).getTime();
+            const tokenEmitidoMs = (Number(decodificado.iat) || 0) * 1000;
+            if (tokenEmitidoMs < pwdMs) {
+                return res.status(401).json({
+                    exito: false,
+                    codigo: 'PASSWORD_ACTUALIZADA',
+                    mensaje: 'Tu sesión expiró porque la contraseña de la cuenta fue cambiada. Inicia sesión nuevamente.'
+                });
+            }
+        }
+
         const duracionMin = estadoUsuario.duracion_sesion_minutos;
         if (duracionMin && Number(duracionMin) > 0) {
             const loginAt = Number(decodificado.login_at) || (Number(decodificado.iat) * 1000);
@@ -90,7 +114,14 @@ const verificarToken = async (req, res, next) => {
         }
     }
 
-    req.usuario = decodificado;
+    const nivelJerarquia = decodificado?.nombre_rol === 'Admin Central'
+        ? 1
+        : Number(estadoUsuario?.nivel_jerarquia || decodificado?.nivel_jerarquia || 4);
+
+    req.usuario = {
+        ...decodificado,
+        nivel_jerarquia: nivelJerarquia
+    };
     return next();
 };
 

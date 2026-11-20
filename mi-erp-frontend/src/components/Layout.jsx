@@ -48,6 +48,8 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const [mensajesNoLeidos, setMensajesNoLeidos] = useState(0);
   const [pendientesRecuperacion, setPendientesRecuperacion] = useState(0);
   const [pendientesErrores, setPendientesErrores] = useState(0);
+  const [facturasVencidas, setFacturasVencidas] = useState(0);
+  const yaNotificoVencidasRef = useRef(false);
 
   const esProduccion = usuario?.area === 'PRODUCCION';
   const esAdminCentral = usuario?.rol === 'Admin Central';
@@ -61,6 +63,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
 
   const puedeEditarUsuarios = esAdminCentral || usuario?.permisos?.usuarios?.puede_editar === true;
   const puedeVerUsuarios = puedeEditarUsuarios || usuario?.permisos?.usuarios?.puede_ver === true;
+  const puedeVerFacturacion = tienePermisoVer('facturacion');
   const puedeVerErrores =
     esAdminCentral ||
     usuario?.permisos?.errores?.puede_ver === true ||
@@ -86,6 +89,24 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       setPendientesRecuperacion(0);
     }
 
+    if (puedeVerFacturacion) {
+      api.get('/facturacion/vencidas')
+        .then(res => {
+          const total = Number(res.data?.total ?? res.data?.vencidas?.length ?? 0);
+          setFacturasVencidas(total);
+          if (total > 0 && !yaNotificoVencidasRef.current) {
+            yaNotificoVencidasRef.current = true;
+            toast.error(
+              `Atención: tienes ${total} factura${total === 1 ? '' : 's'} a crédito con plazo de pago vencido.`,
+              { duration: 6000 }
+            );
+          }
+        })
+        .catch(() => {});
+    } else {
+      setFacturasVencidas(0);
+    }
+
     if (puedeVerErrores) {
       api.get('/errores')
         .then(res => {
@@ -97,7 +118,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     } else {
       setPendientesErrores(0);
     }
-  }, [puedeUsarMensajes, puedeEditarUsuarios, puedeVerErrores]);
+  }, [puedeUsarMensajes, puedeEditarUsuarios, puedeVerFacturacion, puedeVerErrores]);
 
   useEffect(() => {
     let alive = true;
@@ -152,8 +173,8 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
       toast.error('Escribe tu contraseña actual.');
       return;
     }
-    if (!formPassword.nueva || formPassword.nueva.trim().length < 4) {
-      toast.error('La nueva contraseña debe tener al menos 4 letras o números.');
+    if (!formPassword.nueva || formPassword.nueva.trim().length < 8) {
+      toast.error('La nueva contraseña debe tener al menos 8 caracteres.');
       return;
     }
     if (formPassword.nueva !== formPassword.confirmar) {
@@ -251,7 +272,14 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     { id: 'productos', nombre: 'Productos', icono: <Tag size={20} />, visible: tienePermisoVer('productos') },
     { id: 'clientes', nombre: 'Clientes', icono: <Building2 size={20} />, visible: tienePermisoVer('clientes') },
     { id: 'pedidos', nombre: 'Pedidos', icono: <ShoppingCart size={20} />, visible: tienePermisoVer('pedidos') },
-    { id: 'facturacion', nombre: 'Facturación', icono: <FileText size={20} />, visible: tienePermisoVer('facturacion') },
+    {
+      id: 'facturacion',
+      nombre: 'Facturación',
+      icono: <FileText size={20} />,
+      visible: tienePermisoVer('facturacion'),
+      badge: facturasVencidas,
+      badgeColor: 'bg-rose-600 text-white'
+    },
     { id: 'calidad', nombre: 'Calidad y Sanidad', icono: <ShieldCheck size={20} />, visible: tienePermisoVer('calidad') },
     { id: 'ubicaciones', nombre: 'Ubicaciones y Sedes', icono: <MapPin size={20} />, visible: tienePermisoVer('ubicaciones') || tienePermisoVer('organizacion') },
     { id: 'reuniones', nombre: 'Reuniones', icono: <Calendar size={20} />, visible: tienePermisoVer('reuniones') },
@@ -464,6 +492,25 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
               >
                 <Search size={18} />
               </button>
+            {puedeVerFacturacion && facturasVencidas > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.setItem('facturacion_filtro_vencidas', '1');
+                  setVistaActual('facturacion');
+                  window.dispatchEvent(new Event('facturacion_ver_vencidas'));
+                }}
+                title="Hay facturas a crédito con el plazo de pago vencido"
+                className="flex items-center gap-1.5 bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                <AlertCircle size={14} className="text-rose-600 shrink-0" />
+                <span className="hidden md:inline">
+                  {facturasVencidas} factura{facturasVencidas > 1 ? 's' : ''} vencida{facturasVencidas > 1 ? 's' : ''}
+                </span>
+                <span className="md:hidden">{facturasVencidas}</span>
+              </button>
+            )}
+
             {puedeEditarUsuarios && pendientesRecuperacion > 0 && (
               <button
                 type="button"
@@ -585,7 +632,28 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
                       </button>
                     )}
 
-                    {puedeEditarUsuarios && pendientesRecuperacion > 0 && (
+                    {puedeVerFacturacion && facturasVencidas > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuUsuarioAbierto(false);
+                          sessionStorage.setItem('facturacion_filtro_vencidas', '1');
+                          setVistaActual('facturacion');
+                          window.dispatchEvent(new Event('facturacion_ver_vencidas'));
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-xs font-bold text-rose-900 bg-rose-50 hover:bg-rose-100 flex items-center justify-between transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <AlertCircle size={16} className="text-rose-600" />
+                          <span>Facturas a crédito vencidas</span>
+                        </span>
+                        <span className="bg-rose-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                          {facturasVencidas}
+                        </span>
+                      </button>
+                    )}
+
+            {puedeEditarUsuarios && pendientesRecuperacion > 0 && (
                       <button
                         type="button"
                         onClick={() => {
@@ -750,10 +818,10 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
                     name="mi_nueva_clave"
                     autoComplete="new-password"
                     required
-                    minLength={4}
+                    minLength={8}
                     value={formPassword.nueva}
                     onChange={(e) => setFormPassword({ ...formPassword, nueva: e.target.value })}
-                    placeholder="Mínimo 4 letras o números"
+                    placeholder="Mínimo 8 caracteres"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3.5 pr-10 py-2.5 text-sm font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
                   />
                   <button

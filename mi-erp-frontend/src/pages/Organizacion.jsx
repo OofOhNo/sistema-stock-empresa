@@ -5,6 +5,8 @@ import {
   Edit3, X, AlertCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { exportarTablaExcel } from '../utils/excelExport';
+import BotonExportarExcel from '../components/BotonExportarExcel';
 
 export default function Organizacion({ usuario }) {
   const [sedes, setSedes] = useState([]);
@@ -103,6 +105,27 @@ export default function Organizacion({ usuario }) {
             </p>
           </div>
         </div>
+        <BotonExportarExcel
+          onClick={() =>
+            exportarTablaExcel({
+              nombreArchivo: 'sedes_y_encargados',
+              nombreHoja: 'Sedes y Encargados',
+              filas: sedes,
+              columnas: [
+                { header: 'ID Sede', key: 'id_ubicacion' },
+                { header: 'Nombre Sede', key: 'nombre_sede' },
+                { header: 'Tipo', value: (s) => s.tipo || 'Sede' },
+                { header: 'Encargado / Gerente', value: (s) => s.nombre_gerente || 'Sin asignar' },
+                { header: 'Correo Gerente', value: (s) => s.email_gerente || '' },
+                { header: 'Teléfono Contacto', value: (s) => s.telefono_contacto || '' },
+                { header: 'Dirección', value: (s) => s.direccion_completa || '' },
+                { header: 'Total Personal', value: (s) => Number(s.total_personal || 0) }
+              ]
+            })
+          }
+          label="Exportar Excel (Sedes)"
+          cantidad={sedes.length}
+        />
       </div>
 
       {/* Tarjetas Resumen */}

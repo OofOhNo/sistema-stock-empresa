@@ -46,14 +46,30 @@ const facturaController = {
 
     obtenerConfiguracionYCatalogos: async (req, res) => {
         try {
+            const esAdminCentral = req.usuario?.nombre_rol === 'Admin Central';
             const [configEmisor, resSeries] = await Promise.all([
                 obtenerConfigEmisor(pool),
                 pool.query('SELECT * FROM series_sunat ORDER BY tipo_comprobante ASC, serie ASC')
             ]);
 
+            const tokenRaw = String(configEmisor?.nubefact_token || '');
+            const configuracionSegura = esAdminCentral
+                ? {
+                    ...configEmisor,
+                    nubefact_token_configurado: Boolean(tokenRaw)
+                }
+                : {
+                    ...configEmisor,
+                    nubefact_ruta: '',
+                    nubefact_token: '',
+                    nubefact_token_enmascarado: tokenRaw ? '•••••••• (Solo Admin Central)' : '',
+                    nubefact_token_configurado: Boolean(tokenRaw),
+                    credenciales_restringidas: true
+                };
+
             res.status(200).json({
                 exito: true,
-                configuracion: configEmisor,
+                configuracion: configuracionSegura,
                 series: resSeries.rows,
                 catalogos: CATALOGOS_SUNAT
             });
@@ -207,6 +223,74 @@ const facturaController = {
                 mensaje: `No se pudo conectar con la ruta indicada: ${error.message}`
             });
         }
+    },
+
+    consultarEstadoSunat: async (req, res) => {
+        const config = await obtenerConfigEmisor(pool);
+        const sunatWsdlUrl = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl';
+        const inicioMs = Date.now();
+        let estado = 'CAIDO';
+        let codigoHttp = null;
+        let detalle = '';
+        let oseAlcanzable = null;
+
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4500);
+            try {
+                const resp = await fetch(sunatWsdlUrl, {
+                    method: 'GET',
+                    signal: controller.signal,
+                    headers: { 'User-Agent': 'ERP-SistemaStock-HealthCheck/1.0' }
+                });
+                codigoHttp = resp.status;
+                const latencia = Date.now() - inicioMs;
+                if (resp.ok && latencia < 3000) {
+                    estado = 'ONLINE';
+                    detalle = `Servicios de SUNAT respondiendo normalmente (${latencia} ms).`;
+                } else if (resp.status < 500) {
+                    estado = 'INESTABLE';
+                    detalle = `SUNAT respondió con demora (${latencia} ms, HTTP ${resp.status}). Verifica antes de emitir.`;
+                } else {
+                    estado = 'CAIDO';
+                    detalle = `SUNAT devolvió error HTTP ${resp.status}. Es posible que esté caído o en mantenimiento.`;
+                }
+            } finally {
+                clearTimeout(timeout);
+            }
+        } catch (err) {
+            estado = 'CAIDO';
+            detalle = err?.name === 'AbortError'
+                ? 'Tiempo de espera agotado (>4.5s) al consultar SUNAT. Podría estar caída o con congestión.'
+                : `No se pudo conectar con SUNAT (${err.message}). Revisa si el portal SUNAT está caído.`;
+        }
+
+        const latenciaTotal = Date.now() - inicioMs;
+        if (config?.modo_integracion === 'NUBEFACT_REAL' && config?.nubefact_ruta && !config.nubefact_ruta.includes('demo-integrada-erp')) {
+            try {
+                const c2 = new AbortController();
+                const t2 = setTimeout(() => c2.abort(), 3000);
+                try {
+                    const r2 = await fetch(new URL(config.nubefact_ruta).origin, { method: 'HEAD', signal: c2.signal });
+                    oseAlcanzable = r2.status < 500;
+                } finally {
+                    clearTimeout(t2);
+                }
+            } catch {
+                oseAlcanzable = false;
+            }
+        }
+
+        return res.status(200).json({
+            exito: true,
+            estado,
+            codigo_http: codigoHttp,
+            latencia_ms: latenciaTotal,
+            modo_integracion: config?.modo_integracion || 'DEMO_NUBEFACT',
+            ose_alcanzable: oseAlcanzable,
+            mensaje: detalle,
+            verificado_en: new Date().toISOString()
+        });
     },
 
     emitirComprobante: async (req, res) => {
@@ -607,7 +691,7 @@ const facturaController = {
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
                     xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
-                    peso_total, cantidad_cuotas, items_json
+                    peso_total, cantidad_cuotas, items_json, estado_pago
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6,
@@ -620,7 +704,7 @@ const facturaController = {
                     $25, $26,
                     $27, $28, $29,
                     $30, $31, $32, $33,
-                    $34, $35, $36
+                    $34, $35, $36, $37
                 )
                 RETURNING *;
             `;
@@ -660,7 +744,8 @@ const facturaController = {
                 respuestaOse.modo_emision,
                 pesoTotalFinal,
                 cantidadCuotasFinal,
-                JSON.stringify(items)
+                JSON.stringify(items),
+                formaPagoFinal === 'CREDITO' ? 'PENDIENTE' : 'PAGADO'
             ]);
 
             const compCreado = resComprobante.rows[0];
@@ -1059,6 +1144,23 @@ const facturaController = {
                     c.monto_subtotal, c.monto_gravada, c.monto_exonerada, c.monto_inafecta,
                     c.monto_igv, c.monto_total,
                     c.forma_pago, c.dias_credito, c.fecha_vencimiento_cuota,
+                    TO_CHAR(c.fecha_vencimiento_cuota, 'YYYY-MM-DD') AS fecha_vencimiento_iso,
+                    c.estado_pago, c.fecha_pago,
+                    CASE
+                        WHEN c.forma_pago = 'CREDITO'
+                             AND COALESCE(c.estado_pago, 'PENDIENTE') = 'PENDIENTE'
+                             AND COALESCE(c.estado_sunat, '') != 'ANULADO'
+                             AND c.tipo_comprobante IN ('01', '03')
+                             AND c.fecha_vencimiento_cuota IS NOT NULL
+                             AND c.fecha_vencimiento_cuota < (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date
+                        THEN TRUE
+                        ELSE FALSE
+                    END AS esta_vencida,
+                    CASE
+                        WHEN c.fecha_vencimiento_cuota IS NOT NULL
+                        THEN ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date - c.fecha_vencimiento_cuota)::int
+                        ELSE 0
+                    END AS dias_vencido,
                     c.medio_pago_sunat, c.tipo_operacion_sunat,
                     c.aplica_detraccion, c.codigo_detraccion, c.porcentaje_detraccion, c.monto_detraccion,
                     c.id_comprobante_referencia, c.codigo_motivo_nc, c.descripcion_motivo_nc,
@@ -1639,7 +1741,7 @@ const facturaController = {
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
                     xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
-                    peso_total, cantidad_cuotas, origen_facturacion, items_json
+                    peso_total, cantidad_cuotas, origen_facturacion, items_json, estado_pago
                 )
                 VALUES (
                     NULL, $1, $2, $3, $4, $5,
@@ -1651,7 +1753,7 @@ const facturaController = {
                     $19, $20,
                     $21, $22, $23,
                     $24, $25, $26, $27,
-                    $28, $29, 'MANUAL', $30
+                    $28, $29, 'MANUAL', $30, $31
                 )
                 RETURNING *;
             `;
@@ -1686,7 +1788,8 @@ const facturaController = {
                 respuestaOse.modo_emision,
                 pesoFinal,
                 cuotasFinal,
-                JSON.stringify(itemsValidados)
+                JSON.stringify(itemsValidados),
+                formaPagoFinal === 'CREDITO' ? 'PENDIENTE' : 'PAGADO'
             ]);
 
             const compCreado = resComp.rows[0];
@@ -2352,6 +2455,130 @@ const facturaController = {
             res.json({ exito: true, guia: rows[0], emisor: configEmisor });
         } catch (error) {
             res.status(500).json({ exito: false, mensaje: 'Error al obtener detalle de GRE.' });
+        }
+    },
+
+    listarFacturasVencidas: async (req, res) => {
+        try {
+            const puedeVerTodas = req.usuario?.nombre_rol === 'Admin Central' || req.usuario?.puede_ver_otras_ubicaciones === true;
+            const params = [];
+            let filtroUbicacion = '';
+            if (!puedeVerTodas && req.usuario?.id_ubicacion) {
+                filtroUbicacion = 'AND (p.id_ubicacion = $1::int OR c.id_ubicacion = $1::int)';
+                params.push(req.usuario.id_ubicacion);
+            }
+
+            const query = `
+                SELECT
+                    c.id_comprobante,
+                    c.id_pedido,
+                    c.tipo_comprobante,
+                    c.serie,
+                    c.correlativo,
+                    c.monto_total,
+                    c.forma_pago,
+                    c.dias_credito,
+                    c.estado_pago,
+                    c.fecha_vencimiento_cuota,
+                    TO_CHAR(c.fecha_vencimiento_cuota, 'YYYY-MM-DD') AS fecha_vencimiento_iso,
+                    ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date - c.fecha_vencimiento_cuota)::int AS dias_vencido,
+                    COALESCE(c.id_ubicacion, p.id_ubicacion) AS id_ubicacion_final,
+                    COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion,
+                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
+                    COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente
+                FROM comprobantes c
+                LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
+                LEFT JOIN ubicaciones u ON p.id_ubicacion = u.id_ubicacion
+                LEFT JOIN ubicaciones u_comp ON c.id_ubicacion = u_comp.id_ubicacion
+                LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
+                LEFT JOIN clientes cl_comp ON c.id_cliente = cl_comp.id_cliente
+                WHERE c.forma_pago = 'CREDITO'
+                  AND COALESCE(c.estado_pago, 'PENDIENTE') = 'PENDIENTE'
+                  AND COALESCE(c.estado_sunat, '') != 'ANULADO'
+                  AND c.tipo_comprobante IN ('01', '03')
+                  AND c.fecha_vencimiento_cuota IS NOT NULL
+                  AND c.fecha_vencimiento_cuota < (CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date
+                  ${filtroUbicacion}
+                ORDER BY c.fecha_vencimiento_cuota ASC, c.id_comprobante DESC;
+            `;
+            const { rows } = await pool.query(query, params);
+            return res.status(200).json({
+                exito: true,
+                total: rows.length,
+                vencidas: rows
+            });
+        } catch (error) {
+            console.error('Error al listar facturas vencidas:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al consultar facturas a crédito vencidas.' });
+        }
+    },
+
+    actualizarEstadoPagoComprobante: async (req, res) => {
+        try {
+            const idComprobante = parseInt(req.params.id, 10);
+            if (!Number.isFinite(idComprobante) || idComprobante <= 0) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de comprobante inválido.' });
+            }
+
+            const estadoSolicitado = String(req.body?.estado_pago || '').toUpperCase().trim();
+            if (!['PAGADO', 'PENDIENTE'].includes(estadoSolicitado)) {
+                return res.status(400).json({ exito: false, mensaje: 'Estado de pago inválido. Usa PAGADO o PENDIENTE.' });
+            }
+
+            const check = await pool.query(`
+                SELECT c.*, p.id_ubicacion AS pedido_ubicacion
+                FROM comprobantes c
+                LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
+                WHERE c.id_comprobante = $1::int;
+            `, [idComprobante]);
+
+            if (check.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Comprobante no encontrado.' });
+            }
+
+            const comp = check.rows[0];
+            const puedeVerTodas = req.usuario?.nombre_rol === 'Admin Central' || req.usuario?.puede_ver_otras_ubicaciones === true;
+            const ubicacionComp = comp.id_ubicacion || comp.pedido_ubicacion;
+            if (!puedeVerTodas && req.usuario?.id_ubicacion && ubicacionComp && Number(ubicacionComp) !== Number(req.usuario.id_ubicacion)) {
+                return res.status(403).json({ exito: false, mensaje: 'No tienes permiso para actualizar comprobantes de otra sede.' });
+            }
+
+            if (comp.forma_pago !== 'CREDITO') {
+                return res.status(400).json({ exito: false, mensaje: 'Solo los comprobantes emitidos a CRÉDITO permiten cambiar su estado de cobranza.' });
+            }
+            if (comp.estado_sunat === 'ANULADO' || comp.tipo_comprobante === '07') {
+                return res.status(400).json({ exito: false, mensaje: 'No se puede cambiar el estado de pago de un comprobante anulado o nota de crédito.' });
+            }
+
+            const { rows } = await pool.query(`
+                UPDATE comprobantes
+                SET estado_pago = $1::varchar,
+                    fecha_pago = CASE WHEN $1::varchar = 'PAGADO' THEN NOW() ELSE NULL END,
+                    pagado_por = CASE WHEN $1::varchar = 'PAGADO' THEN $2::int ELSE NULL END
+                WHERE id_comprobante = $3::int
+                RETURNING id_comprobante, serie, correlativo, forma_pago, estado_pago, fecha_pago, TO_CHAR(fecha_vencimiento_cuota, 'YYYY-MM-DD') AS fecha_vencimiento_iso;
+            `, [estadoSolicitado, req.usuario?.id_usuario || null, idComprobante]);
+
+            await registrarAuditoria(
+                pool,
+                req.usuario?.id_usuario || null,
+                'ACTUALIZAR_ESTADO_PAGO_COMPROBANTE',
+                'comprobantes',
+                idComprobante,
+                { estado_pago: comp.estado_pago },
+                { estado_pago: estadoSolicitado, serie: comp.serie, correlativo: comp.correlativo }
+            );
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: estadoSolicitado === 'PAGADO'
+                    ? `Comprobante ${comp.serie}-${String(comp.correlativo).padStart(8, '0')} marcado como Pagado.`
+                    : `Comprobante ${comp.serie}-${String(comp.correlativo).padStart(8, '0')} devuelto a Pendiente de pago.`,
+                comprobante: rows[0]
+            });
+        } catch (error) {
+            console.error('Error al actualizar estado de pago del comprobante:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al actualizar el estado de pago.' });
         }
     },
 
