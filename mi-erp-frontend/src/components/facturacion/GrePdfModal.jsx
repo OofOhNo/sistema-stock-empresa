@@ -1,6 +1,8 @@
-import { X, Printer, Truck } from 'lucide-react';
+import { X, Printer, Truck, Download } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { generarSvgQrString } from '../../utils/qrSunat';
 import { escaparHtml } from '../../utils/htmlPrint';
+import { descargarArchivoSunat } from '../../utils/sunatDownload';
 
 export default function GrePdfModal({ guia, emisor = {}, onClose }) {
   if (!guia) return null;
@@ -179,11 +181,25 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
                 {guia.mensaje_cdr && <p className="text-[11px] opacity-90 mt-0.5">{guia.mensaje_cdr}</p>}
               </div>
               <div className="flex items-center gap-2">
-                {guia.enlace_xml && (
-                  <a href={guia.enlace_xml} target="_blank" rel="noopener noreferrer" className="underline font-bold">XML</a>
+                {(guia.enlace_xml || guia.xml_firmado) && (
+                  <button
+                    type="button"
+                    onClick={() => descargarArchivoSunat(guia.enlace_xml || `/api/facturacion/gre/${guia.id_gre}/xml`, `${numeroGre}.xml`).catch(() => toast.error('No se pudo descargar el XML de la GRE.'))}
+                    className="inline-flex items-center gap-1 underline font-bold cursor-pointer hover:opacity-80"
+                  >
+                    <Download size={12} />
+                    <span>XML</span>
+                  </button>
                 )}
-                {guia.enlace_cdr && (
-                  <a href={guia.enlace_cdr} target="_blank" rel="noopener noreferrer" className="underline font-bold">CDR</a>
+                {(guia.enlace_cdr || guia.cdr_xml || guia.cdr_zip_base64) && (
+                  <button
+                    type="button"
+                    onClick={() => descargarArchivoSunat(guia.enlace_cdr || `/api/facturacion/gre/${guia.id_gre}/cdr`, `R-${numeroGre}.xml`).catch(() => toast.error('No se pudo descargar el CDR de la GRE.'))}
+                    className="inline-flex items-center gap-1 underline font-bold cursor-pointer hover:opacity-80"
+                  >
+                    <Download size={12} />
+                    <span>CDR</span>
+                  </button>
                 )}
               </div>
             </div>

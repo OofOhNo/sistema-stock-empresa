@@ -3,9 +3,8 @@ const { registrarAuditoria } = require('./auditoria');
 const {
     numeroALetrasSoles,
     calcularDesgloseTributario,
-    construirPayloadNubefact,
     generarXmlUbl21YDatosSunat,
-    enviarAConectorNubefact
+    emitirComprobanteEnOse
 } = require('./sunatNubefactService');
 
 let timeoutHandle = null;
@@ -21,9 +20,14 @@ async function obtenerConfigEmisor(client) {
         nombre_comercial: 'PROCESOS CARNICOS S.A.C.',
         direccion_fiscal: 'OTR. ZONA N 24 Y 25 MZ. 12 P.J. SEMIRURAL PACHACUTEC AREQUIPA',
         ubigeo: '040101',
-        modo_integracion: process.env.NUBEFACT_MODO || 'DEMO_NUBEFACT',
+        departamento: 'AREQUIPA',
+        provincia: 'AREQUIPA',
+        distrito: 'CERRO COLORADO',
+        modo_integracion: process.env.APISPERU_MODO || process.env.NUBEFACT_MODO || 'DEMO_NUBEFACT',
         nubefact_ruta: process.env.NUBEFACT_RUTA || 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
         nubefact_token: process.env.NUBEFACT_TOKEN || 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+        apisperu_url: process.env.APISPERU_URL || 'https://facturacion.apisperu.com/api/v1',
+        apisperu_token: process.env.APISPERU_TOKEN || '',
         igv_porcentaje: 18.00
     };
 }
@@ -245,21 +249,6 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
 
         const pesoTotal = +itemsElegidos.reduce((acc, it) => acc + Number(it.peso || it.cantidad || 0), 0).toFixed(2);
 
-        const payloadNubefact = construirPayloadNubefact({
-            tipo_comprobante: tipoComprobante,
-            serie,
-            correlativo,
-            cliente,
-            itemsCalculados,
-            totales,
-            forma_pago: 'CONTADO',
-            dias_credito: 0,
-            fecha_vencimiento_cuota: null,
-            medio_pago_sunat: '008',
-            aplica_detraccion: false,
-            configEmisor
-        });
-
         const datosUbl = generarXmlUbl21YDatosSunat({
             tipo_comprobante: tipoComprobante,
             serie,
@@ -272,8 +261,19 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             forma_pago: 'CONTADO'
         });
 
-        const respuestaOse = await enviarAConectorNubefact({
-            payloadNubefact,
+        const respuestaOse = await emitirComprobanteEnOse({
+            tipo_comprobante: tipoComprobante,
+            serie,
+            correlativo,
+            cliente,
+            itemsCalculados,
+            totales,
+            forma_pago: 'CONTADO',
+            dias_credito: 0,
+            fecha_vencimiento_cuota: null,
+            medio_pago_sunat: '008',
+            aplica_detraccion: false,
+            monto_en_letras: montoEnLetras,
             configEmisor,
             datosUbl
         });
@@ -285,7 +285,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
                 monto_igv, monto_total, forma_pago, dias_credito, fecha_vencimiento_cuota,
                 medio_pago_sunat, tipo_operacion_sunat, aplica_detraccion,
                 estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
-                enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml,
+                enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, cdr_zip_base64,
                 respuesta_ose_json, modo_emision, peso_total, cantidad_cuotas,
                 origen_facturacion, items_json
             )
@@ -295,9 +295,9 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
                 $10, $11, 'CONTADO', 0, NULL,
                 '008', '0101', FALSE,
                 $12, $13, $14, $15, $16,
-                $17, $18, $19, $20, $21,
-                $22, $23, $24, 1,
-                'AUTOMATICA', $25
+                $17, $18, $19, $20, $21, $22,
+                $23, $24, $25, 1,
+                'AUTOMATICA', $26
             )
             RETURNING *;
         `, [
@@ -320,8 +320,9 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             respuestaOse.enlace_pdf,
             respuestaOse.enlace_xml,
             respuestaOse.enlace_cdr,
-            datosUbl.xmlFirmado,
-            datosUbl.cdrXml,
+            respuestaOse.xml_firmado || datosUbl.xmlFirmado,
+            respuestaOse.cdr_xml || datosUbl.cdrXml,
+            respuestaOse.cdr_zip_base64 || null,
             JSON.stringify(respuestaOse.respuesta_ose_json || {}),
             respuestaOse.modo_emision,
             pesoTotal,

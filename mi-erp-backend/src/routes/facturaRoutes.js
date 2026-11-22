@@ -39,6 +39,8 @@ router.delete('/gre/conductores/:id', verificarToken, esAdmin, facturaController
 router.get('/gre', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarGres);
 router.post('/gre', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.emitirGreStandalone);
 router.get('/gre/:id/detalle', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerDetalleGre);
+router.get('/gre/:id/xml', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.descargarXmlGre);
+router.get('/gre/:id/cdr', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.descargarCdrGre);
 router.post('/gre/:id/consultar', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.consultarGreSunat);
 router.post('/gre/:id/reenviar', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.reenviarGreSunat);
 

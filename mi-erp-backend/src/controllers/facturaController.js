@@ -5,10 +5,16 @@ const {
     numeroALetrasSoles,
     validarReglasTributarias,
     calcularDesgloseTributario,
-    construirPayloadNubefact,
     generarXmlUbl21YDatosSunat,
-    enviarAConectorNubefact
+    emitirComprobanteEnOse
 } = require('../utils/sunatNubefactService');
+const {
+    DEFAULT_APISPERU_URL,
+    resolverModoIntegracion,
+    obtenerCredencialesApisperu,
+    extraerXmlDeZipBase64,
+    probarConexionApisperu
+} = require('../utils/apisperuService');
 const {
     generarUnaBoletaAutomatica,
     reprogramarBoletasAutomaticas,
@@ -38,9 +44,14 @@ async function obtenerConfigEmisor(clientOrPool = pool) {
         nombre_comercial: process.env.SUNAT_NOMBRE_COMERCIAL || 'SISTEMA ERP PERÚ',
         direccion_fiscal: process.env.SUNAT_DIRECCION_FISCAL || 'Av. Empresarial 100, Lima - Perú',
         ubigeo: '150101',
-        modo_integracion: process.env.NUBEFACT_MODO || 'DEMO_NUBEFACT',
+        departamento: 'LIMA',
+        provincia: 'LIMA',
+        distrito: 'LIMA',
+        modo_integracion: process.env.APISPERU_MODO || process.env.NUBEFACT_MODO || 'DEMO_NUBEFACT',
         nubefact_ruta: process.env.NUBEFACT_RUTA || 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
         nubefact_token: process.env.NUBEFACT_TOKEN || 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+        apisperu_url: process.env.APISPERU_URL || DEFAULT_APISPERU_URL,
+        apisperu_token: process.env.APISPERU_TOKEN || '',
         serie_gre_remitente: 'T001',
         serie_gre_transportista: 'V001',
         igv_porcentaje: 18.00,
@@ -73,6 +84,17 @@ async function descargarArchivoSunatComprobante(req, res, tipoArchivo) {
         const comp = resComp.rows[0];
         const configEmisor = await obtenerConfigEmisor(pool);
         let contenido = esCdr ? comp.cdr_xml : comp.xml_firmado;
+
+        if (esCdr && !contenido && comp.cdr_zip_base64) {
+            contenido = extraerXmlDeZipBase64(comp.cdr_zip_base64);
+            if (!contenido) {
+                const zipBuf = Buffer.from(String(comp.cdr_zip_base64).replace(/\s+/g, ''), 'base64');
+                const zipName = `R-${configEmisor.ruc_emisor}-${comp.tipo_comprobante}-${comp.serie}-${String(comp.correlativo).padStart(8, '0')}.zip`;
+                res.setHeader('Content-Type', 'application/zip');
+                res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+                return res.status(200).send(zipBuf);
+            }
+        }
 
         if (!contenido) {
             const { itemsCalculados, totales } = calcularDesgloseTributario([{
@@ -114,6 +136,52 @@ async function descargarArchivoSunatComprobante(req, res, tipoArchivo) {
     }
 }
 
+/**
+ * Sirve el XML firmado o la Constancia CDR de una Guía de Remisión Electrónica (09/31).
+ */
+async function descargarArchivoSunatGre(req, res, tipoArchivo) {
+    const esCdr = tipoArchivo === 'cdr';
+    try {
+        const id = parseInt(req.params.id, 10);
+        const resGre = await pool.query('SELECT * FROM guias_remision WHERE id_gre = $1', [id]);
+        if (resGre.rows.length === 0) {
+            return res.status(404).json({ exito: false, mensaje: 'Guía de Remisión no encontrada.' });
+        }
+        const gre = resGre.rows[0];
+        const configEmisor = await obtenerConfigEmisor(pool);
+        const tipoCod = gre.tipo_gre === 'TRANSPORTISTA' ? '31' : '09';
+        const baseName = `${configEmisor.ruc_emisor}-${tipoCod}-${gre.serie}-${String(gre.correlativo).padStart(8, '0')}`;
+
+        let contenido = esCdr ? gre.cdr_xml : gre.xml_firmado;
+        if (esCdr && !contenido && gre.cdr_zip_base64) {
+            contenido = extraerXmlDeZipBase64(gre.cdr_zip_base64);
+            if (!contenido) {
+                const zipBuf = Buffer.from(String(gre.cdr_zip_base64).replace(/\s+/g, ''), 'base64');
+                res.setHeader('Content-Type', 'application/zip');
+                res.setHeader('Content-Disposition', `attachment; filename="R-${baseName}.zip"`);
+                return res.status(200).send(zipBuf);
+            }
+        }
+
+        if (!contenido) {
+            return res.status(404).json({
+                exito: false,
+                mensaje: esCdr
+                    ? 'Esta GRE aún no cuenta con Constancia CDR en el sistema.'
+                    : 'Esta GRE aún no tiene archivo XML almacenado en el sistema.'
+            });
+        }
+
+        const filename = esCdr ? `R-${baseName}.xml` : `${baseName}.xml`;
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.status(200).send(contenido);
+    } catch (error) {
+        console.error(`Error al descargar ${esCdr ? 'CDR' : 'XML'} GRE:`, error);
+        return res.status(500).json({ exito: false, mensaje: 'No se pudo descargar el archivo SUNAT de la GRE.' });
+    }
+}
+
 const facturaController = {
 
     obtenerConfiguracionYCatalogos: async (req, res) => {
@@ -125,10 +193,13 @@ const facturaController = {
             ]);
 
             const tokenRaw = String(configEmisor?.nubefact_token || '');
+            const apisperuTokenRaw = String(configEmisor?.apisperu_token || '');
             const configuracionSegura = esAdminCentral
                 ? {
                     ...configEmisor,
-                    nubefact_token_configurado: Boolean(tokenRaw)
+                    apisperu_url: configEmisor?.apisperu_url || DEFAULT_APISPERU_URL,
+                    nubefact_token_configurado: Boolean(tokenRaw),
+                    apisperu_token_configurado: Boolean(apisperuTokenRaw)
                 }
                 : {
                     ...configEmisor,
@@ -136,6 +207,10 @@ const facturaController = {
                     nubefact_token: '',
                     nubefact_token_enmascarado: tokenRaw ? '•••••••• (Solo Admin Central)' : '',
                     nubefact_token_configurado: Boolean(tokenRaw),
+                    apisperu_url: '',
+                    apisperu_token: '',
+                    apisperu_token_enmascarado: apisperuTokenRaw ? '•••••••• (Solo Admin Central)' : '',
+                    apisperu_token_configurado: Boolean(apisperuTokenRaw),
                     credenciales_restringidas: true
                 };
 
@@ -163,9 +238,14 @@ const facturaController = {
                 nombre_comercial,
                 direccion_fiscal,
                 ubigeo,
+                departamento,
+                provincia,
+                distrito,
                 modo_integracion,
                 nubefact_ruta,
                 nubefact_token,
+                apisperu_url,
+                apisperu_token,
                 detraccion_cuenta_bn,
                 serie_gre_remitente,
                 serie_gre_transportista,
@@ -173,6 +253,7 @@ const facturaController = {
                 enviar_automaticamente_cliente
             } = req.body;
 
+            const configActual = await obtenerConfigEmisor(pool);
             const rucLimpio = String(ruc_emisor || '').trim();
             if (!/^(10|15|16|17|20)\d{9}$/.test(rucLimpio)) {
                 return res.status(400).json({
@@ -188,9 +269,27 @@ const facturaController = {
                 });
             }
 
-            const modoFinal = modo_integracion === 'NUBEFACT_REAL' ? 'NUBEFACT_REAL' : 'DEMO_NUBEFACT';
-            const rutaLimpia = nubefact_ruta ? String(nubefact_ruta).trim() : '';
-            const tokenLimpio = nubefact_token ? String(nubefact_token).trim() : '';
+            const modoNormalizado = String(modo_integracion || 'DEMO_NUBEFACT').toUpperCase();
+            const modoFinal = ['APISPERU', 'NUBEFACT_REAL'].includes(modoNormalizado)
+                ? modoNormalizado
+                : 'DEMO_NUBEFACT';
+
+            const ubigeoLimpio = String(ubigeo || configActual?.ubigeo || '150101').trim();
+            if (modoFinal === 'APISPERU' && !/^\d{6}$/.test(ubigeoLimpio)) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'Para emitir con APIsPERU el Ubigeo fiscal del emisor debe tener exactamente 6 dígitos (ej. 040101 Arequipa o 150101 Lima).'
+                });
+            }
+
+            const rutaLimpia = nubefact_ruta !== undefined ? String(nubefact_ruta || '').trim() : String(configActual?.nubefact_ruta || '');
+            const tokenLimpio = nubefact_token !== undefined ? String(nubefact_token || '').trim() : String(configActual?.nubefact_token || '');
+            const apisperuUrlLimpia = String(
+                apisperu_url !== undefined ? (apisperu_url || DEFAULT_APISPERU_URL) : (configActual?.apisperu_url || DEFAULT_APISPERU_URL)
+            ).trim().replace(/\/+$/, '');
+            const apisperuTokenLimpio = apisperu_token !== undefined
+                ? String(apisperu_token || '').trim()
+                : String(configActual?.apisperu_token || '');
 
             if (modoFinal === 'NUBEFACT_REAL') {
                 if (!rutaLimpia || !/^https?:\/\//i.test(rutaLimpia) || rutaLimpia.includes('demo-integrada-erp')) {
@@ -207,19 +306,35 @@ const facturaController = {
                 }
             }
 
+            if (modoFinal === 'APISPERU') {
+                if (!apisperuUrlLimpia || !/^https?:\/\//i.test(apisperuUrlLimpia)) {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'Ingresa una URL válida para APIsPERU (por defecto https://facturacion.apisperu.com/api/v1).'
+                    });
+                }
+                if (!apisperuTokenLimpio || apisperuTokenLimpio.length < 10) {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'Para activar APIsPERU Oficial debes pegar el Token de tu empresa generado en tu panel de APIsPERU.'
+                    });
+                }
+            }
+
             const serieGreRemFinal = String(serie_gre_remitente || 'T001').trim().toUpperCase().slice(0, 10) || 'T001';
             const serieGreTranspFinal = String(serie_gre_transportista || 'V001').trim().toUpperCase().slice(0, 10) || 'V001';
 
             const { rows } = await pool.query(`
                 INSERT INTO configuracion_empresa_sunat (
                     id_config, ruc_emisor, razon_social, nombre_comercial,
-                    direccion_fiscal, ubigeo, modo_integracion,
-                    nubefact_ruta, nubefact_token, detraccion_cuenta_bn,
-                    serie_gre_remitente, serie_gre_transportista,
+                    direccion_fiscal, ubigeo, departamento, provincia, distrito,
+                    modo_integracion, nubefact_ruta, nubefact_token,
+                    apisperu_url, apisperu_token,
+                    detraccion_cuenta_bn, serie_gre_remitente, serie_gre_transportista,
                     enviar_automaticamente_sunat, enviar_automaticamente_cliente,
                     actualizado_en
                 ) VALUES (
-                    1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP
+                    1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (id_config) DO UPDATE SET
                     ruc_emisor = EXCLUDED.ruc_emisor,
@@ -227,9 +342,14 @@ const facturaController = {
                     nombre_comercial = EXCLUDED.nombre_comercial,
                     direccion_fiscal = EXCLUDED.direccion_fiscal,
                     ubigeo = EXCLUDED.ubigeo,
+                    departamento = EXCLUDED.departamento,
+                    provincia = EXCLUDED.provincia,
+                    distrito = EXCLUDED.distrito,
                     modo_integracion = EXCLUDED.modo_integracion,
                     nubefact_ruta = EXCLUDED.nubefact_ruta,
                     nubefact_token = EXCLUDED.nubefact_token,
+                    apisperu_url = EXCLUDED.apisperu_url,
+                    apisperu_token = EXCLUDED.apisperu_token,
                     detraccion_cuenta_bn = EXCLUDED.detraccion_cuenta_bn,
                     serie_gre_remitente = EXCLUDED.serie_gre_remitente,
                     serie_gre_transportista = EXCLUDED.serie_gre_transportista,
@@ -242,10 +362,15 @@ const facturaController = {
                 String(razon_social).trim(),
                 nombre_comercial ? String(nombre_comercial).trim() : String(razon_social).trim(),
                 direccion_fiscal ? String(direccion_fiscal).trim() : '',
-                ubigeo ? String(ubigeo).trim() : '150101',
+                ubigeoLimpio,
+                String(departamento || configActual?.departamento || 'LIMA').trim().toUpperCase(),
+                String(provincia || configActual?.provincia || 'LIMA').trim().toUpperCase(),
+                String(distrito || configActual?.distrito || 'LIMA').trim().toUpperCase(),
                 modoFinal,
                 rutaLimpia || 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
                 tokenLimpio || 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+                apisperuUrlLimpia || DEFAULT_APISPERU_URL,
+                apisperuTokenLimpio,
                 detraccion_cuenta_bn ? String(detraccion_cuenta_bn).trim() : '00-000-000000',
                 serieGreRemFinal,
                 serieGreTranspFinal,
@@ -255,7 +380,9 @@ const facturaController = {
 
             res.status(200).json({
                 exito: true,
-                mensaje: 'Configuración de SUNAT y NubeFact guardada correctamente.',
+                mensaje: modoFinal === 'APISPERU'
+                    ? 'Configuración de SUNAT y APIsPERU guardada correctamente.'
+                    : 'Configuración de SUNAT guardada correctamente.',
                 configuracion: rows[0]
             });
         } catch (error) {
@@ -272,6 +399,25 @@ const facturaController = {
         try {
             const config = await obtenerConfigEmisor(pool);
             const modo = req.body?.modo_integracion || config.modo_integracion;
+
+            if (modo === 'APISPERU') {
+                const resultadoApisperu = await probarConexionApisperu({
+                    configEmisor: {
+                        ...config,
+                        ...(req.body?.ruc_emisor ? { ruc_emisor: req.body.ruc_emisor } : {}),
+                        ...(req.body?.razon_social ? { razon_social: req.body.razon_social } : {}),
+                        ...(req.body?.direccion_fiscal ? { direccion_fiscal: req.body.direccion_fiscal } : {}),
+                        ...(req.body?.ubigeo ? { ubigeo: req.body.ubigeo } : {}),
+                        ...(req.body?.departamento ? { departamento: req.body.departamento } : {}),
+                        ...(req.body?.provincia ? { provincia: req.body.provincia } : {}),
+                        ...(req.body?.distrito ? { distrito: req.body.distrito } : {})
+                    },
+                    apisperuUrl: req.body?.apisperu_url,
+                    apisperuToken: req.body?.apisperu_token
+                });
+                return res.status(200).json(resultadoApisperu);
+            }
+
             const ruta = req.body?.nubefact_ruta || config.nubefact_ruta;
             const token = req.body?.nubefact_token || config.nubefact_token;
 
@@ -279,7 +425,7 @@ const facturaController = {
                 return res.status(200).json({
                     exito: true,
                     modo: 'DEMO_NUBEFACT',
-                    mensaje: `Conexión DEMO NubeFact API v1 activa para RUC ${config.ruc_emisor} (${config.razon_social}). Generación de XML UBL 2.1, Firma Hash SHA-256, QR oficial y CDR código 0 operativa al 100%.`
+                    mensaje: `Conexión DEMO Sandbox activa para RUC ${config.ruc_emisor} (${config.razon_social}). Generación de XML UBL 2.1, Firma Hash SHA-256, QR oficial y CDR código 0 operativa al 100%.`
                 });
             }
 
@@ -380,12 +526,19 @@ const facturaController = {
         }
 
         const latenciaTotal = Date.now() - inicioMs;
-        if (config?.modo_integracion === 'NUBEFACT_REAL' && config?.nubefact_ruta && !config.nubefact_ruta.includes('demo-integrada-erp')) {
+        const modoActivo = resolverModoIntegracion(config);
+        const urlOseCheck = modoActivo === 'APISPERU'
+            ? obtenerCredencialesApisperu(config).baseUrl
+            : (modoActivo === 'NUBEFACT_REAL' && config?.nubefact_ruta && !config.nubefact_ruta.includes('demo-integrada-erp')
+                ? config.nubefact_ruta
+                : '');
+
+        if (urlOseCheck) {
             try {
                 const c2 = new AbortController();
                 const t2 = setTimeout(() => c2.abort(), 3000);
                 try {
-                    const r2 = await fetch(new URL(config.nubefact_ruta).origin, { method: 'HEAD', signal: c2.signal });
+                    const r2 = await fetch(new URL(urlOseCheck).origin, { method: 'HEAD', signal: c2.signal });
                     oseAlcanzable = r2.status < 500;
                 } finally {
                     clearTimeout(t2);
@@ -400,7 +553,7 @@ const facturaController = {
             estado,
             codigo_http: codigoHttp,
             latencia_ms: latenciaTotal,
-            modo_integracion: config?.modo_integracion || 'DEMO_NUBEFACT',
+            modo_integracion: modoActivo,
             ose_alcanzable: oseAlcanzable,
             mensaje: detalle,
             verificado_en: new Date().toISOString()
@@ -522,19 +675,6 @@ const facturaController = {
                     const desgloseDiv = calcularDesgloseTributario(itemDiv, configEmisor.igv_porcentaje);
                     const letrasDiv = numeroALetrasSoles(desgloseDiv.totales.monto_total);
 
-                    const payloadNube = construirPayloadNubefact({
-                        tipo_comprobante: tipoComp,
-                        serie: serieDividida,
-                        correlativo: correlativoDiv,
-                        cliente: cliDividido,
-                        itemsCalculados: desgloseDiv.itemsCalculados,
-                        totales: desgloseDiv.totales,
-                        forma_pago: pago.forma_pago || 'CONTADO',
-                        dias_credito: pago.forma_pago === 'CREDITO' ? (parseInt(pago.dias_credito, 10) || 7) : 0,
-                        medio_pago_sunat: pago.forma_pago === 'CREDITO' ? '006' : '008',
-                        configEmisor
-                    });
-
                     const datosUblDiv = generarXmlUbl21YDatosSunat({
                         tipo_comprobante: tipoComp,
                         serie: serieDividida,
@@ -547,7 +687,20 @@ const facturaController = {
                         forma_pago: pago.forma_pago || 'CONTADO'
                     });
 
-                    const respOseDiv = await enviarAConectorNubefact({ payloadNubefact: payloadNube, configEmisor, datosUbl: datosUblDiv });
+                    const respOseDiv = await emitirComprobanteEnOse({
+                        tipo_comprobante: tipoComp,
+                        serie: serieDividida,
+                        correlativo: correlativoDiv,
+                        cliente: cliDividido,
+                        itemsCalculados: desgloseDiv.itemsCalculados,
+                        totales: desgloseDiv.totales,
+                        forma_pago: pago.forma_pago || 'CONTADO',
+                        dias_credito: pago.forma_pago === 'CREDITO' ? (parseInt(pago.dias_credito, 10) || 7) : 0,
+                        medio_pago_sunat: pago.forma_pago === 'CREDITO' ? '006' : '008',
+                        monto_en_letras: letrasDiv,
+                        configEmisor,
+                        datosUbl: datosUblDiv
+                    });
 
                     const resC = await client.query(`
                         INSERT INTO comprobantes (
@@ -555,8 +708,9 @@ const facturaController = {
                             monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                             monto_igv, monto_total, forma_pago, dias_credito, medio_pago_sunat,
                             estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
-                            enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, modo_emision,
-                            peso_total, es_pago_dividido, monto_dividido, porcentaje_dividido, items_json
+                            enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, cdr_zip_base64,
+                            respuesta_ose_json, modo_emision, peso_total, es_pago_dividido, monto_dividido,
+                            porcentaje_dividido, items_json
                         )
                         VALUES (
                             $1, $2, $3, $4, $5, $6,
@@ -564,7 +718,7 @@ const facturaController = {
                             $11, $12, $13, $14, $15,
                             $16, $17, $18, $19, $20,
                             $21, $22, $23, $24, $25, $26,
-                            $27, TRUE, $28, $29, $30
+                            $27, $28, $29, TRUE, $30, $31, $32
                         ) RETURNING *;
                     `, [
                         id_pedido,
@@ -590,8 +744,10 @@ const facturaController = {
                         respOseDiv.enlace_pdf,
                         respOseDiv.enlace_xml,
                         respOseDiv.enlace_cdr,
-                        datosUblDiv.xmlFirmado,
-                        datosUblDiv.cdrXml,
+                        respOseDiv.xml_firmado || datosUblDiv.xmlFirmado,
+                        respOseDiv.cdr_xml || datosUblDiv.cdrXml,
+                        respOseDiv.cdr_zip_base64 || null,
+                        JSON.stringify(respOseDiv.respuesta_ose_json || {}),
                         respOseDiv.modo_emision,
                         req.body.peso_total || pedido.peso_total || null,
                         montoPago,
@@ -757,24 +913,7 @@ const facturaController = {
                 `, [correlativo, serie]);
             }
 
-            // Construir payload NubeFact API v1 y XML UBL 2.1 firmado + CDR SUNAT
-            const payloadNubefact = construirPayloadNubefact({
-                tipo_comprobante,
-                serie,
-                correlativo,
-                cliente: pedido,
-                itemsCalculados,
-                totales,
-                forma_pago: formaPagoFinal,
-                fecha_vencimiento_cuota: fechaVencimientoFinal,
-                medio_pago_sunat,
-                aplica_detraccion: aplicaDetFinal,
-                codigo_detraccion: aplicaDetFinal ? detInfo.codigo : null,
-                porcentaje_detraccion: porcentajeDetFinal,
-                monto_detraccion: montoDetFinal,
-                configEmisor
-            });
-
+            // Construir payload OSE/PSE (APIsPERU o NubeFact) y XML UBL 2.1 respaldo
             const datosUbl = generarXmlUbl21YDatosSunat({
                 tipo_comprobante,
                 serie,
@@ -788,8 +927,23 @@ const facturaController = {
                 fecha_vencimiento_cuota: fechaVencimientoFinal
             });
 
-            const respuestaOse = await enviarAConectorNubefact({
-                payloadNubefact,
+            const respuestaOse = await emitirComprobanteEnOse({
+                tipo_comprobante,
+                serie,
+                correlativo,
+                cliente: pedido,
+                itemsCalculados,
+                totales,
+                forma_pago: formaPagoFinal,
+                dias_credito: diasCreditoFinal,
+                cantidad_cuotas: cantidadCuotasFinal,
+                fecha_vencimiento_cuota: fechaVencimientoFinal,
+                medio_pago_sunat,
+                aplica_detraccion: aplicaDetFinal,
+                codigo_detraccion: aplicaDetFinal ? detInfo.codigo : null,
+                porcentaje_detraccion: porcentajeDetFinal,
+                monto_detraccion: montoDetFinal,
+                monto_en_letras: montoEnLetras,
                 configEmisor,
                 datosUbl
             });
@@ -805,7 +959,7 @@ const facturaController = {
                     estado_sunat, codigo_hash, mensaje_cdr,
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
-                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
+                    xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision,
                     peso_total, cantidad_cuotas, items_json, estado_pago
                 )
                 VALUES (
@@ -818,8 +972,8 @@ const facturaController = {
                     $22, $23, $24,
                     $25, $26,
                     $27, $28, $29,
-                    $30, $31, $32, $33,
-                    $34, $35, $36, $37
+                    $30, $31, $32, $33, $34,
+                    $35, $36, $37, $38
                 )
                 RETURNING *;
             `;
@@ -853,8 +1007,9 @@ const facturaController = {
                 respuestaOse.enlace_pdf,
                 respuestaOse.enlace_xml,
                 respuestaOse.enlace_cdr,
-                datosUbl.xmlFirmado,
-                datosUbl.cdrXml,
+                respuestaOse.xml_firmado || datosUbl.xmlFirmado,
+                respuestaOse.cdr_xml || datosUbl.cdrXml,
+                respuestaOse.cdr_zip_base64 || null,
                 JSON.stringify(respuestaOse.respuesta_ose_json || {}),
                 respuestaOse.modo_emision,
                 pesoTotalFinal,
@@ -1094,19 +1249,6 @@ const facturaController = {
 
             const descripcionMotivoFinal = `${motivoCat09.nombre}: ${String(motivo).trim()}`;
 
-            const payloadNubefactNC = construirPayloadNubefact({
-                tipo_comprobante: '07',
-                serie: serieNC,
-                correlativo: correlativoNC,
-                cliente: clienteDatos,
-                itemsCalculados,
-                totales,
-                comprobante_referencia: compOriginal,
-                codigo_motivo_nc: motivoCat09.codigo,
-                descripcion_motivo_nc: descripcionMotivoFinal,
-                configEmisor
-            });
-
             const datosUblNC = generarXmlUbl21YDatosSunat({
                 tipo_comprobante: '07',
                 serie: serieNC,
@@ -1121,8 +1263,17 @@ const facturaController = {
                 descripcion_motivo_nc: descripcionMotivoFinal
             });
 
-            const respuestaOseNC = await enviarAConectorNubefact({
-                payloadNubefact: payloadNubefactNC,
+            const respuestaOseNC = await emitirComprobanteEnOse({
+                tipo_comprobante: '07',
+                serie: serieNC,
+                correlativo: correlativoNC,
+                cliente: clienteDatos,
+                itemsCalculados,
+                totales,
+                comprobante_referencia: compOriginal,
+                codigo_motivo_nc: motivoCat09.codigo,
+                descripcion_motivo_nc: descripcionMotivoFinal,
+                monto_en_letras: montoEnLetrasNC,
                 configEmisor,
                 datosUbl: datosUblNC
             });
@@ -1136,17 +1287,17 @@ const facturaController = {
                     estado_sunat, codigo_hash, mensaje_cdr,
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
-                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision
+                    xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision
                 )
                 VALUES (
                     $1, '07', $2, $3,
                     $4, $5, $6, $7,
                     $8, $9,
                     $10, $11, $12,
-                    'ACEPTADO', $13, $14,
-                    $15, $16,
-                    $17, $18, $19,
-                    $20, $21, $22, $23
+                    $13, $14, $15,
+                    $16, $17,
+                    $18, $19, $20,
+                    $21, $22, $23, $24, $25
                 )
                 RETURNING *;
             `, [
@@ -1162,6 +1313,7 @@ const facturaController = {
                 compOriginal.id_comprobante,
                 motivoCat09.codigo,
                 descripcionMotivoFinal,
+                respuestaOseNC.estado_sunat || 'ACEPTADO',
                 respuestaOseNC.codigo_hash,
                 respuestaOseNC.mensaje_cdr,
                 respuestaOseNC.cadena_qr,
@@ -1169,8 +1321,9 @@ const facturaController = {
                 respuestaOseNC.enlace_pdf,
                 respuestaOseNC.enlace_xml,
                 respuestaOseNC.enlace_cdr,
-                datosUblNC.xmlFirmado,
-                datosUblNC.cdrXml,
+                respuestaOseNC.xml_firmado || datosUblNC.xmlFirmado,
+                respuestaOseNC.cdr_xml || datosUblNC.cdrXml,
+                respuestaOseNC.cdr_zip_base64 || null,
                 JSON.stringify(respuestaOseNC.respuesta_ose_json || {}),
                 respuestaOseNC.modo_emision
             ]);
@@ -1442,6 +1595,14 @@ const facturaController = {
 
     descargarCdrComprobante: async (req, res) => {
         return descargarArchivoSunatComprobante(req, res, 'cdr');
+    },
+
+    descargarXmlGre: async (req, res) => {
+        return descargarArchivoSunatGre(req, res, 'xml');
+    },
+
+    descargarCdrGre: async (req, res) => {
+        return descargarArchivoSunatGre(req, res, 'cdr');
     },
 
     obtenerGraficosFacturacion: async (req, res) => {
@@ -1755,21 +1916,6 @@ const facturaController = {
                 ? parseFloat(peso_total) 
                 : itemsValidados.reduce((acc, it) => acc + (Number(it.peso) || 0), 0);
 
-            const payloadNubefact = construirPayloadNubefact({
-                tipo_comprobante,
-                serie,
-                correlativo,
-                cliente,
-                itemsCalculados,
-                totales,
-                forma_pago: formaPagoFinal,
-                dias_credito: diasCreditoFinal,
-                fecha_vencimiento_cuota: fechaVencimientoFinal,
-                medio_pago_sunat: medioPagoFinal,
-                aplica_detraccion: false,
-                configEmisor
-            });
-
             const datosUbl = generarXmlUbl21YDatosSunat({
                 tipo_comprobante,
                 serie,
@@ -1783,8 +1929,20 @@ const facturaController = {
                 fecha_vencimiento_cuota: fechaVencimientoFinal
             });
 
-            const respuestaOse = await enviarAConectorNubefact({
-                payloadNubefact,
+            const respuestaOse = await emitirComprobanteEnOse({
+                tipo_comprobante,
+                serie,
+                correlativo,
+                cliente,
+                itemsCalculados,
+                totales,
+                forma_pago: formaPagoFinal,
+                dias_credito: diasCreditoFinal,
+                cantidad_cuotas: cuotasFinal,
+                fecha_vencimiento_cuota: fechaVencimientoFinal,
+                medio_pago_sunat: medioPagoFinal,
+                aplica_detraccion: false,
+                monto_en_letras: montoEnLetras,
                 configEmisor,
                 datosUbl
             });
@@ -1799,7 +1957,7 @@ const facturaController = {
                     aplica_detraccion, estado_sunat, codigo_hash, mensaje_cdr,
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
-                    xml_firmado, cdr_xml, respuesta_ose_json, modo_emision,
+                    xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision,
                     peso_total, cantidad_cuotas, origen_facturacion, items_json, estado_pago
                 )
                 VALUES (
@@ -1811,8 +1969,8 @@ const facturaController = {
                     FALSE, $16, $17, $18,
                     $19, $20,
                     $21, $22, $23,
-                    $24, $25, $26, $27,
-                    $28, $29, 'MANUAL', $30, $31
+                    $24, $25, $26, $27, $28,
+                    $29, $30, 'MANUAL', $31, $32
                 )
                 RETURNING *;
             `;
@@ -1841,8 +1999,9 @@ const facturaController = {
                 respuestaOse.enlace_pdf,
                 respuestaOse.enlace_xml,
                 respuestaOse.enlace_cdr,
-                datosUbl.xmlFirmado,
-                datosUbl.cdrXml,
+                respuestaOse.xml_firmado || datosUbl.xmlFirmado,
+                respuestaOse.cdr_xml || datosUbl.cdrXml,
+                respuestaOse.cdr_zip_base64 || null,
                 JSON.stringify(respuestaOse.respuesta_ose_json || {}),
                 respuestaOse.modo_emision,
                 pesoFinal,
@@ -1852,6 +2011,20 @@ const facturaController = {
             ]);
 
             const compCreado = resComp.rows[0];
+            if (!compCreado.enlace_xml || !compCreado.enlace_cdr) {
+                const updEnlaces = await client.query(`
+                    UPDATE comprobantes
+                    SET enlace_xml = COALESCE(enlace_xml, $1),
+                        enlace_cdr = COALESCE(enlace_cdr, $2)
+                    WHERE id_comprobante = $3
+                    RETURNING *;
+                `, [
+                    `/api/facturacion/${compCreado.id_comprobante}/xml`,
+                    `/api/facturacion/${compCreado.id_comprobante}/cdr`,
+                    compCreado.id_comprobante
+                ]);
+                Object.assign(compCreado, updEnlaces.rows[0]);
+            }
 
             let guiaRemisionCreada = null;
             if (tipo_comprobante === '01') {

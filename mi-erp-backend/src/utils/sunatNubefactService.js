@@ -1,4 +1,11 @@
 const crypto = require('crypto');
+const {
+    resolverModoIntegracion,
+    formatearFechaHoraPeru,
+    formatearFechaSoloPeru,
+    construirPayloadApisperuComprobante,
+    enviarComprobanteApisperu
+} = require('./apisperuService');
 
 // ============================================================================
 // CATÁLOGOS OFICIALES SUNAT (PERÚ - ANEXO N° 8 UBL 2.1)
@@ -433,8 +440,8 @@ function generarXmlUbl21YDatosSunat({
     const correlativoPadded = String(correlativo).padStart(8, '0');
     const numeroCompleto = `${serie}-${correlativoPadded}`;
     const ahora = new Date();
-    const fechaIso = ahora.toISOString().split('T')[0];
-    const horaIso = ahora.toTimeString().split(' ')[0];
+    const fechaIso = formatearFechaSoloPeru(ahora);
+    const horaIso = formatearFechaHoraPeru(ahora).slice(11, 19);
 
     // Generar DigestValue (Código Hash de 28 caracteres en Base64 como en XMLDSig SHA-256 de SUNAT)
     const semillaFirma = `${rucEmisor}|${tipo_comprobante}|${numeroCompleto}|${totales.monto_igv.toFixed(2)}|${totales.monto_total.toFixed(2)}|${fechaIso}|${cliente.numero_documento}`;
@@ -661,13 +668,13 @@ function generarXmlUbl21YDatosSunat({
 }
 
 // ============================================================================
-// CONECTOR CON NUBEFACT API V1 (SOPORTA DEMO INTEGRADA Y API EXTERNA NUBEFACT)
+// CONECTOR CON NUBEFACT API V1 Y DESPACHADOR UNIFICADO OSE/PSE (APISPERU/NUBEFACT)
 // ============================================================================
 
 async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl }) {
     const rutaEnv = process.env.NUBEFACT_RUTA || configEmisor?.nubefact_ruta || '';
     const tokenEnv = process.env.NUBEFACT_TOKEN || configEmisor?.nubefact_token || '';
-    const modo = process.env.NUBEFACT_MODO || configEmisor?.modo_integracion || 'DEMO_NUBEFACT';
+    const modo = resolverModoIntegracion(configEmisor);
 
     const esUrlDemoInterna =
         !rutaEnv ||
@@ -676,7 +683,7 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
         tokenEnv === 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO';
 
     // Si el usuario configuró su URL y Token reales/demo personalizados de NubeFact en modo NUBEFACT_REAL
-    if (!esUrlDemoInterna) {
+    if (modo === 'NUBEFACT_REAL' && !esUrlDemoInterna) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         try {
@@ -709,6 +716,9 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
                 enlace_pdf: data.enlace_del_pdf || data.enlace || null,
                 enlace_xml: data.enlace_del_xml || null,
                 enlace_cdr: data.enlace_del_cdr || null,
+                xml_firmado: datosUbl?.xmlFirmado || null,
+                cdr_xml: datosUbl?.cdrXml || null,
+                cdr_zip_base64: null,
                 respuesta_ose_json: {
                     ...data,
                     payload_enviado: payloadNubefact
@@ -752,8 +762,41 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
         enlace_pdf: null,
         enlace_xml: null,
         enlace_cdr: null,
+        xml_firmado: datosUbl?.xmlFirmado || null,
+        cdr_xml: datosUbl?.cdrXml || null,
+        cdr_zip_base64: null,
         respuesta_ose_json: respuestaDemoNubefact
     };
+}
+
+/**
+ * Despacha la emisión de Factura (01), Boleta (03) o Nota de Crédito (07)
+ * al proveedor configurado (APIsPERU, NubeFact Real o Demo Sandbox).
+ */
+async function emitirComprobanteEnOse(params) {
+    const { configEmisor = {}, datosUbl = {}, tipo_comprobante } = params;
+    const modo = resolverModoIntegracion(configEmisor);
+
+    if (modo === 'APISPERU') {
+        const montoEnLetras = params.monto_en_letras || numeroALetrasSoles(params.totales?.monto_total || 0);
+        const payloadApisperu = construirPayloadApisperuComprobante({
+            ...params,
+            monto_en_letras: montoEnLetras
+        });
+        return await enviarComprobanteApisperu({
+            payloadApisperu,
+            tipo_comprobante,
+            configEmisor,
+            datosUblFallback: datosUbl
+        });
+    }
+
+    const payloadNubefact = construirPayloadNubefact(params);
+    return await enviarAConectorNubefact({
+        payloadNubefact,
+        configEmisor,
+        datosUbl
+    });
 }
 
 module.exports = {
@@ -763,6 +806,7 @@ module.exports = {
     calcularDesgloseTributario,
     construirPayloadNubefact,
     generarXmlUbl21YDatosSunat,
-    enviarAConectorNubefact
+    enviarAConectorNubefact,
+    emitirComprobanteEnOse
 };
 

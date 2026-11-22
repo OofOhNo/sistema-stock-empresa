@@ -1,7 +1,16 @@
+const {
+    resolverModoIntegracion,
+    construirPayloadApisperuGre,
+    enviarGreApisperu,
+    consultarGreTicketApisperu
+} = require('./apisperuService');
+
 function esModoDemoNubefact(configEmisor = {}) {
+    const modo = resolverModoIntegracion(configEmisor);
+    if (modo === 'APISPERU') return false;
+
     const rutaEnv = process.env.NUBEFACT_RUTA || configEmisor?.nubefact_ruta || '';
     const tokenEnv = process.env.NUBEFACT_TOKEN || configEmisor?.nubefact_token || '';
-    const modo = process.env.NUBEFACT_MODO || configEmisor?.modo_integracion || 'DEMO_NUBEFACT';
 
     return (
         !rutaEnv ||
@@ -216,17 +225,32 @@ function validarDatosMinimosGreReal(payload) {
     }
 }
 
-async function enviarGreAOse({ payloadNubefact, configEmisor, cadenaQrLocal }) {
+async function enviarGreAOse({ payloadNubefact, apisperuParams = null, configEmisor, cadenaQrLocal }) {
+    const modo = resolverModoIntegracion(configEmisor);
+
+    if (modo === 'APISPERU' && apisperuParams) {
+        const payloadApisperu = construirPayloadApisperuGre(apisperuParams);
+        return await enviarGreApisperu({
+            payloadApisperu,
+            configEmisor,
+            cadenaQrLocal
+        });
+    }
+
     if (esModoDemoNubefact(configEmisor)) {
         return {
             modo_emision: 'DEMO_NUBEFACT',
             estado_sunat: 'ACEPTADO',
             codigo_hash: null,
-            mensaje_cdr: 'GRE emitida en modo DEMO NubeFact (sin envío fiscal a SUNAT).',
+            ticket_sunat: null,
+            mensaje_cdr: 'GRE emitida en modo DEMO Sandbox (sin envío fiscal a SUNAT).',
             cadena_qr: cadenaQrLocal,
             enlace_pdf: null,
             enlace_xml: null,
             enlace_cdr: null,
+            xml_firmado: null,
+            cdr_xml: null,
+            cdr_zip_base64: null,
             respuesta_ose_json: {
                 modo: 'DEMO_NUBEFACT_GRE',
                 aceptada_por_sunat: true,
@@ -259,11 +283,15 @@ async function enviarGreAOse({ payloadNubefact, configEmisor, cadenaQrLocal }) {
         modo_emision: 'NUBEFACT_REAL',
         estado_sunat: aceptada ? 'ACEPTADO' : 'PENDIENTE_ENVIO',
         codigo_hash: data.codigo_hash || null,
+        ticket_sunat: null,
         mensaje_cdr: data.sunat_description || data.mensaje || (aceptada ? 'La guía de remisión ha sido aceptada por SUNAT.' : 'GRE enviada a NubeFact; esperando confirmación CDR de SUNAT.'),
         cadena_qr: data.cadena_para_codigo_qr || cadenaQrLocal,
         enlace_pdf: data.enlace_del_pdf || data.enlace || null,
         enlace_xml: data.enlace_del_xml || null,
         enlace_cdr: data.enlace_del_cdr || null,
+        xml_firmado: null,
+        cdr_xml: null,
+        cdr_zip_base64: null,
         respuesta_ose_json: {
             ...data,
             payload_enviado: payloadNubefact
@@ -286,8 +314,60 @@ async function obtenerCatalogosGre(dbClient) {
     };
 }
 
+function armarApisperuGreParams({
+    tipoGre, serie, correlativo, destTipo, destNum, destRazon, destDireccion, destEmail,
+    fechaInicio, motivoTraslado, pesoCalculado, unidadPeso, numeroBultos,
+    modalidadTraslado, partidaUbigeo, partidaDireccion, llegadaUbigeo, llegadaDir,
+    vehPlaca, vehEntidad, vehNumAutoriz, condTipoDoc, condNumDoc, condNombres, condLicencia,
+    observaciones, trasladoVehiculoM1L, retornoEnvasesVacios, retornoVehiculoVacio, transbordoProgramado,
+    documentoRelacionado, bienes, configEmisor
+}) {
+    const tipoTransporte = String(modalidadTraslado || '').toLowerCase().includes('p') &&
+        String(modalidadTraslado || '').toLowerCase().includes('blic')
+        ? '01'
+        : '02';
+    const { nombre, apellidos } = dividirNombreConductor(condNombres);
+    return {
+        tipoGre,
+        serie,
+        correlativo,
+        destTipo,
+        destNum,
+        destRazon,
+        destDireccion,
+        destEmail,
+        fechaInicio,
+        motivoCodigo: mapearMotivoTrasladoSunat(motivoTraslado),
+        desTraslado: motivoTraslado || 'Venta',
+        pesoCalculado,
+        unidadPeso,
+        numeroBultos,
+        tipoTransporte,
+        partidaUbigeo,
+        partidaDireccion,
+        llegadaUbigeo,
+        llegadaDir,
+        vehPlaca,
+        vehEntidad,
+        vehNumAutoriz,
+        condTipoDoc: mapearTipoDocConductor(condTipoDoc),
+        condNumDoc,
+        condNombre: nombre,
+        condApellidos: apellidos,
+        condLicencia,
+        observaciones,
+        trasladoVehiculoM1L: Boolean(trasladoVehiculoM1L),
+        retornoEnvasesVacios: Boolean(retornoEnvasesVacios),
+        retornoVehiculoVacio: Boolean(retornoVehiculoVacio),
+        transbordoProgramado: Boolean(transbordoProgramado),
+        documentoRelacionado,
+        bienes,
+        configEmisor
+    };
+}
+
 /**
- * Emite una Guía de Remisión Electrónica (enviando a NubeFact si está en NUBEFACT_REAL)
+ * Emite una Guía de Remisión Electrónica (enviando a APIsPERU o NubeFact según configuración)
  * y la vincula automáticamente con el comprobante (Factura 01) emitido si aplica.
  */
 async function crearGreInterna(client, {
@@ -450,7 +530,7 @@ async function crearGreInterna(client, {
     const rucEmisor = configEmisor?.ruc_emisor || '20608725394';
     const cadenaQrLocal = `https://e-factura.sunat.gob.pe/v1/contribuyente/gre/comprobantes/descargaqr?hashqr=${rucEmisor}-${tipoCodSunat}-${serie}-${String(correlativo).padStart(8, '0')}`;
 
-    const payloadNubefact = construirPayloadNubefactGre({
+    const grePayloadParams = {
         tipoGre,
         serie,
         correlativo,
@@ -470,20 +550,30 @@ async function crearGreInterna(client, {
         llegadaUbigeo,
         llegadaDir,
         vehPlaca,
+        vehEntidad,
+        vehNumAutoriz,
         condTipoDoc,
         condNumDoc,
         condNombres,
         condLicencia,
         observaciones: gre.observaciones || '',
+        trasladoVehiculoM1L: gre.traslado_vehiculo_m1_l,
+        retornoEnvasesVacios: gre.retorno_envases_vacios,
+        retornoVehiculoVacio: gre.retorno_vehiculo_vacio,
+        transbordoProgramado: gre.transbordo_programado,
         documentoRelacionado: docRel,
         bienes,
         configEmisor
-    });
+    };
+
+    const payloadNubefact = construirPayloadNubefactGre(grePayloadParams);
+    const apisperuParams = armarApisperuGreParams(grePayloadParams);
 
     let resultadoOse;
     try {
         resultadoOse = await enviarGreAOse({
             payloadNubefact,
+            apisperuParams,
             configEmisor,
             cadenaQrLocal
         });
@@ -491,19 +581,24 @@ async function crearGreInterna(client, {
         if (!noLanzarSiFallaOse) {
             throw err;
         }
-        // Si la Factura (01) ya fue aceptada por NubeFact/SUNAT, guardamos la GRE como OBSERVADO para reintentar sin perder la factura
+        // Si la Factura (01) ya fue aceptada por SUNAT, guardamos la GRE como OBSERVADO para reintentar sin perder la factura
+        const modoFallback = resolverModoIntegracion(configEmisor);
         resultadoOse = {
-            modo_emision: esModoDemoNubefact(configEmisor) ? 'DEMO_NUBEFACT' : 'NUBEFACT_REAL',
+            modo_emision: modoFallback,
             estado_sunat: 'OBSERVADO',
             codigo_hash: null,
+            ticket_sunat: null,
             mensaje_cdr: err.message,
             cadena_qr: cadenaQrLocal,
             enlace_pdf: null,
             enlace_xml: null,
             enlace_cdr: null,
+            xml_firmado: null,
+            cdr_xml: null,
+            cdr_zip_base64: null,
             respuesta_ose_json: {
                 errors: err.message,
-                payload_enviado: payloadNubefact
+                payload_enviado: modoFallback === 'APISPERU' ? apisperuParams : payloadNubefact
             }
         };
     }
@@ -521,7 +616,8 @@ async function crearGreInterna(client, {
             vehiculo_placa, vehiculo_entidad_autoriz, vehiculo_num_autoriz,
             conductor_tipo_doc, conductor_num_doc, conductor_nombres, conductor_licencia,
             bienes_json, cadena_qr, estado_sunat,
-            codigo_hash, mensaje_cdr, enlace_pdf, enlace_xml, enlace_cdr,
+            codigo_hash, ticket_sunat, mensaje_cdr, enlace_pdf, enlace_xml, enlace_cdr,
+            xml_firmado, cdr_xml, cdr_zip_base64,
             modo_emision, respuesta_ose_json,
             documento_relacionado_tipo, documento_relacionado_serie, documento_relacionado_numero,
             creado_por
@@ -538,10 +634,11 @@ async function crearGreInterna(client, {
             $24, $25, $26,
             $27, $28, $29, $30,
             $31, $32, $33,
-            $34, $35, $36, $37, $38,
-            $39, $40,
-            $41, $42, $43,
-            $44
+            $34, $35, $36, $37, $38, $39,
+            $40, $41, $42,
+            $43, $44,
+            $45, $46, $47,
+            $48
         )
         RETURNING *, TO_CHAR(fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso;
     `, [
@@ -579,10 +676,14 @@ async function crearGreInterna(client, {
         resultadoOse.cadena_qr,
         resultadoOse.estado_sunat,
         resultadoOse.codigo_hash,
+        resultadoOse.ticket_sunat || null,
         resultadoOse.mensaje_cdr,
         resultadoOse.enlace_pdf,
         resultadoOse.enlace_xml,
         resultadoOse.enlace_cdr,
+        resultadoOse.xml_firmado || null,
+        resultadoOse.cdr_xml || null,
+        resultadoOse.cdr_zip_base64 || null,
         resultadoOse.modo_emision,
         JSON.stringify(resultadoOse.respuesta_ose_json || {}),
         docRel?.tipo_comprobante || null,
@@ -591,11 +692,25 @@ async function crearGreInterna(client, {
         idUsuario
     ]);
 
-    return rows[0];
+    const greCreada = rows[0];
+    if ((greCreada.xml_firmado && !greCreada.enlace_xml) || ((greCreada.cdr_xml || greCreada.cdr_zip_base64) && !greCreada.enlace_cdr)) {
+        const xmlPath = greCreada.xml_firmado ? `/api/facturacion/gre/${greCreada.id_gre}/xml` : null;
+        const cdrPath = (greCreada.cdr_xml || greCreada.cdr_zip_base64) ? `/api/facturacion/gre/${greCreada.id_gre}/cdr` : null;
+        const updGre = await client.query(`
+            UPDATE guias_remision
+            SET enlace_xml = COALESCE(enlace_xml, $1),
+                enlace_cdr = COALESCE(enlace_cdr, $2)
+            WHERE id_gre = $3
+            RETURNING *, TO_CHAR(fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso;
+        `, [xmlPath, cdrPath, greCreada.id_gre]);
+        return updGre.rows[0];
+    }
+
+    return greCreada;
 }
 
 /**
- * Consulta el estado en NubeFact/SUNAT de una GRE ya emitida y actualiza sus enlaces PDF/XML/CDR.
+ * Consulta el estado en APIsPERU o NubeFact de una GRE ya emitida y actualiza su CDR/estado.
  */
 async function consultarGreEnNubefact(dbPool, idGre, configEmisor) {
     const resGre = await dbPool.query('SELECT * FROM guias_remision WHERE id_gre = $1', [idGre]);
@@ -603,8 +718,39 @@ async function consultarGreEnNubefact(dbPool, idGre, configEmisor) {
         throw new Error('Guía de Remisión no encontrada.');
     }
     const greRow = resGre.rows[0];
-    if (esModoDemoNubefact(configEmisor) || greRow.modo_emision === 'DEMO_NUBEFACT') {
+    if (greRow.modo_emision === 'DEMO_NUBEFACT' || resolverModoIntegracion(configEmisor) === 'DEMO_NUBEFACT') {
         return greRow;
+    }
+
+    if (greRow.modo_emision === 'APISPERU' || resolverModoIntegracion(configEmisor) === 'APISPERU') {
+        const resTicket = await consultarGreTicketApisperu(greRow, configEmisor);
+        const enlaceCdrNuevo = (resTicket.cdr_xml || resTicket.cdr_zip_base64)
+            ? `/api/facturacion/gre/${idGre}/cdr`
+            : null;
+        const enlaceXmlNuevo = greRow.xml_firmado ? `/api/facturacion/gre/${idGre}/xml` : null;
+
+        const { rows } = await dbPool.query(`
+            UPDATE guias_remision
+            SET estado_sunat = $1,
+                mensaje_cdr = COALESCE($2, mensaje_cdr),
+                cdr_xml = COALESCE($3, cdr_xml),
+                cdr_zip_base64 = COALESCE($4, cdr_zip_base64),
+                enlace_xml = COALESCE(enlace_xml, $5),
+                enlace_cdr = COALESCE(enlace_cdr, $6),
+                respuesta_ose_json = COALESCE(respuesta_ose_json, '{}'::jsonb) || $7::jsonb
+            WHERE id_gre = $8
+            RETURNING *, TO_CHAR(fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso;
+        `, [
+            resTicket.estado_sunat,
+            resTicket.mensaje_cdr,
+            resTicket.cdr_xml,
+            resTicket.cdr_zip_base64,
+            enlaceXmlNuevo,
+            enlaceCdrNuevo,
+            JSON.stringify({ status: resTicket.respuesta_ose_json }),
+            idGre
+        ]);
+        return rows[0];
     }
 
     const tipoComp = greRow.tipo_gre === 'TRANSPORTISTA' ? 8 : 7;
@@ -645,7 +791,7 @@ async function consultarGreEnNubefact(dbPool, idGre, configEmisor) {
 }
 
 /**
- * Reenvía a NubeFact una GRE que quedó en estado OBSERVADO o PENDIENTE_ENVIO.
+ * Reenvía a APIsPERU o NubeFact una GRE que quedó en estado OBSERVADO o PENDIENTE_ENVIO.
  */
 async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
     const resGre = await dbPool.query(`
@@ -667,7 +813,7 @@ async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
         }
         : null;
 
-    const payloadNubefact = construirPayloadNubefactGre({
+    const grePayloadParams = {
         tipoGre: g.tipo_gre,
         serie: g.serie,
         correlativo: g.correlativo,
@@ -686,42 +832,63 @@ async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
         llegadaUbigeo: g.punto_llegada_ubigeo,
         llegadaDir: g.punto_llegada_direccion,
         vehPlaca: g.vehiculo_placa,
+        vehEntidad: g.vehiculo_entidad_autoriz,
+        vehNumAutoriz: g.vehiculo_num_autoriz,
         condTipoDoc: g.conductor_tipo_doc,
         condNumDoc: g.conductor_num_doc,
         condNombres: g.conductor_nombres,
         condLicencia: g.conductor_licencia,
+        trasladoVehiculoM1L: g.traslado_vehiculo_m1_l,
+        retornoEnvasesVacios: g.retorno_envases_vacios,
+        retornoVehiculoVacio: g.retorno_vehiculo_vacio,
+        transbordoProgramado: g.transbordo_programado,
         documentoRelacionado: docRel,
         bienes: Array.isArray(g.bienes_json) ? g.bienes_json : [],
         configEmisor
-    });
+    };
+
+    const payloadNubefact = construirPayloadNubefactGre(grePayloadParams);
+    const apisperuParams = armarApisperuGreParams(grePayloadParams);
 
     const resultadoOse = await enviarGreAOse({
         payloadNubefact,
+        apisperuParams,
         configEmisor,
         cadenaQrLocal: g.cadena_qr
     });
+
+    const enlaceXmlFinal = resultadoOse.enlace_xml || (resultadoOse.xml_firmado ? `/api/facturacion/gre/${idGre}/xml` : null);
+    const enlaceCdrFinal = resultadoOse.enlace_cdr || ((resultadoOse.cdr_xml || resultadoOse.cdr_zip_base64) ? `/api/facturacion/gre/${idGre}/cdr` : null);
 
     const { rows } = await dbPool.query(`
         UPDATE guias_remision
         SET estado_sunat = $1,
             codigo_hash = $2,
-            mensaje_cdr = $3,
-            cadena_qr = $4,
-            enlace_pdf = $5,
-            enlace_xml = $6,
-            enlace_cdr = $7,
-            modo_emision = $8,
-            respuesta_ose_json = $9::jsonb
-        WHERE id_gre = $10
+            ticket_sunat = $3,
+            mensaje_cdr = $4,
+            cadena_qr = $5,
+            enlace_pdf = $6,
+            enlace_xml = $7,
+            enlace_cdr = $8,
+            xml_firmado = COALESCE($9, xml_firmado),
+            cdr_xml = COALESCE($10, cdr_xml),
+            cdr_zip_base64 = COALESCE($11, cdr_zip_base64),
+            modo_emision = $12,
+            respuesta_ose_json = $13::jsonb
+        WHERE id_gre = $14
         RETURNING *, TO_CHAR(fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso;
     `, [
         resultadoOse.estado_sunat,
         resultadoOse.codigo_hash,
+        resultadoOse.ticket_sunat || null,
         resultadoOse.mensaje_cdr,
         resultadoOse.cadena_qr,
         resultadoOse.enlace_pdf,
-        resultadoOse.enlace_xml,
-        resultadoOse.enlace_cdr,
+        enlaceXmlFinal,
+        enlaceCdrFinal,
+        resultadoOse.xml_firmado || null,
+        resultadoOse.cdr_xml || null,
+        resultadoOse.cdr_zip_base64 || null,
         resultadoOse.modo_emision,
         JSON.stringify(resultadoOse.respuesta_ose_json || {}),
         idGre
