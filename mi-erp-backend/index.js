@@ -61,10 +61,14 @@ const limiterGeneralApi = rateLimit({
   }
 });
 
-// Asegurar carpeta de uploads
+// Asegurar carpetas de uploads
 const uploadsDir = path.join(__dirname, 'uploads/pedidos');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
+}
+const uploadsMensajesDir = path.join(__dirname, 'uploads/mensajes');
+if (!fs.existsSync(uploadsMensajesDir)) {
+  fs.mkdirSync(uploadsMensajesDir, { recursive: true });
 }
 
 app.use(express.json({ limit: '20mb' }));
@@ -162,12 +166,15 @@ app.use('/api/pagos-calendario', pagosCalendarioRoutes);
 app.use((err, req, res, next) => {
   if (!err) return next();
   if (err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ exito: false, mensaje: 'La imagen supera el tamaño máximo permitido (30 MB).' });
+    return res.status(413).json({ exito: false, mensaje: 'El archivo supera el tamaño máximo permitido (25-30 MB).' });
   }
   if (err.status === 403) {
     return res.status(403).json({ exito: false, mensaje: err.message });
   }
-  if (err.message && err.message.includes('Solo se permiten archivos de imagen')) {
+  if (err.message && (
+    err.message.includes('Solo se permiten archivos') ||
+    err.message.includes('Tipo de archivo no permitido')
+  )) {
     return res.status(400).json({ exito: false, mensaje: err.message });
   }
   console.error('Error no controlado en API:', err.message);

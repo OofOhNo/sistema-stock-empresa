@@ -30,11 +30,13 @@ router.post('/grupos/:id_grupo/miembros', mensajeController.agregarMiembrosGrupo
 router.patch('/grupos/:id_grupo/miembros/:id_usuario/rol', mensajeController.cambiarRolMiembroGrupo);
 router.delete('/grupos/:id_grupo/miembros/:id_usuario', mensajeController.quitarOSalirGrupo);
 router.delete('/grupos/:id_grupo', mensajeController.eliminarGrupo);
+router.get('/adjuntos/:archivo', mensajeController.descargarOServirAdjunto);
 router.get('/grupos/:id_grupo/mensajes', mensajeController.obtenerMensajesGrupo);
-router.post('/grupos/:id_grupo/mensajes', mensajeController.enviarMensajeGrupo);
+router.post('/grupos/:id_grupo/mensajes', mensajeController.middlewareAdjunto, mensajeController.enviarMensajeGrupo);
 
 // Cada usuario vincula, consulta y administra su propia sesión individual de WhatsApp QR
 router.get('/whatsapp/estado', mensajeController.estadoWhatsApp);
+router.get('/whatsapp/grupos', mensajeController.listarGruposWhatsAppHandler);
 router.post('/whatsapp/vincular', mensajeController.vincularWhatsAppHandler);
 router.post('/whatsapp/desconectar', mensajeController.desconectarWhatsAppHandler);
 
@@ -44,7 +46,7 @@ router.get('/supervision/:u1/:u2', soloAdminCentral, mensajeController.supervisa
 router.get('/supervision-grupos', soloAdminCentral, mensajeController.supervisarGrupos);
 router.get('/supervision-grupos/:id_grupo', soloAdminCentral, mensajeController.supervisarGrupoDetalle);
 
-router.post('/', mensajeController.enviarMensaje);
+router.post('/', mensajeController.middlewareAdjunto, mensajeController.enviarMensaje);
 router.post('/:id/whatsapp', mensajeController.reenviarWhatsAppMensaje);
 
 module.exports = router;

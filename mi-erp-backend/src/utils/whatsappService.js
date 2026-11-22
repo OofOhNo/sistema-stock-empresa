@@ -1,3 +1,4 @@
+const fs = require('fs');
 const QRCode = require('qrcode');
 const pino = require('pino');
 const pool = require('../config/db');
@@ -555,7 +556,27 @@ async function resolverJidsWhatsAppPorTelefonos(sock, telefonos = [], numeroProp
     }
 }
 
-async function enviarMensajeWhatsApp(idUsuarioEmisor, telefonoDestino, texto) {
+function construirContenidoMensajeWhatsApp({ texto = '', adjunto = null }) {
+    const textoLimpio = String(texto || '').trim();
+    if (adjunto && adjunto.rutaLocal && fs.existsSync(adjunto.rutaLocal)) {
+        if (adjunto.tipo === 'IMAGEN') {
+            return {
+                image: { url: adjunto.rutaLocal },
+                ...(textoLimpio ? { caption: textoLimpio } : {}),
+                ...(adjunto.mime ? { mimetype: adjunto.mime } : {})
+            };
+        }
+        return {
+            document: { url: adjunto.rutaLocal },
+            mimetype: adjunto.mime || 'application/octet-stream',
+            fileName: adjunto.nombre || 'archivo',
+            ...(textoLimpio ? { caption: textoLimpio } : {})
+        };
+    }
+    return { text: textoLimpio };
+}
+
+async function enviarMensajeWhatsApp(idUsuarioEmisor, telefonoDestino, texto, adjunto = null) {
     const numero = normalizarNumeroWhatsApp(telefonoDestino);
     if (!numero) {
         return {
@@ -595,7 +616,8 @@ async function enviarMensajeWhatsApp(idUsuarioEmisor, telefonoDestino, texto) {
     }
 
     try {
-        await conn.sock.sendMessage(jidFinal, { text: String(texto || '').trim() });
+        const contenido = construirContenidoMensajeWhatsApp({ texto, adjunto });
+        await conn.sock.sendMessage(jidFinal, contenido);
         return {
             enviado: true,
             numero,
@@ -607,6 +629,89 @@ async function enviarMensajeWhatsApp(idUsuarioEmisor, telefonoDestino, texto) {
             enviado: false,
             codigo: 'ERROR_ENVIO_WHATSAPP',
             mensaje: `No se pudo entregar el mensaje por WhatsApp (${sendErr?.message || 'error de conexión'}).`
+        };
+    }
+}
+
+async function listarGruposWhatsApp(idUsuario) {
+    const conn = obtenerSocketConectado(idUsuario);
+    if (!conn.ok) {
+        return {
+            ok: false,
+            codigo: conn.codigo,
+            grupos: [],
+            mensaje: 'Vincula tu WhatsApp (QR) primero para ver tus grupos existentes de WhatsApp.'
+        };
+    }
+
+    try {
+        const mapa = await conn.sock.groupFetchAllParticipating();
+        const grupos = Object.values(mapa || {})
+            .filter((g) => g && g.id && !g.isCommunity)
+            .map((g) => ({
+                jid: g.id,
+                nombre: g.subject || 'Grupo sin nombre',
+                descripcion: g.desc || '',
+                total_participantes: g.size || (Array.isArray(g.participants) ? g.participants.length : 0),
+                es_comunidad_anuncios: Boolean(g.isCommunityAnnounce)
+            }))
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+        return { ok: true, grupos };
+    } catch (err) {
+        console.error(`Error listando grupos de WhatsApp (usuario #${conn.userId}):`, err?.message || err);
+        return {
+            ok: false,
+            codigo: 'ERROR_LISTAR_GRUPOS_WA',
+            grupos: [],
+            mensaje: `No se pudieron cargar tus grupos de WhatsApp (${err?.message || 'error de conexión'}).`
+        };
+    }
+}
+
+async function validarGrupoWhatsAppExistente(idUsuario, groupJid) {
+    const jidLimpio = String(groupJid || '').trim();
+    if (!jidLimpio || !jidLimpio.endsWith('@g.us')) {
+        return {
+            valido: false,
+            codigo: 'JID_INVALIDO',
+            mensaje: 'El grupo seleccionado no tiene un identificador válido de WhatsApp.'
+        };
+    }
+
+    const conn = obtenerSocketConectado(idUsuario);
+    if (!conn.ok) {
+        return {
+            valido: false,
+            codigo: conn.codigo,
+            mensaje: 'Conecta tu WhatsApp (QR) primero para vincular un grupo existente de WhatsApp.'
+        };
+    }
+
+    try {
+        const meta = await conn.sock.groupMetadata(jidLimpio);
+        if (!meta?.id) {
+            return {
+                valido: false,
+                codigo: 'GRUPO_NO_ENCONTRADO',
+                mensaje: 'No se encontró ese grupo en tu WhatsApp.'
+            };
+        }
+        return {
+            valido: true,
+            grupo: {
+                jid: meta.id,
+                nombre: meta.subject || '',
+                descripcion: meta.desc || '',
+                total_participantes: meta.size || (Array.isArray(meta.participants) ? meta.participants.length : 0)
+            }
+        };
+    } catch (err) {
+        console.warn(`Error validando grupo WA ${jidLimpio}:`, err?.message || err);
+        return {
+            valido: false,
+            codigo: 'GRUPO_NO_ACCESIBLE',
+            mensaje: 'No pudimos acceder a ese grupo desde tu cuenta de WhatsApp. Verifica que sigas formando parte de él.'
         };
     }
 }
@@ -673,7 +778,8 @@ async function enviarMensajeGrupoWhatsApp(idUsuarioEmisor, {
     nombre = '',
     descripcion = '',
     telefonosParticipantes = [],
-    texto = ''
+    texto = '',
+    adjunto = null
 }) {
     const conn = obtenerSocketConectado(idUsuarioEmisor);
     if (!conn.ok) {
@@ -709,7 +815,8 @@ async function enviarMensajeGrupoWhatsApp(idUsuarioEmisor, {
     }
 
     try {
-        await conn.sock.sendMessage(jidDestino, { text: String(texto || '').trim() });
+        const contenido = construirContenidoMensajeWhatsApp({ texto, adjunto });
+        await conn.sock.sendMessage(jidDestino, contenido);
         return {
             enviado: true,
             groupJid: jidDestino,
@@ -852,6 +959,8 @@ module.exports = {
     obtenerEstadoWhatsApp,
     enviarMensajeWhatsApp,
     crearGrupoWhatsApp,
+    listarGruposWhatsApp,
+    validarGrupoWhatsAppExistente,
     enviarMensajeGrupoWhatsApp,
     sincronizarGrupoEnWhatsApp,
     actualizarGrupoWhatsApp,

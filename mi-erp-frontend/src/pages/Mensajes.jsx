@@ -6,9 +6,11 @@ import {
   CheckCheck, Check, ArrowLeft, Phone,
   QrCode, Wifi, RefreshCw, X, Loader2,
   Users, UserPlus, UserMinus, Shield, LogOut,
-  Trash2, Plus, Edit2
+  Trash2, Plus, Edit2, Paperclip, FileText,
+  Download, Link2
 } from 'lucide-react';
 import { normalizarNumeroWhatsApp } from '../utils/whatsapp';
+import ImagenAutenticada from '../components/ImagenAutenticada';
 
 const COLORES_EMISOR_GRUPO = [
   'text-emerald-700',
@@ -22,6 +24,308 @@ const COLORES_EMISOR_GRUPO = [
 function colorEmisorGrupo(idUsuario) {
   const idx = Math.abs(Number(idUsuario) || 0) % COLORES_EMISOR_GRUPO.length;
   return COLORES_EMISOR_GRUPO[idx];
+}
+
+function formatearTamanoArchivo(bytes) {
+  const n = Number(bytes) || 0;
+  if (n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function resumirTextoConAdjunto(texto, adjuntoNombre, adjuntoTipo) {
+  const t = String(texto || '').trim();
+  if (t) return t;
+  if (adjuntoTipo === 'IMAGEN') return '📷 Foto';
+  if (adjuntoNombre) return `📎 ${adjuntoNombre}`;
+  return '';
+}
+
+async function descargarAdjuntoDesdeApi(url, nombreArchivo = 'archivo') {
+  if (!url) return;
+  const rutaBase = String(url).replace(/^\/api(?=\/)/i, '');
+  const sep = rutaBase.includes('?') ? '&' : '?';
+  const res = await api.get(`${rutaBase}${sep}download=1`, { responseType: 'blob' });
+  const blobUrl = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = nombreArchivo || 'archivo';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+function AdjuntoEnBurbuja({ mensaje, soyEmisor, esOscuro = false, onPreviewImagen }) {
+  if (!mensaje?.adjunto_url) return null;
+  const esImagen = mensaje.adjunto_tipo === 'IMAGEN';
+  const nombre = mensaje.adjunto_nombre || (esImagen ? 'Imagen' : 'Archivo');
+  const tamanoTxt = formatearTamanoArchivo(mensaje.adjunto_tamano);
+
+  if (esImagen) {
+    return (
+      <div className="mb-1.5">
+        <button
+          type="button"
+          onClick={() => onPreviewImagen?.({ url: mensaje.adjunto_url, nombre })}
+          className="block rounded-xl overflow-hidden border border-black/10 hover:opacity-95 transition-opacity cursor-zoom-in text-left"
+          title="Haz clic para ampliar la foto"
+        >
+          <ImagenAutenticada
+            urlFoto={mensaje.adjunto_url}
+            alt={nombre}
+            className="max-h-60 max-w-[260px] w-full object-cover bg-slate-200"
+          />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void descargarAdjuntoDesdeApi(mensaje.adjunto_url, nombre).catch(() => {
+          toast.error('No se pudo descargar el archivo.');
+        });
+      }}
+      className={`w-full mb-1.5 px-3 py-2 rounded-xl border flex items-center gap-2.5 text-left transition-colors cursor-pointer ${
+        soyEmisor || esOscuro
+          ? 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
+          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+      }`}
+      title="Descargar archivo"
+    >
+      <div className={`p-1.5 rounded-lg shrink-0 ${
+        soyEmisor || esOscuro ? 'bg-white/20 text-white' : 'bg-indigo-50 text-indigo-600'
+      }`}>
+        <FileText size={16} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] font-bold truncate">{nombre}</p>
+        {tamanoTxt && (
+          <p className={`text-[10px] ${soyEmisor || esOscuro ? 'text-white/75' : 'text-slate-500'}`}>
+            {tamanoTxt}
+          </p>
+        )}
+      </div>
+      <Download size={14} className="shrink-0 opacity-85" />
+    </button>
+  );
+}
+
+function CompositorMensaje({
+  placeholder,
+  valor,
+  onChangeValor,
+  adjuntoPendiente,
+  onSeleccionarArchivo,
+  onQuitarArchivo,
+  onSubmit,
+  onEnviarWhatsapp,
+  mostrarBotonWhatsapp,
+  enviando
+}) {
+  const inputFileRef = useRef(null);
+  const puedeEnviar = !enviando && (Boolean(valor.trim()) || Boolean(adjuntoPendiente));
+
+  const manejarArchivo = (file) => {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error('El archivo supera el límite de 25 MB.');
+      return;
+    }
+    onSeleccionarArchivo(file);
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="p-3 border-t border-slate-200 bg-white shrink-0 space-y-2">
+      {adjuntoPendiente && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {adjuntoPendiente.isImage && adjuntoPendiente.previewUrl ? (
+              <img
+                src={adjuntoPendiente.previewUrl}
+                alt={adjuntoPendiente.name}
+                className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                <FileText size={18} />
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-slate-800 truncate">{adjuntoPendiente.name}</p>
+              <p className="text-[11px] text-slate-500">
+                {adjuntoPendiente.isImage ? 'Foto lista para enviar' : 'Archivo listo para enviar'}
+                {adjuntoPendiente.size ? ` · ${formatearTamanoArchivo(adjuntoPendiente.size)}` : ''}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onQuitarArchivo}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer shrink-0"
+            title="Quitar adjunto"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+        <input
+          ref={inputFileRef}
+          type="file"
+          className="hidden"
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx,.zip,.rar,.7z,.json,.xml"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) manejarArchivo(file);
+            e.target.value = '';
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => inputFileRef.current?.click()}
+          disabled={enviando}
+          className="p-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors cursor-pointer disabled:opacity-40 shrink-0"
+          title="Adjuntar foto o archivo (PDF, Excel, Word, ZIP, etc.)"
+          aria-label="Adjuntar foto o archivo"
+        >
+          <Paperclip size={16} />
+        </button>
+        <input
+          type="text"
+          placeholder={adjuntoPendiente ? 'Agrega un comentario opcional...' : placeholder}
+          value={valor}
+          onChange={(e) => onChangeValor(e.target.value)}
+          onPaste={(e) => {
+            const items = e.clipboardData?.files;
+            if (items && items.length > 0 && items[0].type?.startsWith('image/')) {
+              e.preventDefault();
+              manejarArchivo(items[0]);
+            }
+          }}
+          className="flex-1 min-w-[150px] border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+        />
+        {mostrarBotonWhatsapp && (
+          <button
+            type="button"
+            onClick={onEnviarWhatsapp}
+            disabled={!puedeEnviar}
+            className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+            title="Guarda el mensaje/adjunto aquí y lo envía automáticamente por WhatsApp"
+          >
+            {enviando ? <Loader2 size={14} className="animate-spin" /> : <Phone size={14} />}
+            <span>Enviar + WhatsApp</span>
+          </button>
+        )}
+        <button
+          type="submit"
+          disabled={!puedeEnviar}
+          className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
+        >
+          <Send size={15} />
+          <span>Enviar</span>
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SelectorGrupoWhatsappExistente({
+  grupos,
+  cargando,
+  error,
+  busqueda,
+  onChangeBusqueda,
+  jidSeleccionado,
+  onSeleccionar,
+  onRefrescar
+}) {
+  const filtrados = (grupos || []).filter((g) => {
+    if (!busqueda.trim()) return true;
+    const q = busqueda.toLowerCase();
+    return (g.nombre || '').toLowerCase().includes(q) || (g.descripcion || '').toLowerCase().includes(q);
+  });
+
+  return (
+    <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/40 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-bold text-emerald-900 flex items-center gap-1.5">
+          <Link2 size={13} />
+          <span>Elige un grupo existente de tu WhatsApp</span>
+        </p>
+        <button
+          type="button"
+          onClick={onRefrescar}
+          disabled={cargando}
+          className="px-2 py-1 rounded-lg bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-800 text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw size={11} className={cargando ? 'animate-spin' : ''} />
+          <span>Actualizar</span>
+        </button>
+      </div>
+
+      <div className="relative">
+        <Search size={13} className="absolute left-2.5 top-2 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Buscar entre tus grupos de WhatsApp..."
+          value={busqueda}
+          onChange={(e) => onChangeBusqueda(e.target.value)}
+          className="w-full pl-8 pr-3 py-1.5 bg-white border border-emerald-200 rounded-lg text-xs focus:outline-hidden focus:border-emerald-500"
+        />
+      </div>
+
+      {cargando ? (
+        <div className="flex items-center justify-center gap-2 py-4 text-xs text-slate-500 bg-white rounded-lg border border-emerald-100">
+          <Loader2 size={15} className="animate-spin text-emerald-600" />
+          <span>Cargando tus grupos de WhatsApp...</span>
+        </div>
+      ) : error ? (
+        <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+          {error}
+        </div>
+      ) : filtrados.length === 0 ? (
+        <div className="p-3 rounded-lg bg-white border border-emerald-100 text-center text-[11px] text-slate-500">
+          {grupos.length === 0
+            ? 'No se encontraron grupos en tu cuenta de WhatsApp.'
+            : 'Ningún grupo de WhatsApp coincide con esa búsqueda.'}
+        </div>
+      ) : (
+        <div className="max-h-36 overflow-y-auto divide-y divide-emerald-100 bg-white rounded-lg border border-emerald-200">
+          {filtrados.map((wg) => {
+            const elegido = jidSeleccionado === wg.jid;
+            return (
+              <button
+                key={wg.jid}
+                type="button"
+                onClick={() => onSeleccionar(wg)}
+                className={`w-full px-3 py-2 text-left flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors ${
+                  elegido ? 'bg-emerald-100/80 text-emerald-950' : 'hover:bg-emerald-50/50 text-slate-800'
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="font-bold truncate">{wg.nombre}</p>
+                  {wg.descripcion && (
+                    <p className="text-[10px] text-slate-500 truncate">{wg.descripcion}</p>
+                  )}
+                </div>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                  elegido ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                }`}>
+                  {wg.total_participantes} miem.
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Mensajes({ usuario }) {
@@ -39,17 +343,29 @@ export default function Mensajes({ usuario }) {
   const [grupoActivo, setGrupoActivo] = useState(null);
   const [mensajesChat, setMensajesChat] = useState([]);
   const [mensajesGrupo, setMensajesGrupo] = useState([]);
-  // Borradores independientes por conversación ("chat:ID" o "grupo:ID") para nunca mezclarse al cambiar de chat
+  // Borradores y adjuntos pendientes independientes por conversación ("chat:ID" o "grupo:ID")
   const [borradores, setBorradores] = useState({});
+  const [adjuntosPendientes, setAdjuntosPendientes] = useState({});
+  const [imagenAmpliada, setImagenAmpliada] = useState(null);
   const [enviando, setEnviando] = useState(false);
   const [busquedaContacto, setBusquedaContacto] = useState('');
   const [cargandoChat, setCargandoChat] = useState(false);
 
   // Modales de Grupos tipo WhatsApp
   const [modalCrearGrupo, setModalCrearGrupo] = useState(false);
-  const [formNuevoGrupo, setFormNuevoGrupo] = useState({ nombre: '', descripcion: '', miembros: [] });
+  const [formNuevoGrupo, setFormNuevoGrupo] = useState({
+    nombre: '',
+    descripcion: '',
+    miembros: [],
+    modo_whatsapp: 'CREAR_NUEVO',
+    whatsapp_group_jid: ''
+  });
   const [busquedaMiembroNuevo, setBusquedaMiembroNuevo] = useState('');
   const [guardandoGrupo, setGuardandoGrupo] = useState(false);
+  const [gruposWhatsappDisponibles, setGruposWhatsappDisponibles] = useState([]);
+  const [cargandoGruposWa, setCargandoGruposWa] = useState(false);
+  const [errorGruposWa, setErrorGruposWa] = useState('');
+  const [busquedaGrupoWaExistente, setBusquedaGrupoWaExistente] = useState('');
 
   const [modalInfoGrupo, setModalInfoGrupo] = useState(false);
   const [detalleGrupo, setDetalleGrupo] = useState(null);
@@ -58,6 +374,8 @@ export default function Mensajes({ usuario }) {
   const [miembrosAgregar, setMiembrosAgregar] = useState([]);
   const [busquedaAgregarMiembro, setBusquedaAgregarMiembro] = useState('');
   const [procesandoGrupoAccion, setProcesandoGrupoAccion] = useState(false);
+  const [mostrarVincularExistenteInfo, setMostrarVincularExistenteInfo] = useState(false);
+  const [jidVincularInfo, setJidVincularInfo] = useState('');
 
   // Estado del puente WhatsApp QR personal por usuario
   const [estadoWhatsapp, setEstadoWhatsapp] = useState({
@@ -117,10 +435,51 @@ export default function Mensajes({ usuario }) {
   }, [claveSupActiva]);
 
   const nuevoMensaje = claveChatActivo ? (borradores[claveChatActivo] || '') : '';
+  const adjuntoPendienteActivo = claveChatActivo ? (adjuntosPendientes[claveChatActivo] || null) : null;
 
   const setBorrador = (clave, valor) => {
     if (!clave) return;
     setBorradores(prev => ({ ...prev, [clave]: valor }));
+  };
+
+  const setAdjuntoPendienteParaClave = (clave, file) => {
+    if (!clave || !file) return;
+    const isImage = Boolean(file.type?.startsWith('image/'));
+    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    setAdjuntosPendientes(prev => {
+      if (prev[clave]?.previewUrl) {
+        URL.revokeObjectURL(prev[clave].previewUrl);
+      }
+      return {
+        ...prev,
+        [clave]: {
+          file,
+          isImage,
+          previewUrl,
+          name: file.name || (isImage ? 'imagen.png' : 'archivo'),
+          size: file.size || 0
+        }
+      };
+    });
+  };
+
+  const quitarAdjuntoParaClave = (clave, revocarPreview = true) => {
+    if (!clave) return;
+    setAdjuntosPendientes(prev => {
+      const actual = prev[clave];
+      if (!actual) return prev;
+      if (revocarPreview && actual.previewUrl) {
+        URL.revokeObjectURL(actual.previewUrl);
+      }
+      const next = { ...prev };
+      delete next[clave];
+      return next;
+    });
+  };
+
+  const restaurarAdjuntoParaClave = (clave, adjuntoObj) => {
+    if (!clave || !adjuntoObj) return;
+    setAdjuntosPendientes(prev => ({ ...prev, [clave]: adjuntoObj }));
   };
 
   const cargarListasSilencioso = useCallback(async () => {
@@ -395,6 +754,7 @@ export default function Mensajes({ usuario }) {
   useEffect(() => {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
+        setImagenAmpliada(null);
         setModalCrearGrupo(false);
         setModalInfoGrupo(false);
       }
@@ -550,16 +910,28 @@ export default function Mensajes({ usuario }) {
     setGrupoActivo(g);
   };
 
-  const enviarTextoInterno = async (texto, receptorId, claveOrigen, enviarWhatsapp = false) => {
+  const enviarTextoInterno = async (texto, receptorId, claveOrigen, adjuntoItem = null, enviarWhatsapp = false) => {
     setEnviando(true);
     try {
-      const res = await api.post('/mensajes', {
-        id_receptor: receptorId,
-        mensaje: texto,
-        enviar_whatsapp: enviarWhatsapp
-      });
+      let payload;
+      if (adjuntoItem?.file) {
+        const fd = new FormData();
+        fd.append('id_receptor', String(receptorId));
+        fd.append('mensaje', texto);
+        fd.append('enviar_whatsapp', String(Boolean(enviarWhatsapp)));
+        fd.append('archivo', adjuntoItem.file);
+        payload = fd;
+      } else {
+        payload = {
+          id_receptor: receptorId,
+          mensaje: texto,
+          enviar_whatsapp: enviarWhatsapp
+        };
+      }
+      const res = await api.post('/mensajes', payload);
       if (res.data.exito && res.data.datos) {
         setMensajesChat(prev => [...prev, res.data.datos]);
+        if (adjuntoItem?.previewUrl) URL.revokeObjectURL(adjuntoItem.previewUrl);
         void cargarListasSilencioso();
       }
       if (enviarWhatsapp && res.data?.whatsapp) {
@@ -572,21 +944,33 @@ export default function Mensajes({ usuario }) {
       }
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo enviar el mensaje.');
-      setBorrador(claveOrigen, texto);
+      if (texto) setBorrador(claveOrigen, texto);
+      if (adjuntoItem) restaurarAdjuntoParaClave(claveOrigen, adjuntoItem);
     } finally {
       setEnviando(false);
     }
   };
 
-  const enviarTextoGrupo = async (texto, idGrupo, claveOrigen, enviarWhatsapp = false) => {
+  const enviarTextoGrupo = async (texto, idGrupo, claveOrigen, adjuntoItem = null, enviarWhatsapp = false) => {
     setEnviando(true);
     try {
-      const res = await api.post(`/mensajes/grupos/${idGrupo}/mensajes`, {
-        mensaje: texto,
-        enviar_whatsapp: enviarWhatsapp
-      });
+      let payload;
+      if (adjuntoItem?.file) {
+        const fd = new FormData();
+        fd.append('mensaje', texto);
+        fd.append('enviar_whatsapp', String(Boolean(enviarWhatsapp)));
+        fd.append('archivo', adjuntoItem.file);
+        payload = fd;
+      } else {
+        payload = {
+          mensaje: texto,
+          enviar_whatsapp: enviarWhatsapp
+        };
+      }
+      const res = await api.post(`/mensajes/grupos/${idGrupo}/mensajes`, payload);
       if (res.data?.exito && res.data?.datos) {
         setMensajesGrupo(prev => [...prev, res.data.datos]);
+        if (adjuntoItem?.previewUrl) URL.revokeObjectURL(adjuntoItem.previewUrl);
         const jidNuevo = res.data?.whatsapp?.whatsapp_group_jid;
         if (jidNuevo) {
           setGrupoActivo(prev => (prev && prev.id_grupo === idGrupo ? { ...prev, whatsapp_group_jid: jidNuevo } : prev));
@@ -604,67 +988,112 @@ export default function Mensajes({ usuario }) {
       }
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo enviar el mensaje al grupo.');
-      setBorrador(claveOrigen, texto);
+      if (texto) setBorrador(claveOrigen, texto);
+      if (adjuntoItem) restaurarAdjuntoParaClave(claveOrigen, adjuntoItem);
     } finally {
       setEnviando(false);
     }
   };
 
-  const handleEnviarMensaje = async (e) => {
-    e.preventDefault();
-    if (!nuevoMensaje.trim() || !claveChatActivo || enviando) return;
+  const ejecutarEnvioMensaje = async (enviarWhatsapp) => {
+    if (!claveChatActivo || enviando) return;
     const texto = nuevoMensaje.trim();
+    const adjuntoItem = adjuntoPendienteActivo;
+    if (!texto && !adjuntoItem) {
+      toast.error('Escribe un mensaje o adjunta una foto o archivo antes de enviarlo.');
+      return;
+    }
+
+    if (enviarWhatsapp) {
+      if (grupoActivo) {
+        const hayConWa =
+          Boolean(grupoActivo.whatsapp_group_jid) ||
+          (grupoActivo.miembros || []).some(
+            m => Number(m.id_usuario) !== Number(usuario.id_usuario) && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
+          );
+        if (!hayConWa) {
+          toast.error('Ningún otro integrante de este grupo tiene un número de WhatsApp registrado en Personal y Roles.');
+          return;
+        }
+      } else if (contactoActivo) {
+        const numero = normalizarNumeroWhatsApp(contactoActivo.telefono_whatsapp);
+        if (!numero) {
+          toast.error('Este compañero aún no tiene un número de WhatsApp registrado en Personal y Roles.');
+          return;
+        }
+      }
+    }
+
     const claveOrigen = claveChatActivo;
     setBorrador(claveOrigen, '');
+    quitarAdjuntoParaClave(claveOrigen, false);
 
     if (grupoActivo) {
-      await enviarTextoGrupo(texto, grupoActivo.id_grupo, claveOrigen, false);
+      await enviarTextoGrupo(texto, grupoActivo.id_grupo, claveOrigen, adjuntoItem, enviarWhatsapp);
     } else if (contactoActivo) {
-      await enviarTextoInterno(texto, contactoActivo.id_usuario, claveOrigen, false);
+      await enviarTextoInterno(texto, contactoActivo.id_usuario, claveOrigen, adjuntoItem, enviarWhatsapp);
     }
+  };
+
+  const handleEnviarMensaje = async (e) => {
+    e.preventDefault();
+    await ejecutarEnvioMensaje(false);
   };
 
   const handleEnviarYWhatsApp = async () => {
-    if (!claveChatActivo || enviando) return;
-    const texto = nuevoMensaje.trim();
-    if (!texto) {
-      toast.error('Escribe un mensaje antes de enviarlo.');
-      return;
-    }
-
-    if (grupoActivo) {
-      const hayConWa =
-        Boolean(grupoActivo.whatsapp_group_jid) ||
-        (grupoActivo.miembros || []).some(
-          m => Number(m.id_usuario) !== Number(usuario.id_usuario) && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
-        );
-      if (!hayConWa) {
-        toast.error('Ningún otro integrante de este grupo tiene un número de WhatsApp registrado en Personal y Roles.');
-        return;
-      }
-      const claveOrigen = claveChatActivo;
-      setBorrador(claveOrigen, '');
-      await enviarTextoGrupo(texto, grupoActivo.id_grupo, claveOrigen, true);
-      return;
-    }
-
-    if (contactoActivo) {
-      const numero = normalizarNumeroWhatsApp(contactoActivo.telefono_whatsapp);
-      if (!numero) {
-        toast.error('Este compañero aún no tiene un número de WhatsApp registrado en Personal y Roles.');
-        return;
-      }
-      const claveOrigen = claveChatActivo;
-      setBorrador(claveOrigen, '');
-      await enviarTextoInterno(texto, contactoActivo.id_usuario, claveOrigen, true);
-    }
+    await ejecutarEnvioMensaje(true);
   };
+
+  const cargarGruposWhatsappExistentes = useCallback(async () => {
+    setCargandoGruposWa(true);
+    setErrorGruposWa('');
+    try {
+      const res = await api.get('/mensajes/whatsapp/grupos');
+      setGruposWhatsappDisponibles(res.data?.datos || []);
+      if (!res.data?.ok && res.data?.mensaje) {
+        setErrorGruposWa(res.data.mensaje);
+      }
+    } catch (err) {
+      setGruposWhatsappDisponibles([]);
+      setErrorGruposWa(err.response?.data?.mensaje || 'No se pudieron consultar tus grupos de WhatsApp.');
+    } finally {
+      setCargandoGruposWa(false);
+    }
+  }, []);
 
   // Handlers de Creación y Administración de Grupos
   const abrirModalCrearGrupo = () => {
-    setFormNuevoGrupo({ nombre: '', descripcion: '', miembros: [] });
+    setFormNuevoGrupo({
+      nombre: '',
+      descripcion: '',
+      miembros: [],
+      modo_whatsapp: 'CREAR_NUEVO',
+      whatsapp_group_jid: ''
+    });
     setBusquedaMiembroNuevo('');
+    setBusquedaGrupoWaExistente('');
+    setErrorGruposWa('');
     setModalCrearGrupo(true);
+  };
+
+  const seleccionarModoWhatsappNuevoGrupo = (modo) => {
+    setFormNuevoGrupo(prev => ({
+      ...prev,
+      modo_whatsapp: modo,
+      ...(modo !== 'VINCULAR_EXISTENTE' ? { whatsapp_group_jid: '' } : {})
+    }));
+    if (modo === 'VINCULAR_EXISTENTE') {
+      void cargarGruposWhatsappExistentes();
+    }
+  };
+
+  const seleccionarGrupoWaExistenteCrear = (waGrupo) => {
+    setFormNuevoGrupo(prev => ({
+      ...prev,
+      whatsapp_group_jid: waGrupo.jid,
+      nombre: prev.nombre.trim() ? prev.nombre : (waGrupo.nombre || ''),
+      descripcion: prev.descripcion.trim() ? prev.descripcion : (waGrupo.descripcion || '')
+    }));
   };
 
   const toggleMiembroNuevoGrupo = (idUsuario) => {
@@ -685,6 +1114,10 @@ export default function Mensajes({ usuario }) {
       toast.error('Escribe un nombre para el grupo.');
       return;
     }
+    if (formNuevoGrupo.modo_whatsapp === 'VINCULAR_EXISTENTE' && !formNuevoGrupo.whatsapp_group_jid) {
+      toast.error('Selecciona el grupo existente de WhatsApp que deseas vincular.');
+      return;
+    }
     if (formNuevoGrupo.miembros.length === 0) {
       toast.error('Selecciona al menos un compañero para crear el grupo.');
       return;
@@ -695,15 +1128,19 @@ export default function Mensajes({ usuario }) {
       const res = await api.post('/mensajes/grupos', {
         nombre: formNuevoGrupo.nombre.trim(),
         descripcion: formNuevoGrupo.descripcion.trim(),
-        miembros: formNuevoGrupo.miembros
+        miembros: formNuevoGrupo.miembros,
+        modo_whatsapp: formNuevoGrupo.modo_whatsapp,
+        whatsapp_group_jid: formNuevoGrupo.whatsapp_group_jid || null
       });
       const creado = res.data?.datos;
       const waGrupo = res.data?.whatsapp_grupo;
-      if (waGrupo?.creado) {
+      if (waGrupo?.vinculado_existente) {
+        toast.success('Grupo creado y vinculado al grupo existente de WhatsApp.');
+      } else if (waGrupo?.creado) {
         toast.success('Grupo creado en el ERP y en WhatsApp.');
       } else {
         toast.success(res.data?.mensaje || 'Grupo creado.');
-        if (waGrupo?.mensaje && waGrupo?.codigo !== 'WHATSAPP_NO_CONECTADO') {
+        if (waGrupo?.mensaje && waGrupo?.codigo !== 'WHATSAPP_NO_CONECTADO' && !waGrupo?.solo_interno) {
           toast(waGrupo.mensaje, { icon: 'ℹ️' });
         }
       }
@@ -719,11 +1156,12 @@ export default function Mensajes({ usuario }) {
     }
   };
 
-  const handleSincronizarGrupoWhatsapp = async () => {
+  const handleSincronizarGrupoWhatsapp = async (jidManual = '') => {
     if (!detalleGrupo || sincronizandoWaGrupo) return;
     setSincronizandoWaGrupo(true);
     try {
-      const res = await api.post(`/mensajes/grupos/${detalleGrupo.id_grupo}/sincronizar-whatsapp`);
+      const payload = jidManual ? { whatsapp_group_jid: jidManual } : {};
+      const res = await api.post(`/mensajes/grupos/${detalleGrupo.id_grupo}/sincronizar-whatsapp`, payload);
       const upd = res.data?.datos;
       if (upd) {
         setDetalleGrupo(upd);
@@ -731,6 +1169,8 @@ export default function Mensajes({ usuario }) {
       }
       if (res.data?.sincronizado) {
         toast.success(res.data?.mensaje || 'Grupo sincronizado con WhatsApp.');
+        setMostrarVincularExistenteInfo(false);
+        setJidVincularInfo('');
       } else {
         toast.error(res.data?.mensaje || 'No se pudo sincronizar con WhatsApp.');
       }
@@ -746,6 +1186,8 @@ export default function Mensajes({ usuario }) {
     if (!grupoActivo) return;
     setModalInfoGrupo(true);
     setEditandoGrupoMeta(false);
+    setMostrarVincularExistenteInfo(false);
+    setJidVincularInfo('');
     setMiembrosAgregar([]);
     setBusquedaAgregarMiembro('');
     try {
@@ -1111,14 +1553,14 @@ export default function Mensajes({ usuario }) {
                       <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                         {(g.miembros || []).map(m => (m.nombre_completo || '').split(' ')[0]).join(', ')}
                       </p>
-                      {g.ultimo_mensaje && (
+                      {(g.ultimo_mensaje || g.ultimo_adjunto_nombre || g.ultimo_adjunto_tipo) && (
                         <p className="text-xs text-slate-600 mt-1 truncate">
                           <span className="text-slate-400 font-semibold">
                             {Number(g.ultimo_emisor) === Number(usuario.id_usuario)
                               ? 'Tú: '
                               : `${(g.ultimo_emisor_nombre || 'Usuario').split(' ')[0]}: `}
                           </span>
-                          {g.ultimo_mensaje}
+                          {resumirTextoConAdjunto(g.ultimo_mensaje, g.ultimo_adjunto_nombre, g.ultimo_adjunto_tipo)}
                         </p>
                       )}
                     </div>
@@ -1176,10 +1618,10 @@ export default function Mensajes({ usuario }) {
                           </>
                         )}
                       </p>
-                      {c.ultimo_mensaje && (
+                      {(c.ultimo_mensaje || c.ultimo_adjunto_nombre || c.ultimo_adjunto_tipo) && (
                         <p className="text-xs text-slate-600 mt-1 truncate">
                           {c.ultimo_emisor === usuario.id_usuario && <span className="text-slate-400">Tú: </span>}
-                          {c.ultimo_mensaje}
+                          {resumirTextoConAdjunto(c.ultimo_mensaje, c.ultimo_adjunto_nombre, c.ultimo_adjunto_tipo)}
                         </p>
                       )}
                     </div>
@@ -1298,7 +1740,14 @@ export default function Mensajes({ usuario }) {
                                 {m.nombre_emisor}
                               </p>
                             )}
-                            <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                            <AdjuntoEnBurbuja
+                              mensaje={m}
+                              soyEmisor={soyEmisor}
+                              onPreviewImagen={setImagenAmpliada}
+                            />
+                            {Boolean(m.mensaje?.trim()) && (
+                              <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                            )}
                             <div className={`flex items-center justify-end space-x-1.5 mt-1 text-[10px] font-mono ${
                               soyEmisor ? 'text-indigo-200' : 'text-slate-400'
                             }`}>
@@ -1325,36 +1774,18 @@ export default function Mensajes({ usuario }) {
                   )}
                 </div>
 
-                {/* COMPOSER DE GRUPO */}
-                <form onSubmit={handleEnviarMensaje} className="p-3 border-t border-slate-200 bg-white shrink-0 flex flex-wrap sm:flex-nowrap items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder={`Escribe un mensaje al grupo ${grupoActivo.nombre}...`}
-                    value={nuevoMensaje}
-                    onChange={(e) => setBorrador(claveChatActivo, e.target.value)}
-                    className="flex-1 min-w-[160px] border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                  />
-                  {mostrarBotonEnviarWhatsapp && (
-                    <button
-                      type="button"
-                      onClick={handleEnviarYWhatsApp}
-                      disabled={enviando || !nuevoMensaje.trim()}
-                      className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
-                      title="Guarda el mensaje en el grupo y lo envía por WhatsApp a los integrantes que tienen número registrado"
-                    >
-                      {enviando ? <Loader2 size={14} className="animate-spin" /> : <Phone size={14} />}
-                      <span>Enviar + WhatsApp</span>
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={enviando || !nuevoMensaje.trim()}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
-                  >
-                    <Send size={15} />
-                    <span>Enviar</span>
-                  </button>
-                </form>
+                <CompositorMensaje
+                  placeholder={`Escribe un mensaje al grupo ${grupoActivo.nombre}...`}
+                  valor={nuevoMensaje}
+                  onChangeValor={(val) => setBorrador(claveChatActivo, val)}
+                  adjuntoPendiente={adjuntoPendienteActivo}
+                  onSeleccionarArchivo={(file) => setAdjuntoPendienteParaClave(claveChatActivo, file)}
+                  onQuitarArchivo={() => quitarAdjuntoParaClave(claveChatActivo, true)}
+                  onSubmit={handleEnviarMensaje}
+                  onEnviarWhatsapp={handleEnviarYWhatsApp}
+                  mostrarBotonWhatsapp={mostrarBotonEnviarWhatsapp}
+                  enviando={enviando}
+                />
               </>
             ) : contactoActivo ? (
               <>
@@ -1439,7 +1870,14 @@ export default function Mensajes({ usuario }) {
                               ? 'bg-indigo-600 text-white rounded-br-xs'
                               : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
                           }`}>
-                            <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                            <AdjuntoEnBurbuja
+                              mensaje={m}
+                              soyEmisor={soyEmisor}
+                              onPreviewImagen={setImagenAmpliada}
+                            />
+                            {Boolean(m.mensaje?.trim()) && (
+                              <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                            )}
                             <div className={`flex items-center justify-end space-x-1.5 mt-1 text-[10px] font-mono ${
                               soyEmisor ? 'text-indigo-200' : 'text-slate-400'
                             }`}>
@@ -1467,35 +1905,18 @@ export default function Mensajes({ usuario }) {
                   )}
                 </div>
 
-                <form onSubmit={handleEnviarMensaje} className="p-3 border-t border-slate-200 bg-white shrink-0 flex flex-wrap sm:flex-nowrap items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder={`Escribe un mensaje para ${(contactoActivo.nombre_completo || '').split(' ')[0]}...`}
-                    value={nuevoMensaje}
-                    onChange={(e) => setBorrador(claveChatActivo, e.target.value)}
-                    className="flex-1 min-w-[160px] border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                  />
-                  {mostrarBotonEnviarWhatsapp && (
-                    <button
-                      type="button"
-                      onClick={handleEnviarYWhatsApp}
-                      disabled={enviando || !nuevoMensaje.trim()}
-                      className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
-                      title="Guarda el mensaje aquí y lo envía automáticamente por WhatsApp sin salir de la página"
-                    >
-                      {enviando ? <Loader2 size={14} className="animate-spin" /> : <Phone size={14} />}
-                      <span>Enviar + WhatsApp</span>
-                    </button>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={enviando || !nuevoMensaje.trim()}
-                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-40 flex items-center gap-1.5 text-xs font-bold cursor-pointer shrink-0"
-                  >
-                    <Send size={15} />
-                    <span>Enviar</span>
-                  </button>
-                </form>
+                <CompositorMensaje
+                  placeholder={`Escribe un mensaje para ${(contactoActivo.nombre_completo || '').split(' ')[0]}...`}
+                  valor={nuevoMensaje}
+                  onChangeValor={(val) => setBorrador(claveChatActivo, val)}
+                  adjuntoPendiente={adjuntoPendienteActivo}
+                  onSeleccionarArchivo={(file) => setAdjuntoPendienteParaClave(claveChatActivo, file)}
+                  onQuitarArchivo={() => quitarAdjuntoParaClave(claveChatActivo, true)}
+                  onSubmit={handleEnviarMensaje}
+                  onEnviarWhatsapp={handleEnviarYWhatsApp}
+                  mostrarBotonWhatsapp={mostrarBotonEnviarWhatsapp}
+                  enviando={enviando}
+                />
               </>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
@@ -1567,9 +1988,9 @@ export default function Mensajes({ usuario }) {
                           <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                             {g.total_miembros} participante(s) · Creado por {g.creador_nombre || 'Usuario'}
                           </p>
-                          {g.ultimo_mensaje && (
+                          {(g.ultimo_mensaje || g.ultimo_adjunto_nombre || g.ultimo_adjunto_tipo) && (
                             <p className="text-xs text-slate-600 mt-1 italic truncate">
-                              &quot;{g.ultimo_emisor_nombre ? `${g.ultimo_emisor_nombre.split(' ')[0]}: ` : ''}{g.ultimo_mensaje}&quot;
+                              &quot;{g.ultimo_emisor_nombre ? `${g.ultimo_emisor_nombre.split(' ')[0]}: ` : ''}{resumirTextoConAdjunto(g.ultimo_mensaje, g.ultimo_adjunto_nombre, g.ultimo_adjunto_tipo)}&quot;
                             </p>
                           )}
                         </button>
@@ -1600,9 +2021,9 @@ export default function Mensajes({ usuario }) {
                           <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                             {p.u1_rol} y {p.u2_rol}
                           </p>
-                          {p.ultimo_mensaje && (
+                          {(p.ultimo_mensaje || p.ultimo_adjunto_nombre || p.ultimo_adjunto_tipo) && (
                             <p className="text-xs text-slate-600 mt-1 italic truncate">
-                              &quot;{p.ultimo_mensaje}&quot;
+                              &quot;{resumirTextoConAdjunto(p.ultimo_mensaje, p.ultimo_adjunto_nombre, p.ultimo_adjunto_tipo)}&quot;
                             </p>
                           )}
                         </button>
@@ -1682,7 +2103,14 @@ export default function Mensajes({ usuario }) {
                                 </span>
                                 <span className="text-[10px] opacity-70 font-mono">{formatearHoraMensaje(m.creado_en)}</span>
                               </div>
-                              <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                              <AdjuntoEnBurbuja
+                                mensaje={m}
+                                esOscuro={esOscuro}
+                                onPreviewImagen={setImagenAmpliada}
+                              />
+                              {Boolean(m.mensaje?.trim()) && (
+                                <p className="whitespace-pre-wrap break-words">{m.mensaje}</p>
+                              )}
                               <div className="mt-1.5 flex items-center justify-end gap-2 text-[10px]">
                                 <span
                                   className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-semibold ${
@@ -1736,11 +2164,11 @@ export default function Mensajes({ usuario }) {
           onClick={() => !guardandoGrupo && setModalCrearGrupo(false)}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden"
-          >
-            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50">
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col"
+            >
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
                   <Users size={20} />
@@ -1759,7 +2187,48 @@ export default function Mensajes({ usuario }) {
               </button>
             </div>
 
-            <form onSubmit={handleCrearGrupo} className="p-5 space-y-4">
+            <form onSubmit={handleCrearGrupo} className="p-5 space-y-4 overflow-y-auto">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">Conexión con WhatsApp</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                  {[
+                    { id: 'CREAR_NUEVO', titulo: 'Crear nuevo en WA', desc: 'Crea grupo en WhatsApp' },
+                    { id: 'VINCULAR_EXISTENTE', titulo: 'Grupo WA existente', desc: 'Vincular a uno ya creado' },
+                    { id: 'SOLO_INTERNO', titulo: 'Solo chat interno', desc: 'Sin grupo en WhatsApp' }
+                  ].map((op) => {
+                    const activo = formNuevoGrupo.modo_whatsapp === op.id;
+                    return (
+                      <button
+                        key={op.id}
+                        type="button"
+                        onClick={() => seleccionarModoWhatsappNuevoGrupo(op.id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          activo
+                            ? 'bg-emerald-50 border-emerald-500 text-emerald-950 shadow-2xs'
+                            : 'bg-white border-slate-200 hover:border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <p className="text-[11px] font-bold leading-tight">{op.titulo}</p>
+                        <p className="text-[10px] opacity-75 mt-0.5">{op.desc}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {formNuevoGrupo.modo_whatsapp === 'VINCULAR_EXISTENTE' && (
+                <SelectorGrupoWhatsappExistente
+                  grupos={gruposWhatsappDisponibles}
+                  cargando={cargandoGruposWa}
+                  error={errorGruposWa}
+                  busqueda={busquedaGrupoWaExistente}
+                  onChangeBusqueda={setBusquedaGrupoWaExistente}
+                  jidSeleccionado={formNuevoGrupo.whatsapp_group_jid}
+                  onSeleccionar={seleccionarGrupoWaExistenteCrear}
+                  onRefrescar={cargarGruposWhatsappExistentes}
+                />
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Nombre del grupo *</label>
                 <input
@@ -1787,7 +2256,7 @@ export default function Mensajes({ usuario }) {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-bold text-slate-700 uppercase">
-                    Participantes ({formNuevoGrupo.miembros.length} seleccionado{formNuevoGrupo.miembros.length === 1 ? '' : 's'})
+                    Participantes en el ERP ({formNuevoGrupo.miembros.length} seleccionado{formNuevoGrupo.miembros.length === 1 ? '' : 's'})
                   </label>
                 </div>
                 <div className="relative mb-2">
@@ -1800,7 +2269,7 @@ export default function Mensajes({ usuario }) {
                     className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:border-emerald-500"
                   />
                 </div>
-                <div className="max-h-52 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
                   {contactos
                     .filter(c => !busquedaMiembroNuevo.trim() || (c.nombre_completo || '').toLowerCase().includes(busquedaMiembroNuevo.toLowerCase()))
                     .map((c) => {
@@ -1837,13 +2306,19 @@ export default function Mensajes({ usuario }) {
               </div>
 
               <div className={`p-3 rounded-xl border text-[11px] leading-relaxed ${
-                estadoWhatsapp.conectado
+                formNuevoGrupo.modo_whatsapp === 'SOLO_INTERNO'
+                  ? 'bg-slate-50 border-slate-200 text-slate-700'
+                  : estadoWhatsapp.conectado
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                   : 'bg-amber-50 border-amber-200 text-amber-900'
               }`}>
-                {estadoWhatsapp.conectado
-                  ? 'Al crear el grupo aquí, también se creará automáticamente el grupo real en tu WhatsApp con los integrantes que tengan número registrado.'
-                  : 'Tu WhatsApp QR no está conectado ahora; el grupo se creará en el chat interno y luego podrás sincronizarlo con WhatsApp.'}
+                {formNuevoGrupo.modo_whatsapp === 'VINCULAR_EXISTENTE'
+                  ? 'Al presionar "Enviar + WhatsApp" dentro de este chat grupal, los mensajes y archivos llegarán al grupo de WhatsApp seleccionado.'
+                  : formNuevoGrupo.modo_whatsapp === 'SOLO_INTERNO'
+                  ? 'Este grupo funcionará únicamente dentro del ERP, sin crear ni vincular ningún chat grupal en WhatsApp.'
+                  : estadoWhatsapp.conectado
+                  ? 'Al crear el grupo aquí, también se creará automáticamente un grupo nuevo en tu WhatsApp con los integrantes que tengan número registrado.'
+                  : 'Tu WhatsApp QR no está conectado ahora; el grupo se creará en el chat interno y luego podrás sincronizarlo o vincularlo.'}
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -1956,42 +2431,85 @@ export default function Mensajes({ usuario }) {
               )}
 
               {/* Estado / Sincronización con grupo real de WhatsApp */}
-              <div className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
+              <div className={`p-3 rounded-xl border space-y-2.5 ${
                 detalleGrupo.whatsapp_group_jid
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                   : 'bg-amber-50 border-amber-200 text-amber-900'
               }`}>
-                <div className="min-w-0">
-                  <p className="font-bold flex items-center gap-1.5">
-                    <Phone size={13} />
-                    <span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <Phone size={13} />
+                      <span>
+                        {detalleGrupo.whatsapp_group_jid
+                          ? 'Vinculado a grupo real de WhatsApp'
+                          : 'Pendiente de vincular o crear en WhatsApp'}
+                      </span>
+                    </p>
+                    <p className="text-[11px] opacity-80 mt-0.5">
                       {detalleGrupo.whatsapp_group_jid
-                        ? 'Vinculado a grupo real de WhatsApp'
-                        : 'Pendiente de crear en WhatsApp'}
-                    </span>
-                  </p>
-                  <p className="text-[11px] opacity-80 mt-0.5">
-                    {detalleGrupo.whatsapp_group_jid
-                      ? 'Los mensajes con "Enviar + WhatsApp" llegan directamente al chat grupal de WhatsApp.'
-                      : 'Sincronízalo con tu WhatsApp QR para crear el grupo real en WhatsApp.'}
-                  </p>
+                        ? 'Los mensajes y archivos con "Enviar + WhatsApp" llegan directamente al chat grupal de WhatsApp.'
+                        : 'Puedes crear un grupo nuevo en WhatsApp o vincularlo a uno que ya exista.'}
+                    </p>
+                  </div>
+                  {esAdminDelGrupoActual && (
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {!detalleGrupo.whatsapp_group_jid && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = !mostrarVincularExistenteInfo;
+                            setMostrarVincularExistenteInfo(next);
+                            if (next) void cargarGruposWhatsappExistentes();
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Link2 size={12} />
+                          <span>Vincular existente</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSincronizarGrupoWhatsapp()}
+                        disabled={sincronizandoWaGrupo}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        <RefreshCw size={12} className={sincronizandoWaGrupo ? 'animate-spin' : ''} />
+                        <span>
+                          {sincronizandoWaGrupo
+                            ? 'Sincronizando...'
+                            : detalleGrupo.whatsapp_group_jid
+                            ? 'Sincronizar WA'
+                            : 'Crear en WhatsApp'}
+                        </span>
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {esAdminDelGrupoActual && (
-                  <button
-                    type="button"
-                    onClick={handleSincronizarGrupoWhatsapp}
-                    disabled={sincronizandoWaGrupo}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
-                  >
-                    <RefreshCw size={12} className={sincronizandoWaGrupo ? 'animate-spin' : ''} />
-                    <span>
-                      {sincronizandoWaGrupo
-                        ? 'Sincronizando...'
-                        : detalleGrupo.whatsapp_group_jid
-                        ? 'Sincronizar WA'
-                        : 'Crear en WhatsApp'}
-                    </span>
-                  </button>
+
+                {esAdminDelGrupoActual && !detalleGrupo.whatsapp_group_jid && mostrarVincularExistenteInfo && (
+                  <div className="space-y-2 pt-2 border-t border-amber-200/70">
+                    <SelectorGrupoWhatsappExistente
+                      grupos={gruposWhatsappDisponibles}
+                      cargando={cargandoGruposWa}
+                      error={errorGruposWa}
+                      busqueda={busquedaGrupoWaExistente}
+                      onChangeBusqueda={setBusquedaGrupoWaExistente}
+                      jidSeleccionado={jidVincularInfo}
+                      onSeleccionar={(wg) => setJidVincularInfo(wg.jid)}
+                      onRefrescar={cargarGruposWhatsappExistentes}
+                    />
+                    {jidVincularInfo && (
+                      <button
+                        type="button"
+                        onClick={() => handleSincronizarGrupoWhatsapp(jidVincularInfo)}
+                        disabled={sincronizandoWaGrupo}
+                        className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {sincronizandoWaGrupo ? 'Vinculando...' : 'Confirmar vinculación con este grupo de WhatsApp'}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -2255,6 +2773,49 @@ export default function Mensajes({ usuario }) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* VISOR AMPLIADO DE FOTO ADJUNTA */}
+      {imagenAmpliada && (
+        <div
+          onClick={() => setImagenAmpliada(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-3xl w-full flex flex-col items-center gap-3"
+          >
+            <div className="w-full flex items-center justify-between text-white text-xs px-1">
+              <span className="font-bold truncate">{imagenAmpliada.nombre}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void descargarAdjuntoDesdeApi(imagenAmpliada.url, imagenAmpliada.nombre).catch(() => {
+                      toast.error('No se pudo descargar la imagen.');
+                    });
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download size={14} />
+                  <span>Descargar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImagenAmpliada(null)}
+                  className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <ImagenAutenticada
+              urlFoto={imagenAmpliada.url}
+              alt={imagenAmpliada.nombre}
+              className="max-h-[80vh] max-w-full rounded-2xl object-contain bg-slate-900 shadow-2xl"
+            />
           </div>
         </div>
       )}

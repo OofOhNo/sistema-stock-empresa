@@ -12,7 +12,7 @@ function normalizarRutaUpload(urlFoto) {
       return '';
     }
   }
-  if (ruta.startsWith('/api/uploads/')) {
+  if (ruta.startsWith('/api/')) {
     return ruta.slice(4); // api ya tiene baseURL .../api
   }
   if (ruta.startsWith('/uploads/')) {

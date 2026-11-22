@@ -2,14 +2,26 @@ const pool = require('../config/db');
 
 const Mensaje = {
 
-    enviar: async ({ id_emisor, id_receptor, mensaje }) => {
+    enviar: async ({ id_emisor, id_receptor, mensaje = '', adjunto = null }) => {
         try {
             const query = `
-                INSERT INTO mensajes_internos (id_emisor, id_receptor, mensaje, leido)
-                VALUES ($1, $2, $3, false)
+                INSERT INTO mensajes_internos (
+                    id_emisor, id_receptor, mensaje, leido,
+                    adjunto_url, adjunto_nombre, adjunto_tipo, adjunto_mime, adjunto_tamano
+                )
+                VALUES ($1, $2, $3, false, $4, $5, $6, $7, $8)
                 RETURNING *;
             `;
-            const res = await pool.query(query, [id_emisor, id_receptor, mensaje]);
+            const res = await pool.query(query, [
+                id_emisor,
+                id_receptor,
+                mensaje || '',
+                adjunto?.url || null,
+                adjunto?.nombre || null,
+                adjunto?.tipo || null,
+                adjunto?.mime || null,
+                adjunto?.tamano || null
+            ]);
             const nuevo = res.rows[0];
 
             const qInfo = `
@@ -44,6 +56,11 @@ const Mensaje = {
                     m.leido,
                     COALESCE(m.enviado_whatsapp, false) AS enviado_whatsapp,
                     m.enviado_whatsapp_en,
+                    m.adjunto_url,
+                    m.adjunto_nombre,
+                    m.adjunto_tipo,
+                    m.adjunto_mime,
+                    m.adjunto_tamano,
                     m.creado_en,
                     u_em.nombre_completo AS nombre_emisor,
                     r_em.nombre AS rol_emisor,
@@ -136,6 +153,8 @@ const Mensaje = {
                     u.telefono_whatsapp,
                     ub.nombre AS nombre_ubicacion,
                     ult.mensaje AS ultimo_mensaje,
+                    ult.adjunto_nombre AS ultimo_adjunto_nombre,
+                    ult.adjunto_tipo AS ultimo_adjunto_tipo,
                     ult.creado_en AS fecha_ultimo_mensaje,
                     ult.id_emisor AS ultimo_emisor,
                     COALESCE(nl.no_leidos, 0) AS no_leidos
@@ -143,7 +162,7 @@ const Mensaje = {
                 LEFT JOIN roles r ON u.rol_id = r.id_rol
                 LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
                 LEFT JOIN LATERAL (
-                    SELECT m.mensaje, m.creado_en, m.id_emisor
+                    SELECT m.mensaje, m.adjunto_nombre, m.adjunto_tipo, m.creado_en, m.id_emisor
                     FROM mensajes_internos m
                     WHERE (m.id_emisor = u.id_usuario AND m.id_receptor = $1)
                        OR (m.id_emisor = $1 AND m.id_receptor = u.id_usuario)
@@ -199,6 +218,8 @@ const Mensaje = {
                     p.total_mensajes,
                     p.ultima_fecha,
                     ult.mensaje AS ultimo_mensaje,
+                    ult.adjunto_nombre AS ultimo_adjunto_nombre,
+                    ult.adjunto_tipo AS ultimo_adjunto_tipo,
                     ult.id_emisor AS ultimo_emisor_id
                 FROM pares p
                 JOIN usuarios u1 ON p.u1_id = u1.id_usuario
@@ -208,7 +229,7 @@ const Mensaje = {
                 LEFT JOIN roles r2 ON u2.rol_id = r2.id_rol
                 LEFT JOIN ubicaciones ub2 ON u2.id_ubicacion = ub2.id_ubicacion
                 LEFT JOIN LATERAL (
-                    SELECT m.mensaje, m.id_emisor
+                    SELECT m.mensaje, m.adjunto_nombre, m.adjunto_tipo, m.id_emisor
                     FROM mensajes_internos m
                     WHERE (m.id_emisor = p.u1_id AND m.id_receptor = p.u2_id)
                        OR (m.id_emisor = p.u2_id AND m.id_receptor = p.u1_id)
@@ -235,6 +256,11 @@ const Mensaje = {
                     m.leido,
                     COALESCE(m.enviado_whatsapp, false) AS enviado_whatsapp,
                     m.enviado_whatsapp_en,
+                    m.adjunto_url,
+                    m.adjunto_nombre,
+                    m.adjunto_tipo,
+                    m.adjunto_mime,
+                    m.adjunto_tamano,
                     m.creado_en,
                     u_em.nombre_completo AS nombre_emisor,
                     r_em.nombre AS rol_emisor,
@@ -293,6 +319,8 @@ const Mensaje = {
                     WHERE gm3.id_grupo = g.id_grupo
                 ) AS miembros,
                 ult.mensaje AS ultimo_mensaje,
+                ult.adjunto_nombre AS ultimo_adjunto_nombre,
+                ult.adjunto_tipo AS ultimo_adjunto_tipo,
                 ult.creado_en AS fecha_ultimo_mensaje,
                 ult.id_emisor AS ultimo_emisor,
                 ult.nombre_emisor AS ultimo_emisor_nombre,
@@ -309,7 +337,7 @@ const Mensaje = {
             JOIN grupos_mensajes_miembros gm_yo
               ON gm_yo.id_grupo = g.id_grupo AND gm_yo.id_usuario = $1::int
             LEFT JOIN LATERAL (
-                SELECT mc.mensaje, mc.creado_en, mc.id_emisor, u.nombre_completo AS nombre_emisor
+                SELECT mc.mensaje, mc.adjunto_nombre, mc.adjunto_tipo, mc.creado_en, mc.id_emisor, u.nombre_completo AS nombre_emisor
                 FROM grupos_mensajes_chat mc
                 JOIN usuarios u ON u.id_usuario = mc.id_emisor
                 WHERE mc.id_grupo = g.id_grupo
@@ -567,6 +595,11 @@ const Mensaje = {
                 COALESCE(mc.enviado_whatsapp, false) AS enviado_whatsapp,
                 COALESCE(mc.whatsapp_destinatarios_ok, 0) AS whatsapp_destinatarios_ok,
                 COALESCE(mc.whatsapp_destinatarios_total, 0) AS whatsapp_destinatarios_total,
+                mc.adjunto_url,
+                mc.adjunto_nombre,
+                mc.adjunto_tipo,
+                mc.adjunto_mime,
+                mc.adjunto_tamano,
                 mc.creado_en,
                 u.nombre_completo AS nombre_emisor,
                 r.nombre AS rol_emisor
@@ -595,12 +628,24 @@ const Mensaje = {
         `, [id_grupo, id_usuario]);
     },
 
-    enviarMensajeGrupo: async ({ id_grupo, id_emisor, mensaje }) => {
+    enviarMensajeGrupo: async ({ id_grupo, id_emisor, mensaje = '', adjunto = null }) => {
         const resIns = await pool.query(`
-            INSERT INTO grupos_mensajes_chat (id_grupo, id_emisor, mensaje)
-            VALUES ($1::int, $2::int, $3::text)
+            INSERT INTO grupos_mensajes_chat (
+                id_grupo, id_emisor, mensaje,
+                adjunto_url, adjunto_nombre, adjunto_tipo, adjunto_mime, adjunto_tamano
+            )
+            VALUES ($1::int, $2::int, $3::text, $4::text, $5::varchar, $6::varchar, $7::varchar, $8::bigint)
             RETURNING id_mensaje_grupo;
-        `, [id_grupo, id_emisor, mensaje]);
+        `, [
+            id_grupo,
+            id_emisor,
+            mensaje || '',
+            adjunto?.url || null,
+            adjunto?.nombre || null,
+            adjunto?.tipo || null,
+            adjunto?.mime || null,
+            adjunto?.tamano || null
+        ]);
         const nuevoId = resIns.rows[0].id_mensaje_grupo;
 
         await pool.query(
@@ -626,6 +671,11 @@ const Mensaje = {
                 COALESCE(mc.enviado_whatsapp, false) AS enviado_whatsapp,
                 COALESCE(mc.whatsapp_destinatarios_ok, 0) AS whatsapp_destinatarios_ok,
                 COALESCE(mc.whatsapp_destinatarios_total, 0) AS whatsapp_destinatarios_total,
+                mc.adjunto_url,
+                mc.adjunto_nombre,
+                mc.adjunto_tipo,
+                mc.adjunto_mime,
+                mc.adjunto_tamano,
                 mc.creado_en,
                 u.nombre_completo AS nombre_emisor,
                 r.nombre AS rol_emisor
@@ -660,11 +710,13 @@ const Mensaje = {
                 (SELECT COUNT(*)::int FROM grupos_mensajes_chat mc WHERE mc.id_grupo = g.id_grupo) AS total_mensajes,
                 COALESCE(ult.creado_en, g.creado_en) AS ultima_fecha,
                 ult.mensaje AS ultimo_mensaje,
+                ult.adjunto_nombre AS ultimo_adjunto_nombre,
+                ult.adjunto_tipo AS ultimo_adjunto_tipo,
                 ult.nombre_emisor AS ultimo_emisor_nombre
             FROM grupos_mensajes g
             LEFT JOIN usuarios u_cre ON u_cre.id_usuario = g.creado_por
             LEFT JOIN LATERAL (
-                SELECT mc.mensaje, mc.creado_en, u.nombre_completo AS nombre_emisor
+                SELECT mc.mensaje, mc.adjunto_nombre, mc.adjunto_tipo, mc.creado_en, u.nombre_completo AS nombre_emisor
                 FROM grupos_mensajes_chat mc
                 JOIN usuarios u ON u.id_usuario = mc.id_emisor
                 WHERE mc.id_grupo = g.id_grupo
@@ -674,6 +726,37 @@ const Mensaje = {
             ORDER BY COALESCE(ult.creado_en, g.creado_en) DESC, g.id_grupo DESC;
         `);
         return rows;
+    },
+
+    obtenerAdjuntoAutorizado: async (adjuntoUrl, idUsuario, esAdminCentral = false) => {
+        const resDirecto = await pool.query(`
+            SELECT adjunto_nombre, adjunto_mime, id_emisor, id_receptor
+            FROM mensajes_internos
+            WHERE adjunto_url = $1::text
+            LIMIT 1;
+        `, [adjuntoUrl]);
+        if (resDirecto.rows.length > 0) {
+            const r = resDirecto.rows[0];
+            if (esAdminCentral || Number(r.id_emisor) === Number(idUsuario) || Number(r.id_receptor) === Number(idUsuario)) {
+                return r;
+            }
+            return null;
+        }
+
+        const resGrupo = await pool.query(`
+            SELECT mc.adjunto_nombre, mc.adjunto_mime, mc.id_grupo
+            FROM grupos_mensajes_chat mc
+            WHERE mc.adjunto_url = $1::text
+            LIMIT 1;
+        `, [adjuntoUrl]);
+        if (resGrupo.rows.length > 0) {
+            const rg = resGrupo.rows[0];
+            if (esAdminCentral) return rg;
+            const mem = await Mensaje.esMiembroGrupo(rg.id_grupo, idUsuario);
+            return mem ? rg : null;
+        }
+
+        return null;
     }
 
 };
