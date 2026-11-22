@@ -10,7 +10,16 @@ import { escaparHtml } from '../utils/htmlPrint';
 import { exportarTablaExcel } from '../utils/excelExport';
 import BotonExportarExcel from '../components/BotonExportarExcel';
 
+function sumarDiasIso(fechaIso, dias) {
+  if (!fechaIso || !dias || Number(dias) <= 0) return '';
+  const d = new Date(`${fechaIso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + Number(dias));
+  return d.toISOString().split('T')[0];
+}
+
 const crearFormularioInicial = (hoyStr, idUbicacion = '') => ({
+  id_pedido: '',
   codigo_certificado: '',
   tipo_certificado: 'Certificado de Calidad e Inocuidad',
   lote_o_producto: '',
@@ -37,6 +46,7 @@ export default function Calidad({ usuario }) {
   const [ubicaciones, setUbicaciones] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [productosLista, setProductosLista] = useState([]);
+  const [pedidosDisponibles, setPedidosDisponibles] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [busqueda, setBusqueda] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('TODOS');
@@ -72,11 +82,12 @@ export default function Calidad({ usuario }) {
   const cargarDatos = useCallback(async () => {
     setCargando(true);
     try {
-      const [resCalidad, resUbic, resClientes, resProds] = await Promise.all([
+      const [resCalidad, resUbic, resClientes, resProds, resPedidos] = await Promise.all([
         api.get('/calidad'),
         api.get('/ubicaciones').catch(() => ({ data: { datos: [] } })),
         api.get('/clientes').catch(() => ({ data: { datos: [] } })),
-        api.get('/productos').catch(() => ({ data: [] }))
+        api.get('/productos').catch(() => ({ data: [] })),
+        api.get('/calidad/pedidos-disponibles').catch(() => ({ data: { datos: [] } }))
       ]);
 
       setCertificados(resCalidad.data.datos || []);
@@ -88,6 +99,9 @@ export default function Calidad({ usuario }) {
 
       const prods = Array.isArray(resProds.data) ? resProds.data : (resProds.data?.datos || []);
       setProductosLista(prods);
+
+      const peds = resPedidos.data?.datos || [];
+      setPedidosDisponibles(peds);
 
       if (ubs.length > 0) {
         setForm(prev => (prev.id_ubicacion ? prev : { ...prev, id_ubicacion: ubs[0].id_ubicacion }));
@@ -240,6 +254,82 @@ export default function Calidad({ usuario }) {
     win.document.close();
   };
 
+  const buscarProductoCatalogo = (nombre, idProducto = null) => {
+    if (idProducto) {
+      const porId = productosLista.find(p => Number(p.id_producto) === Number(idProducto));
+      if (porId) return porId;
+    }
+    const nombreNorm = String(nombre || '').trim().toLowerCase();
+    if (!nombreNorm) return null;
+    return productosLista.find(p => String(p.nombre || '').trim().toLowerCase() === nombreNorm) || null;
+  };
+
+  const abrirModalNuevo = () => {
+    setForm(crearFormularioInicial(hoyStr, ubicaciones[0]?.id_ubicacion || ''));
+    setModalNuevo(true);
+  };
+
+  const handlePedidoChange = (e) => {
+    const val = e.target.value;
+    if (!val) {
+      setForm(crearFormularioInicial(hoyStr, ubicaciones[0]?.id_ubicacion || ''));
+      return;
+    }
+    const ped = pedidosDisponibles.find(p => String(p.id_pedido) === String(val));
+    if (!ped) return;
+
+    const cli = clientes.find(c => String(c.id_cliente) === String(ped.id_cliente));
+    const fechaProdBase = form.fecha_emision || hoyStr;
+    const itemsPed = Array.isArray(ped.items) && ped.items.length > 0 ? ped.items : [];
+
+    const itemsGenerados = itemsPed.length > 0
+      ? itemsPed.map((it, idx) => {
+          const prodCat = buscarProductoCatalogo(it.descripcion, it.id_producto);
+          const diasCad = it.dias_caducidad_promedio ?? prodCat?.dias_caducidad_promedio ?? null;
+          const esKg = String(it.codigo_unidad_sunat || '').toUpperCase() === 'KGM'
+            || String(it.unidad_medida || '').toLowerCase().includes('kilo');
+
+          let kilosInicial = '';
+          if (esKg && Number(it.cantidad) > 0) {
+            kilosInicial = Number(it.cantidad).toFixed(2);
+          } else if (itemsPed.length === 1 && Number(ped.peso_total) > 0) {
+            kilosInicial = Number(ped.peso_total).toFixed(2);
+          }
+
+          return {
+            producto: it.descripcion || prodCat?.nombre || '',
+            lote: `PED-${ped.id_pedido}-${String(idx + 1).padStart(2, '0')}`,
+            fecha_produccion: fechaProdBase,
+            fecha_vencimiento: diasCad ? sumarDiasIso(fechaProdBase, diasCad) : '',
+            kilos: kilosInicial,
+            cantidad_pedido_info: !esKg && Number(it.cantidad) > 0
+              ? `${Number(it.cantidad)} ${it.simbolo_unidad || it.unidad_medida || 'und'}`
+              : ''
+          };
+        })
+      : [{
+          producto: ped.descripcion || '',
+          lote: `PED-${ped.id_pedido}-01`,
+          fecha_produccion: fechaProdBase,
+          fecha_vencimiento: '',
+          kilos: Number(ped.peso_total) > 0 ? Number(ped.peso_total).toFixed(2) : '',
+          cantidad_pedido_info: ''
+        }];
+
+    const fechasVencCalc = itemsGenerados.map(i => i.fecha_vencimiento).filter(Boolean).sort();
+
+    setForm(prev => ({
+      ...prev,
+      id_pedido: String(ped.id_pedido),
+      id_cliente: ped.id_cliente ? String(ped.id_cliente) : '',
+      cliente_nombre: ped.razon_social_cliente || cli?.razon_social_o_nombre || cli?.nombre_comercial || ped.cliente || '',
+      cliente_ruc: ped.ruc_cliente || cli?.numero_documento || '',
+      id_ubicacion: ped.id_ubicacion || prev.id_ubicacion,
+      fecha_vencimiento: fechasVencCalc.length > 0 ? fechasVencCalc[fechasVencCalc.length - 1] : '',
+      items_detalle: itemsGenerados
+    }));
+  };
+
   const handleClienteChange = (e) => {
     const val = e.target.value;
     if (!val) {
@@ -262,7 +352,7 @@ export default function Calidad({ usuario }) {
       ...prev,
       items_detalle: [
         ...prev.items_detalle,
-        { producto: '', lote: '', fecha_produccion: hoyStr, fecha_vencimiento: '', kilos: '' }
+        { producto: '', lote: '', fecha_produccion: prev.fecha_emision || hoyStr, fecha_vencimiento: '', kilos: '' }
       ]
     }));
   };
@@ -280,7 +370,21 @@ export default function Calidad({ usuario }) {
   const actualizarItem = (idx, campo, valor) => {
     setForm(prev => {
       const items = [...prev.items_detalle];
-      items[idx] = { ...items[idx], [campo]: valor };
+      const actual = { ...items[idx], [campo]: valor };
+
+      if (campo === 'fecha_vencimiento') {
+        actual.vencimientoManual = true;
+      } else if (campo === 'producto' || campo === 'fecha_produccion') {
+        const prodCat = buscarProductoCatalogo(
+          campo === 'producto' ? valor : actual.producto
+        );
+        const fProd = campo === 'fecha_produccion' ? valor : actual.fecha_produccion;
+        if (prodCat?.dias_caducidad_promedio && fProd && !actual.vencimientoManual) {
+          actual.fecha_vencimiento = sumarDiasIso(fProd, prodCat.dias_caducidad_promedio);
+        }
+      }
+
+      items[idx] = actual;
       return { ...prev, items_detalle: items };
     });
   };
@@ -308,17 +412,25 @@ export default function Calidad({ usuario }) {
       fVenc = d.toISOString().split('T')[0];
     }
 
-    const prodsTexto = form.items_detalle.map(i => i.producto || 'Producto').filter(Boolean).join(', ');
+    const itemsLimpios = form.items_detalle.map((it) => ({
+      producto: it.producto,
+      lote: it.lote,
+      fecha_produccion: it.fecha_produccion,
+      fecha_vencimiento: it.fecha_vencimiento,
+      kilos: it.kilos
+    }));
+    const prodsTexto = itemsLimpios.map(i => i.producto || 'Producto').filter(Boolean).join(', ');
 
     setGuardando(true);
     try {
       const payload = {
         ...form,
+        id_pedido: form.id_pedido ? Number(form.id_pedido) : null,
         empresa_nombre: form.empresa_nombre?.trim() || undefined,
         empresa_ruc: form.empresa_ruc?.trim() || undefined,
         fecha_vencimiento: fVenc,
         lote_o_producto: prodsTexto || form.lote_o_producto || 'Mercadería general',
-        items_detalle: form.items_detalle
+        items_detalle: itemsLimpios
       };
 
       const res = await api.post('/calidad', payload);
@@ -444,6 +556,7 @@ export default function Calidad({ usuario }) {
                 filas: certificados,
                 columnas: [
                   { header: 'Código Certificado', key: 'codigo_certificado' },
+                  { header: 'Pedido', value: (c) => (c.id_pedido ? `#${c.id_pedido}` : '') },
                   { header: 'Tipo', value: (c) => c.tipo_certificado || 'Certificado de Calidad' },
                   { header: 'Cliente', value: (c) => c.cliente_nombre || 'Cliente General' },
                   { header: 'RUC Cliente', value: (c) => c.cliente_ruc || '' },
@@ -463,7 +576,7 @@ export default function Calidad({ usuario }) {
           {puedeEditarCalidad && (
             <button
               type="button"
-              onClick={() => setModalNuevo(true)}
+              onClick={abrirModalNuevo}
               className="flex items-center space-x-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
             >
               <Plus size={16} />
@@ -574,9 +687,16 @@ export default function Calidad({ usuario }) {
                     <tr key={c.id_certificado} className="hover:bg-slate-50 transition-colors">
                       <td className="p-4">
                         <div className="font-bold text-slate-900 font-mono text-xs">{c.codigo_certificado}</div>
-                        <span className="inline-flex mt-1 items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          FORMATO A4
-                        </span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            FORMATO A4
+                          </span>
+                          {c.id_pedido && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
+                              Pedido #{c.id_pedido}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-4">
                         <div className="font-bold text-slate-800">{c.cliente_nombre || 'Cliente General'}</div>
@@ -853,6 +973,43 @@ export default function Calidad({ usuario }) {
             </div>
 
             <form onSubmit={handleCrear} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto">
+              {/* VINCULAR A PEDIDO (OPCIONAL) PARA AUTOCOMPLETAR CAMPOS */}
+              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-emerald-950 uppercase tracking-wider">
+                    Elegir Pedido (Opcional — autocompleta los campos)
+                  </label>
+                  {form.id_pedido && (
+                    <button
+                      type="button"
+                      onClick={() => handlePedidoChange({ target: { value: '' } })}
+                      className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                    >
+                      Limpiar pedido
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={form.id_pedido}
+                  onChange={handlePedidoChange}
+                  className="w-full border border-emerald-300 rounded-lg px-3 py-2 text-xs font-medium bg-white focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">-- Llenado manual (sin vincular a un pedido) --</option>
+                  {pedidosDisponibles.map(p => (
+                    <option key={p.id_pedido} value={p.id_pedido}>
+                      Pedido #{p.id_pedido} — {p.cliente} · {p.ubicacion || 'Sede'} ({Array.isArray(p.items) ? p.items.length : 0} prod. · {p.estado_pedido})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-emerald-800/80">
+                  {form.id_pedido
+                    ? `Datos cargados del Pedido #${form.id_pedido}. Puedes revisar y editar cualquier campo antes de guardar.`
+                    : pedidosDisponibles.length > 0
+                      ? 'Al elegir un pedido se completarán automáticamente el cliente, sede, productos y fecha estimada de vencimiento.'
+                      : 'No hay pedidos disponibles en este momento; puedes llenar los datos manualmente.'}
+                </p>
+              </div>
+
               {/* DATOS DE TU EMPRESA EMISORA (OPCIONAL) */}
               <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100 space-y-3">
                 <label className="text-xs font-bold text-blue-950 uppercase tracking-wider block">
@@ -1077,6 +1234,11 @@ export default function Calidad({ usuario }) {
                               onChange={(e) => actualizarItem(idx, 'kilos', e.target.value)}
                               className="w-20 border border-slate-300 rounded px-2 py-1 text-xs font-mono font-bold"
                             />
+                            {item.cantidad_pedido_info && (
+                              <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                                Ped: {item.cantidad_pedido_info}
+                              </div>
+                            )}
                           </td>
                           <td className="p-2 text-center">
                             <button

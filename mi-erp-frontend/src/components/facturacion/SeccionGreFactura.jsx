@@ -263,7 +263,7 @@ export default function SeccionGreFactura({
           </span>
           {bienesResumen.length > 0 && (
             <span className="text-[11px] text-slate-500 block truncate">
-              {bienesResumen.map((b) => b.descripcion).join(', ')}
+              {bienesResumen.map((b) => `${Number(b.cantidad || 0)} ${b.simbolo_unidad || b.unidad_medida || 'UND'} × ${b.descripcion}`).join(', ')}
             </span>
           )}
         </div>

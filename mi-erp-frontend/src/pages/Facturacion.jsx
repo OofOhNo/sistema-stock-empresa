@@ -201,22 +201,35 @@ export default function Facturacion({ usuario }) {
     }
 
     // Cargar ítems editables (Req 9)
-    const itemsRaw = ped.items || [
-      {
-        id_producto: 1,
-        descripcion: ped.descripcion || 'Cortes Cárnicos Seleccionados',
-        cantidad: 1,
-        peso: ped.peso_total || '',
-        precio_unitario: parseFloat(ped.monto_total || 0),
-        subtotal: parseFloat(ped.monto_total || 0)
-      }
-    ];
-    setItemsEditables(itemsRaw.map(it => ({
-      ...it,
-      peso: it.peso || '',
-      precio_unitario: parseFloat(it.precio_unitario || 0),
-      subtotal: parseFloat(it.subtotal || (it.cantidad * it.precio_unitario) || 0)
-    })));
+    const itemsRaw = Array.isArray(ped.items) && ped.items.length > 0
+      ? ped.items
+      : [
+          {
+            id_producto: null,
+            descripcion: ped.descripcion || `Pedido #${ped.id_pedido}`,
+            cantidad: 1,
+            unidad_medida: 'Unidad',
+            simbolo_unidad: 'UND',
+            codigo_unidad_sunat: 'NIU',
+            peso: ped.peso_total || '',
+            precio_unitario: parseFloat(ped.monto_total || 0),
+            subtotal: parseFloat(ped.monto_total || 0)
+          }
+        ];
+    setItemsEditables(itemsRaw.map(it => {
+      const cant = Number(it.cantidad) || 1;
+      const precio = parseFloat(it.precio_unitario || 0);
+      return {
+        ...it,
+        cantidad: cant,
+        unidad_medida: it.unidad_medida || 'Unidad',
+        simbolo_unidad: it.simbolo_unidad || it.unidad_medida || 'UND',
+        codigo_unidad_sunat: it.codigo_unidad_sunat || 'NIU',
+        peso: it.peso || '',
+        precio_unitario: precio,
+        subtotal: parseFloat(it.subtotal || (cant * precio) || 0)
+      };
+    }));
 
     // Resetear pagos divididos
     setEsPagoDividido(false);
@@ -2686,8 +2699,11 @@ export default function Facturacion({ usuario }) {
                 <div className="space-y-2">
                   {itemsEditables.map((it, idx) => (
                     <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center text-xs">
-                      <div className="sm:col-span-5 font-semibold text-slate-800 truncate">
-                        {it.descripcion}
+                      <div className="sm:col-span-5 min-w-0">
+                        <div className="font-semibold text-slate-800 truncate">{it.descripcion}</div>
+                        <div className="text-[11px] font-bold text-indigo-600 mt-0.5">
+                          Cant: {Number(it.cantidad || 0)} {it.simbolo_unidad || it.unidad_medida || 'UND'} ({it.codigo_unidad_sunat || 'NIU'})
+                        </div>
                       </div>
                       <div className="sm:col-span-2">
                         <label className="block text-[10px] text-slate-500 mb-0.5">Peso (kg):</label>

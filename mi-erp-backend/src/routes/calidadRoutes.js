@@ -4,6 +4,7 @@ const calidadController = require('../controllers/calidadController');
 const { verificarToken } = require('../middlewares/authMiddleware');
 const requierePermiso = require('../middlewares/requierePermiso');
 
+router.get('/pedidos-disponibles', verificarToken, requierePermiso('calidad', 'ver'), calidadController.listarPedidosDisponibles);
 router.get('/', verificarToken, requierePermiso('calidad', 'ver'), calidadController.listarCertificados);
 router.post('/', verificarToken, requierePermiso('calidad', 'editar'), calidadController.crearCertificado);
 router.put('/:id', verificarToken, requierePermiso('calidad', 'editar'), calidadController.actualizarCertificado);

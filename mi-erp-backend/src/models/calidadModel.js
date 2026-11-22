@@ -17,6 +17,7 @@ const Calidad = {
                     u.nombre AS nombre_ubicacion,
                     c.id_usuario,
                     usr.nombre_completo AS nombre_usuario,
+                    c.id_pedido,
                     c.id_cliente,
                     c.cliente_nombre,
                     c.cliente_ruc,
@@ -70,6 +71,7 @@ const Calidad = {
         estado,
         id_ubicacion,
         id_usuario,
+        id_pedido,
         id_cliente,
         cliente_nombre,
         cliente_ruc,
@@ -101,6 +103,7 @@ const Calidad = {
                     estado,
                     id_ubicacion,
                     id_usuario,
+                    id_pedido,
                     id_cliente,
                     cliente_nombre,
                     cliente_ruc,
@@ -110,7 +113,7 @@ const Calidad = {
                     archivo_url,
                     observaciones
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                 RETURNING *;
             `;
             const res = await pool.query(query, [
@@ -123,6 +126,7 @@ const Calidad = {
                 estadoFinal,
                 id_ubicacion || null,
                 id_usuario || null,
+                id_pedido || null,
                 id_cliente || null,
                 cliente_nombre || null,
                 cliente_ruc || null,

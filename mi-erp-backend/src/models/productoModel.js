@@ -1,5 +1,16 @@
 const pool = require('../config/db');
 
+function normalizarDiasCaducidad(valor) {
+    if (valor === undefined || valor === null || String(valor).trim() === '') {
+        return null;
+    }
+    const numero = Number(String(valor).trim());
+    if (!Number.isInteger(numero) || numero <= 0) {
+        throw new Error('El tiempo promedio de caducidad debe ser un número entero mayor a 0 días.');
+    }
+    return numero;
+}
+
 class ProductoModel {
     static async getAll(incluirInactivos = false) {
         let query = `
@@ -48,15 +59,16 @@ class ProductoModel {
             id_unidad, unidad_medida,
             id_tipo_producto,
             tipo_afectacion_igv, codigo_producto_sunat,
-            cliente_habitual
+            cliente_habitual,
+            dias_caducidad_promedio
         } = data;
         
         const query = `
             INSERT INTO productos (
                 sku, nombre, descripcion, id_categoria, 
                 precio_venta, precio_costo, stock_minimo, 
-                id_unidad, unidad_medida, id_tipo_producto, tipo_afectacion_igv, codigo_producto_sunat, cliente_habitual, activo
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+                id_unidad, unidad_medida, id_tipo_producto, tipo_afectacion_igv, codigo_producto_sunat, cliente_habitual, dias_caducidad_promedio, activo
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)
             RETURNING *
         `;
         const precioCostoVal = (precio_costo === undefined || precio_costo === null || precio_costo === '') ? 0 : precio_costo;
@@ -64,6 +76,7 @@ class ProductoModel {
         const clienteHabitualVal = cliente_habitual && String(cliente_habitual).trim()
             ? String(cliente_habitual).trim().slice(0, 255)
             : null;
+        const diasCaducidadVal = normalizarDiasCaducidad(dias_caducidad_promedio);
         const values = [
             sku, nombre, descripcion, id_categoria || null,
             precio_venta, precioCostoVal, stockMinimoVal,
@@ -71,7 +84,8 @@ class ProductoModel {
             id_tipo_producto ? parseInt(id_tipo_producto, 10) : 1,
             ['10', '20', '30', '40'].includes(String(tipo_afectacion_igv)) ? String(tipo_afectacion_igv) : '10',
             codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null,
-            clienteHabitualVal
+            clienteHabitualVal,
+            diasCaducidadVal
         ];
         
         const { rows } = await db.query(query, values);
@@ -84,12 +98,18 @@ class ProductoModel {
             precio_venta, precio_costo, stock_minimo, activo,
             id_unidad, unidad_medida, id_tipo_producto,
             tipo_afectacion_igv, codigo_producto_sunat,
-            cliente_habitual
+            cliente_habitual,
+            dias_caducidad_promedio
         } = data;
 
         const actualizaClienteHabitual = cliente_habitual !== undefined;
         const clienteHabitualVal = actualizaClienteHabitual && String(cliente_habitual || '').trim()
             ? String(cliente_habitual).trim().slice(0, 255)
+            : null;
+
+        const actualizaDiasCaducidad = dias_caducidad_promedio !== undefined;
+        const diasCaducidadVal = actualizaDiasCaducidad
+            ? normalizarDiasCaducidad(dias_caducidad_promedio)
             : null;
 
         const query = `
@@ -108,8 +128,9 @@ class ProductoModel {
                 id_tipo_producto = COALESCE($11, id_tipo_producto),
                 tipo_afectacion_igv = COALESCE($12, tipo_afectacion_igv),
                 codigo_producto_sunat = COALESCE($13, codigo_producto_sunat),
-                cliente_habitual = CASE WHEN $14::boolean THEN $15::varchar ELSE cliente_habitual END
-            WHERE id_producto = $16
+                cliente_habitual = CASE WHEN $14::boolean THEN $15::varchar ELSE cliente_habitual END,
+                dias_caducidad_promedio = CASE WHEN $16::boolean THEN $17::integer ELSE dias_caducidad_promedio END
+            WHERE id_producto = $18
             RETURNING *
         `;
         const values = [
@@ -121,6 +142,8 @@ class ProductoModel {
             codigo_producto_sunat !== undefined ? (codigo_producto_sunat ? String(codigo_producto_sunat).trim() : null) : null,
             actualizaClienteHabitual,
             clienteHabitualVal,
+            actualizaDiasCaducidad,
+            diasCaducidadVal,
             id
         ];
 

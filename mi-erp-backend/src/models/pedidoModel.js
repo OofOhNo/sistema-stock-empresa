@@ -153,6 +153,29 @@ const Pedido = {
                         ORDER BY comp.id_comprobante DESC LIMIT 1
                     ) AS numero_comprobante,
                     (SELECT COUNT(*) FROM fotos_pedidos fp WHERE fp.id_pedido = p.id_pedido AND fp.expira_en > CURRENT_TIMESTAMP)::int AS total_fotos,
+                    COALESCE((
+                        SELECT json_agg(
+                            json_build_object(
+                                'id_detalle', dp.id_detalle,
+                                'id_producto', dp.id_producto,
+                                'sku', COALESCE(pr.sku, 'PROD'),
+                                'descripcion', pr.nombre,
+                                'unidad_medida', COALESCE(um.nombre, pr.unidad_medida, 'Unidad'),
+                                'simbolo_unidad', COALESCE(um.simbolo, 'UND'),
+                                'codigo_unidad_sunat', COALESCE(um.codigo, 'NIU'),
+                                'tipo_afectacion_igv', COALESCE(pr.tipo_afectacion_igv, '10'),
+                                'codigo_producto_sunat', pr.codigo_producto_sunat,
+                                'dias_caducidad_promedio', pr.dias_caducidad_promedio,
+                                'cantidad', dp.cantidad,
+                                'precio_unitario', dp.precio_unitario,
+                                'subtotal', dp.subtotal
+                            ) ORDER BY dp.id_detalle ASC
+                        )
+                        FROM detalle_pedidos dp
+                        JOIN productos pr ON dp.id_producto = pr.id_producto
+                        LEFT JOIN unidades_medida um ON pr.id_unidad = um.id_unidad
+                        WHERE dp.id_pedido = p.id_pedido
+                    ), '[]'::json) AS items,
                     c.numero_documento AS ruc_cliente,
                     c.tipo_documento AS tipo_documento_cliente,
                     c.razon_social_o_nombre AS razon_social_cliente,
@@ -201,8 +224,21 @@ const Pedido = {
 
             return resultado.rows.map(row => {
                 const puedeVer = rol === 'Admin Central' || permitidosSet.has(row.id_cliente);
+                const itemsNormalizados = Array.isArray(row.items)
+                    ? row.items.map(it => ({
+                        ...it,
+                        cantidad: Number(it.cantidad) || 0,
+                        precio_unitario: Number(it.precio_unitario) || 0,
+                        subtotal: Number(it.subtotal) || 0,
+                        dias_caducidad_promedio:
+                            it.dias_caducidad_promedio !== null && it.dias_caducidad_promedio !== undefined
+                                ? Number(it.dias_caducidad_promedio)
+                                : null
+                    }))
+                    : [];
                 return {
                     ...row,
+                    items: itemsNormalizados,
                     celular: puedeVer ? row.celular : null
                 };
             });

@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS productos (
     precio_venta NUMERIC(10,2) NOT NULL,
     precio_costo NUMERIC(12,2) DEFAULT 0,
     stock_minimo INTEGER DEFAULT 5,
+    dias_caducidad_promedio INTEGER NULL CHECK (dias_caducidad_promedio IS NULL OR dias_caducidad_promedio > 0),
     activo BOOLEAN NOT NULL DEFAULT true,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -317,6 +318,7 @@ CREATE TABLE IF NOT EXISTS certificados_calidad (
     estado VARCHAR(50) NOT NULL DEFAULT 'VIGENTE' CHECK (estado IN ('VIGENTE', 'POR_VENCER', 'VENCIDO', 'SUSPENDIDO')),
     id_ubicacion INTEGER REFERENCES ubicaciones(id_ubicacion) ON DELETE SET NULL,
     id_usuario INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    id_pedido INTEGER REFERENCES pedidos(id_pedido) ON DELETE SET NULL,
     id_cliente INTEGER REFERENCES clientes(id_cliente) ON DELETE SET NULL,
     cliente_nombre VARCHAR(255),
     cliente_ruc VARCHAR(20),

@@ -69,6 +69,9 @@ const createProducto = async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error creating producto:', error);
+        if (error.message?.includes('caducidad')) {
+            return res.status(400).json({ message: error.message, error: error.message });
+        }
         if (error.code === '23505') {
             return res.status(400).json({ message: 'Ya existe un producto con ese SKU.', error: error.message });
         }
@@ -107,6 +110,9 @@ const updateProducto = async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error updating producto:', error);
+        if (error.message?.includes('caducidad')) {
+            return res.status(400).json({ message: error.message, error: error.message });
+        }
         if (error.code === '23505') {
             return res.status(400).json({ message: 'Ya existe otro producto con ese SKU.', error: error.message });
         }

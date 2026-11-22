@@ -6,6 +6,54 @@ import { obtenerInfoUnidad } from '../utils/unidades';
 import { exportarTablaExcel } from '../utils/excelExport';
 import BotonExportarExcel from '../components/BotonExportarExcel';
 
+const crearFormProductoInicial = (idUnidad = '') => ({
+  sku: '',
+  nombre: '',
+  descripcion: '',
+  id_categoria: '',
+  id_tipo_producto: '',
+  precio_venta: '',
+  precio_costo: '',
+  stock_minimo: '',
+  id_unidad: idUnidad,
+  tipo_afectacion_igv: '10',
+  cliente_habitual: '',
+  caducidad_valor: '',
+  caducidad_unidad: 'DIAS'
+});
+
+function calcularDiasCaducidadPromedio(valor, unidad) {
+  if (valor === undefined || valor === null || String(valor).trim() === '') {
+    return { ok: true, dias: null };
+  }
+  const num = Number(String(valor).trim());
+  if (!Number.isInteger(num) || num <= 0) {
+    return { ok: false, dias: null };
+  }
+  if (unidad === 'ANOS') return { ok: true, dias: num * 365 };
+  if (unidad === 'MESES') return { ok: true, dias: num * 30 };
+  return { ok: true, dias: num };
+}
+
+function descomponerDiasCaducidad(dias) {
+  if (dias === undefined || dias === null || dias === '' || Number(dias) <= 0) {
+    return { valor: '', unidad: 'DIAS' };
+  }
+  const n = parseInt(dias, 10);
+  if (n % 365 === 0) return { valor: String(n / 365), unidad: 'ANOS' };
+  if (n % 30 === 0 && n >= 30) return { valor: String(n / 30), unidad: 'MESES' };
+  return { valor: String(n), unidad: 'DIAS' };
+}
+
+function formatearCaducidadLegible(dias) {
+  if (dias === undefined || dias === null || Number(dias) <= 0) return null;
+  const { valor, unidad } = descomponerDiasCaducidad(dias);
+  const n = Number(valor);
+  if (unidad === 'ANOS') return `${n} ${n === 1 ? 'año' : 'años'}`;
+  if (unidad === 'MESES') return `${n} ${n === 1 ? 'mes' : 'meses'}`;
+  return `${n} ${n === 1 ? 'día' : 'días'}`;
+}
+
 export default function Productos({ usuario }) {
   const [productos, setProductos] = useState([]);
   const [unidades, setUnidades] = useState([]);
@@ -18,19 +66,7 @@ export default function Productos({ usuario }) {
     puedeEditarBackend ??
     (usuario?.rol === 'Admin Central' || usuario?.permisos?.productos?.puede_editar === true);
 
-  const [form, setForm] = useState({
-    sku: '',
-    nombre: '',
-    descripcion: '',
-    id_categoria: '',
-    id_tipo_producto: '',
-    precio_venta: '',
-    precio_costo: '',
-    stock_minimo: '',
-    id_unidad: '',
-    tipo_afectacion_igv: '10',
-    cliente_habitual: ''
-  });
+  const [form, setForm] = useState(() => crearFormProductoInicial());
   const [editando, setEditando] = useState(null);
   const [guardandoProd, setGuardandoProd] = useState(false);
 
@@ -134,6 +170,15 @@ export default function Productos({ usuario }) {
       return;
     }
 
+    const { ok: caducidadValida, dias: diasCaducidad } = calcularDiasCaducidadPromedio(
+      form.caducidad_valor,
+      form.caducidad_unidad
+    );
+    if (!caducidadValida) {
+      toast.error('Si indicas un tiempo promedio de caducidad, debe ser un número entero mayor a 0.');
+      return;
+    }
+
     setGuardandoProd(true);
     try {
       const unidadSeleccionada = unidades.find(u => String(u.id_unidad) === String(form.id_unidad));
@@ -150,7 +195,8 @@ export default function Productos({ usuario }) {
         stock_minimo: form.stock_minimo !== '' ? parseInt(form.stock_minimo, 10) : 5,
         id_unidad: form.id_unidad ? parseInt(form.id_unidad, 10) : null,
         unidad_medida: unidadSeleccionada ? unidadSeleccionada.nombre : 'Unidad',
-        cliente_habitual: form.cliente_habitual ? form.cliente_habitual.trim() : ''
+        cliente_habitual: form.cliente_habitual ? form.cliente_habitual.trim() : '',
+        dias_caducidad_promedio: diasCaducidad
       };
 
       if (editando) {
@@ -161,19 +207,7 @@ export default function Productos({ usuario }) {
         toast.success('Producto guardado con éxito.');
       }
 
-      setForm({
-        sku: '',
-        nombre: '',
-        descripcion: '',
-        id_categoria: '',
-        id_tipo_producto: '',
-        precio_venta: '',
-        precio_costo: '',
-        stock_minimo: '',
-        id_unidad: unidades[0]?.id_unidad || '',
-        tipo_afectacion_igv: '10',
-        cliente_habitual: ''
-      });
+      setForm(crearFormProductoInicial(unidades[0]?.id_unidad || ''));
       setEditando(null);
       cargarProductos();
     } catch (err) {
@@ -185,6 +219,7 @@ export default function Productos({ usuario }) {
   };
 
   const handleEdit = (prod) => {
+    const caducidad = descomponerDiasCaducidad(prod.dias_caducidad_promedio);
     setForm({
       sku: prod.sku || '',
       nombre: prod.nombre || '',
@@ -196,7 +231,9 @@ export default function Productos({ usuario }) {
       stock_minimo: prod.stock_minimo ?? '',
       id_unidad: prod.id_unidad || unidades[0]?.id_unidad || '',
       tipo_afectacion_igv: prod.tipo_afectacion_igv || '10',
-      cliente_habitual: prod.cliente_habitual || ''
+      cliente_habitual: prod.cliente_habitual || '',
+      caducidad_valor: caducidad.valor,
+      caducidad_unidad: caducidad.unidad
     });
     setEditando(prod.id_producto);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -210,18 +247,7 @@ export default function Productos({ usuario }) {
       toast.success(`Producto "${productoADesactivar.nombre}" retirado del catálogo.`);
       if (editando === productoADesactivar.id_producto) {
         setEditando(null);
-        setForm({
-          sku: '',
-          nombre: '',
-          descripcion: '',
-          id_categoria: '',
-          id_tipo_producto: '',
-          precio_venta: '',
-          precio_costo: '',
-          stock_minimo: '',
-          id_unidad: unidades[0]?.id_unidad || '',
-          cliente_habitual: ''
-        });
+        setForm(crearFormProductoInicial(unidades[0]?.id_unidad || ''));
       }
       setProductoADesactivar(null);
       cargarProductos();
@@ -379,6 +405,7 @@ export default function Productos({ usuario }) {
                   { header: 'Código SUNAT', value: (p) => p.codigo_unidad || 'NIU' },
                   { header: 'Precio Venta (S/)', value: (p) => Number(p.precio_venta || 0) },
                   { header: 'Stock Mínimo', value: (p) => Number(p.stock_minimo || 0) },
+                  { header: 'Caducidad Promedio (días)', value: (p) => (p.dias_caducidad_promedio ? Number(p.dias_caducidad_promedio) : '') },
                   { header: 'Peso Promedio (kg)', value: (p) => Number(p.peso_promedio || 0) },
                   { header: 'Cliente Habitual', value: (p) => p.cliente_habitual || '' },
                   { header: 'Estado', value: (p) => (p.activo === false ? 'Inactivo' : 'Activo') }
@@ -611,6 +638,38 @@ export default function Productos({ usuario }) {
                 </datalist>
               </div>
 
+              {/* Tiempo promedio en caducar (Opcional) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Caducidad promedio (Opcional)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    name="caducidad_valor"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={form.caducidad_valor}
+                    onChange={handleChange}
+                    placeholder="Ej: 15"
+                    className="w-full border border-slate-300 p-2.5 rounded-xl text-sm font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <select
+                    name="caducidad_unidad"
+                    value={form.caducidad_unidad}
+                    onChange={handleChange}
+                    className="border border-slate-300 p-2.5 rounded-xl text-sm bg-white font-medium focus:outline-none focus:border-indigo-500 shrink-0"
+                  >
+                    <option value="DIAS">Días</option>
+                    <option value="MESES">Meses</option>
+                    <option value="ANOS">Años</option>
+                  </select>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Se usará como referencia al generar certificados de calidad
+                </p>
+              </div>
+
             </div>
 
             <div className="flex items-center space-x-3 pt-2">
@@ -627,18 +686,7 @@ export default function Productos({ usuario }) {
                   type="button"
                   onClick={() => {
                     setEditando(null);
-                    setForm({
-                      sku: '',
-                      nombre: '',
-                      descripcion: '',
-                      id_categoria: '',
-                      precio_venta: '',
-                      precio_costo: '',
-                      stock_minimo: '',
-                      id_unidad: unidades[0]?.id_unidad || '',
-                      tipo_afectacion_igv: '10',
-                      cliente_habitual: ''
-                    });
+                    setForm(crearFormProductoInicial(unidades[0]?.id_unidad || ''));
                   }}
                   className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
                 >
@@ -694,13 +742,14 @@ export default function Productos({ usuario }) {
                 <th className="p-4 text-right">Precio Venta</th>
                 <th className="p-4 text-right">Ganancia</th>
                 <th className="p-4 text-center">Stock Mínimo</th>
+                <th className="p-4 text-center">Caducidad Prom.</th>
                 {puedeEditar && <th className="p-4 text-right">Acciones</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm">
               {productosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={puedeEditar ? 9 : 8} className="p-10 text-center text-slate-500 text-sm">
+                  <td colSpan={puedeEditar ? 10 : 9} className="p-10 text-center text-slate-500 text-sm">
                     No se encontraron productos con esa búsqueda.
                   </td>
                 </tr>
@@ -739,6 +788,15 @@ export default function Productos({ usuario }) {
                     </td>
                     <td className="p-4 text-center font-mono text-xs text-slate-600">
                       {p.stock_minimo} {p.simbolo_unidad || 'und'}
+                    </td>
+                    <td className="p-4 text-center text-xs">
+                      {p.dias_caducidad_promedio ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {formatearCaducidadLegible(p.dias_caducidad_promedio)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">No definida</span>
+                      )}
                     </td>
                     {puedeEditar && (
                       <td className="p-4 text-right">

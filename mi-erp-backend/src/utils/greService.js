@@ -471,18 +471,26 @@ async function crearGreInterna(client, {
 
     const bienes = Array.isArray(gre.bienes) && gre.bienes.length > 0
         ? gre.bienes
-        : (Array.isArray(items) ? items : []).map((it, idx) => ({
-            orden: idx + 1,
-            bien_normalizado: Boolean(it.bien_normalizado),
-            codigo_bien: it.codigo_bien || it.codigo || it.sku || '',
-            codigo_subpartida: it.codigo_subpartida || '',
-            codigo_sunat: it.codigo_sunat || '',
-            codigo_gtin: it.codigo_gtin || '',
-            descripcion: it.descripcion || it.nombre || 'PRODUCTO',
-            unidad_medida: it.unidad_medida || 'Kilogramo',
-            codigo_unidad_sunat: it.codigo_unidad_sunat || 'KGM',
-            cantidad: Number(it.peso || it.cantidad || 1)
-        }));
+        : (Array.isArray(items) ? items : []).map((it, idx) => {
+            const codigoUnidadSunat = it.codigo_unidad_sunat || (it.unidad_medida ? 'NIU' : 'KGM');
+            const unidadMedida = it.unidad_medida || (codigoUnidadSunat === 'KGM' ? 'Kilogramo' : 'Unidad');
+            const cant = Number(it.cantidad);
+            const peso = Number(it.peso);
+            const esUnidadPeso = codigoUnidadSunat === 'KGM' || codigoUnidadSunat === 'GRM';
+            const cantidadFinal = cant > 0 ? cant : (esUnidadPeso && peso > 0 ? peso : 1);
+            return {
+                orden: idx + 1,
+                bien_normalizado: Boolean(it.bien_normalizado),
+                codigo_bien: it.codigo_bien || it.codigo || it.sku || '',
+                codigo_subpartida: it.codigo_subpartida || '',
+                codigo_sunat: it.codigo_sunat || '',
+                codigo_gtin: it.codigo_gtin || '',
+                descripcion: it.descripcion || it.nombre || 'PRODUCTO',
+                unidad_medida: unidadMedida,
+                codigo_unidad_sunat: codigoUnidadSunat,
+                cantidad: cantidadFinal
+            };
+        });
 
     if (Array.isArray(gre.bienes_guardar_frecuente)) {
         for (const bf of gre.bienes_guardar_frecuente) {
@@ -505,9 +513,13 @@ async function crearGreInterna(client, {
         }
     }
 
+    const pesoItems = (Array.isArray(items) ? items : [])
+        .reduce((acc, it) => acc + (Number(it.peso) || 0), 0);
     const pesoCalculado = Number(peso_bruto_total) > 0
         ? +Number(peso_bruto_total).toFixed(2)
-        : +bienes.reduce((acc, b) => acc + (Number(b.cantidad) || 0), 0).toFixed(2);
+        : +(pesoItems > 0
+            ? pesoItems
+            : bienes.reduce((acc, b) => acc + (Number(b.cantidad) || 0), 0)).toFixed(2);
 
     const destTipo = gre.destinatario_tipo_doc || cliente?.tipo_documento || '6';
     const destNum = gre.destinatario_num_doc || cliente?.numero_documento || '';

@@ -62,6 +62,99 @@ async function obtenerConfigEmisor(clientOrPool = pool) {
 }
 
 /**
+ * Combina el detalle autoritativo del pedido en BD con los ajustes de peso/precio
+ * enviados por el frontend, ignorando el placeholder legado de UI si existen filas reales.
+ */
+function resolverItemsComprobantePedido(detalleRows = [], bodyItems = []) {
+    const tieneDetalleReal = Array.isArray(detalleRows) && detalleRows.length > 0;
+    const tieneBodyItems = Array.isArray(bodyItems) && bodyItems.length > 0;
+
+    const esPlaceholderLegado = tieneBodyItems
+        && bodyItems.length === 1
+        && !bodyItems[0]?.id_detalle
+        && bodyItems[0]?.descripcion === 'Cortes Cárnicos Seleccionados';
+
+    if (!tieneDetalleReal) {
+        if (!tieneBodyItems) return [];
+        return bodyItems.map(it => {
+            const cant = Number(it.cantidad) || 1;
+            const precio = Number(it.precio_unitario) || 0;
+            return {
+                id_producto: it.id_producto || null,
+                sku: it.sku || 'PROD',
+                descripcion: it.descripcion || 'Producto',
+                unidad_medida: it.unidad_medida || 'Unidad',
+                simbolo_unidad: it.simbolo_unidad || 'UND',
+                codigo_unidad_sunat: it.codigo_unidad_sunat || 'NIU',
+                tipo_afectacion_igv: it.tipo_afectacion_igv || '10',
+                codigo_producto_sunat: it.codigo_producto_sunat || null,
+                cantidad: cant,
+                peso: Number(it.peso) || 0,
+                precio_unitario: precio,
+                subtotal: +(cant * precio).toFixed(2)
+            };
+        });
+    }
+
+    const bodyValidos = (!tieneBodyItems || esPlaceholderLegado) ? [] : bodyItems;
+
+    return detalleRows.map((det, idx) => {
+        const byDetalle = bodyValidos.find(
+            b => b.id_detalle && det.id_detalle && Number(b.id_detalle) === Number(det.id_detalle)
+        );
+        const byPos = bodyValidos[idx] && Number(bodyValidos[idx].id_producto) === Number(det.id_producto)
+            ? bodyValidos[idx]
+            : null;
+        const match = byDetalle || byPos || bodyValidos.find(b => Number(b.id_producto) === Number(det.id_producto));
+
+        const cant = Number(det.cantidad) || 1;
+        const precio = match && match.precio_unitario !== undefined && match.precio_unitario !== ''
+            ? (Number(match.precio_unitario) || 0)
+            : (Number(det.precio_unitario) || 0);
+        const peso = match ? (Number(match.peso) || 0) : (Number(det.peso) || 0);
+
+        return {
+            id_detalle: det.id_detalle,
+            id_producto: det.id_producto,
+            sku: det.sku || 'PROD',
+            descripcion: det.descripcion || 'Producto',
+            unidad_medida: det.unidad_medida || 'Unidad',
+            simbolo_unidad: det.simbolo_unidad || 'UND',
+            codigo_unidad_sunat: det.codigo_unidad_sunat || 'NIU',
+            tipo_afectacion_igv: det.tipo_afectacion_igv || '10',
+            codigo_producto_sunat: det.codigo_producto_sunat || null,
+            cantidad: cant,
+            peso,
+            precio_unitario: precio,
+            subtotal: +(cant * precio).toFixed(2)
+        };
+    });
+}
+
+/**
+ * Registra salida en kardex y descuenta stock físico/reservado usando el detalle real del pedido.
+ */
+async function descontarStockPedido(client, { detalleRows, idUbicacion, idUsuario, motivo }) {
+    for (const item of detalleRows) {
+        const cantidadReal = Number(item.cantidad) || 0;
+        if (cantidadReal <= 0 || !item.id_producto) continue;
+
+        await client.query(`
+            INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+            VALUES ($1, $2, $3, 'SALIDA', $4, $5);
+        `, [item.id_producto, idUbicacion, idUsuario, cantidadReal, motivo]);
+
+        await client.query(`
+            UPDATE inventario 
+            SET cantidad_fisica = cantidad_fisica - $1,
+                cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
+                ultima_actualizacion = CURRENT_TIMESTAMP
+            WHERE id_producto = $2 AND id_ubicacion = $3;
+        `, [cantidadReal, item.id_producto, idUbicacion]);
+    }
+}
+
+/**
  * Sirve el XML firmado o la Constancia CDR de un comprobante electrónico,
  * regenerando la estructura UBL 2.1 si aún no estuviera persistida.
  */
@@ -626,6 +719,29 @@ const facturaController = {
                 });
             }
 
+            const queryDetalle = `
+                SELECT 
+                    dp.id_detalle,
+                    dp.id_producto,
+                    pr.sku,
+                    pr.nombre AS descripcion,
+                    COALESCE(um.nombre, pr.unidad_medida, 'Unidad') AS unidad_medida,
+                    COALESCE(um.simbolo, 'UND') AS simbolo_unidad,
+                    COALESCE(um.codigo, 'NIU') AS codigo_unidad_sunat,
+                    COALESCE(pr.tipo_afectacion_igv, '10') AS tipo_afectacion_igv,
+                    pr.codigo_producto_sunat,
+                    dp.cantidad,
+                    dp.precio_unitario,
+                    dp.subtotal
+                FROM detalle_pedidos dp
+                JOIN productos pr ON dp.id_producto = pr.id_producto
+                LEFT JOIN unidades_medida um ON pr.id_unidad = um.id_unidad
+                WHERE dp.id_pedido = $1
+                ORDER BY dp.id_detalle ASC;
+            `;
+            const resDetalle = await client.query(queryDetalle, [id_pedido]);
+            const items = resolverItemsComprobantePedido(resDetalle.rows, req.body.items);
+
             // Req 2: Pago dividido entre múltiples clientes / razones sociales (Opción A: por montos/porcentajes)
             if (req.body.es_pago_dividido && Array.isArray(req.body.pagos) && req.body.pagos.length > 0) {
                 const comprobantesEmitidos = [];
@@ -771,16 +887,13 @@ const facturaController = {
                 }
 
                 if (!pedido.stock_descontado) {
-                    const resItemsPed = await client.query('SELECT * FROM detalle_pedidos WHERE id_pedido = $1', [id_pedido]);
-                    for (const item of resItemsPed.rows) {
-                        await client.query(`
-                            UPDATE inventario 
-                            SET cantidad_fisica = cantidad_fisica - $1,
-                                cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
-                                ultima_actualizacion = CURRENT_TIMESTAMP
-                            WHERE id_producto = $2 AND id_ubicacion = $3;
-                        `, [item.cantidad, item.id_producto, pedido.id_ubicacion]);
-                    }
+                    const detalleDescuento = resDetalle.rows.length > 0 ? resDetalle.rows : items;
+                    await descontarStockPedido(client, {
+                        detalleRows: detalleDescuento,
+                        idUbicacion: pedido.id_ubicacion,
+                        idUsuario: req.usuario?.id_usuario || pedido.id_usuario,
+                        motivo: `Venta Facturada (Pago Dividido): Pedido #${id_pedido}`
+                    });
                 }
 
                 await client.query("UPDATE pedidos SET estado_pedido = 'FACTURADO', stock_descontado = true WHERE id_pedido = $1", [id_pedido]);
@@ -828,46 +941,7 @@ const facturaController = {
                 });
             }
 
-            const queryDetalle = `
-                SELECT 
-                    dp.id_producto,
-                    pr.sku,
-                    pr.nombre AS descripcion,
-                    COALESCE(pr.unidad_medida, 'Unidad') AS unidad_medida,
-                    COALESCE(um.codigo, 'NIU') AS codigo_unidad_sunat,
-                    COALESCE(pr.tipo_afectacion_igv, '10') AS tipo_afectacion_igv,
-                    pr.codigo_producto_sunat,
-                    dp.cantidad,
-                    dp.precio_unitario,
-                    dp.subtotal
-                FROM detalle_pedidos dp
-                JOIN productos pr ON dp.id_producto = pr.id_producto
-                LEFT JOIN unidades_medida um ON pr.id_unidad = um.id_unidad
-                WHERE dp.id_pedido = $1;
-            `;
-            const resDetalle = await client.query(queryDetalle, [id_pedido]);
-            let items = resDetalle.rows;
-
-            // Req 9: Modificación de precios y pesos al elegir el pedido
-            if (req.body.items && Array.isArray(req.body.items) && req.body.items.length > 0) {
-                items = req.body.items.map(it => {
-                    const cant = Number(it.cantidad) || 1;
-                    const precio = Number(it.precio_unitario) || 0;
-                    return {
-                        id_producto: it.id_producto,
-                        sku: it.sku || 'PROD',
-                        descripcion: it.descripcion || 'Producto',
-                        unidad_medida: it.unidad_medida || 'Unidad',
-                        codigo_unidad_sunat: it.codigo_unidad_sunat || 'NIU',
-                        tipo_afectacion_igv: it.tipo_afectacion_igv || '10',
-                        codigo_producto_sunat: it.codigo_producto_sunat || null,
-                        cantidad: cant,
-                        peso: Number(it.peso) || 0,
-                        precio_unitario: precio,
-                        subtotal: +(cant * precio).toFixed(2)
-                    };
-                });
-            }
+            // Nota: resDetalle e items ya fueron resueltos al inicio del pedido para cubrir tanto pago normal como dividido
 
             // Req 7 & 8: Tarjeta de crédito obligatoria en crédito, cuotas y peso
             const medioPagoFinal = esCredito ? '006' : (medio_pago_sunat || '008');
@@ -1036,26 +1110,13 @@ const facturaController = {
 
             // Descontar stock físico SOLO si no había sido descontado antes (ej. al despachar)
             if (!pedido.stock_descontado) {
-                for (const item of items) {
-                    await client.query(`
-                        INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                        VALUES ($1, $2, $3, 'SALIDA', $4, $5);
-                    `, [
-                        item.id_producto,
-                        pedido.id_ubicacion,
-                        req.usuario?.id_usuario || pedido.id_usuario,
-                        item.cantidad,
-                        `Venta Facturada: ${serie}-${correlativo} (Pedido #${id_pedido})`
-                    ]);
-
-                    await client.query(`
-                        UPDATE inventario 
-                        SET cantidad_fisica = cantidad_fisica - $1,
-                            cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
-                            ultima_actualizacion = CURRENT_TIMESTAMP
-                        WHERE id_producto = $2 AND id_ubicacion = $3;
-                    `, [item.cantidad, item.id_producto, pedido.id_ubicacion]);
-                }
+                const detalleDescuento = resDetalle.rows.length > 0 ? resDetalle.rows : items;
+                await descontarStockPedido(client, {
+                    detalleRows: detalleDescuento,
+                    idUbicacion: pedido.id_ubicacion,
+                    idUsuario: req.usuario?.id_usuario || pedido.id_usuario,
+                    motivo: `Venta Facturada: ${serie}-${correlativo} (Pedido #${id_pedido})`
+                });
             }
 
             // Si el pedido ya estaba DESPACHADO conserva DESPACHADO; si estaba PENDIENTE o LISTO_DESPACHO pasa a FACTURADO

@@ -1,8 +1,37 @@
 const Calidad = require('../models/calidadModel');
+const Pedido = require('../models/pedidoModel');
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
 
 const calidadController = {
+    listarPedidosDisponibles: async (req, res) => {
+        try {
+            const { nombre_rol, id_ubicacion, id_usuario, puede_ver_otras_ubicaciones } = req.usuario;
+            const eventos = await Pedido.obtenerParaCalendario(
+                id_ubicacion,
+                nombre_rol,
+                id_usuario,
+                puede_ver_otras_ubicaciones
+            );
+            const disponibles = eventos
+                .filter(p => p.estado_pedido !== 'CANCELADO')
+                .sort((a, b) => Number(b.id_pedido) - Number(a.id_pedido));
+
+            res.status(200).json({
+                exito: true,
+                cantidad: disponibles.length,
+                datos: disponibles
+            });
+        } catch (error) {
+            console.error('Error al listar pedidos para calidad:', error);
+            res.status(500).json({
+                exito: false,
+                mensaje: 'Error al obtener los pedidos disponibles para calidad.',
+                error: error.message
+            });
+        }
+    },
+
     listarCertificados: async (req, res) => {
         try {
             const certificados = await Calidad.obtenerTodos();
@@ -27,6 +56,7 @@ const calidadController = {
             fecha_vencimiento,
             estado,
             id_ubicacion,
+            id_pedido,
             id_cliente,
             cliente_nombre,
             cliente_ruc,
@@ -38,6 +68,15 @@ const calidadController = {
         } = req.body;
 
         const id_usuario = req.usuario.id_usuario;
+
+        let idPedidoFinal = null;
+        if (id_pedido !== undefined && id_pedido !== null && String(id_pedido).trim() !== '') {
+            const parsedPedido = Number(id_pedido);
+            if (!Number.isInteger(parsedPedido) || parsedPedido <= 0) {
+                return res.status(400).json({ exito: false, mensaje: 'El pedido seleccionado no es válido.' });
+            }
+            idPedidoFinal = parsedPedido;
+        }
 
         let fechaVencFinal = fecha_vencimiento;
         if (!fechaVencFinal && Array.isArray(items_detalle) && items_detalle.length > 0) {
@@ -60,6 +99,13 @@ const calidadController = {
             : `CERT-${Date.now().toString().slice(-6)}`;
 
         try {
+            if (idPedidoFinal !== null) {
+                const checkPedido = await pool.query('SELECT id_pedido FROM pedidos WHERE id_pedido = $1', [idPedidoFinal]);
+                if (checkPedido.rows.length === 0) {
+                    return res.status(404).json({ exito: false, mensaje: 'El pedido seleccionado no existe.' });
+                }
+            }
+
             const check = await pool.query('SELECT id_certificado FROM certificados_calidad WHERE LOWER(codigo_certificado) = LOWER($1)', [codigoFinal]);
             if (check.rows.length > 0) {
                 return res.status(400).json({ exito: false, mensaje: 'Ya existe un certificado con ese código.' });
@@ -75,6 +121,7 @@ const calidadController = {
                 estado: estado || 'VIGENTE',
                 id_ubicacion: id_ubicacion ? Number(id_ubicacion) : null,
                 id_usuario,
+                id_pedido: idPedidoFinal,
                 id_cliente: id_cliente ? Number(id_cliente) : null,
                 cliente_nombre: cliente_nombre || null,
                 cliente_ruc: cliente_ruc || null,
