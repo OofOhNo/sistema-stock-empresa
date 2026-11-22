@@ -34,6 +34,7 @@ const stockController = {
             }
 
             const nombreUbicacionUsuario = req.usuario.nombre_ubicacion || stockPorUbicacion[0]?.nombre_ubicacion || 'Mi Sede';
+            const esVistaSede = req.query.vista === 'sede';
 
             res.status(200).json({
                 exito: true,
@@ -42,8 +43,8 @@ const stockController = {
                 nombre_ubicacion_usuario: nombreUbicacionUsuario,
                 stock_total: stockTotal,
                 stock_por_ubicacion: stockPorUbicacion,
-                cantidad: stockTotal.length,
-                datos: stockTotal
+                cantidad: esVistaSede ? stockPorUbicacion.length : stockTotal.length,
+                datos: esVistaSede ? stockPorUbicacion : stockTotal
             });
 
         } catch (error) {

@@ -224,8 +224,9 @@ export default function Pedidos({ usuario }) {
   const abrirFormularioNuevo = async () => {
     setVista('nuevo');
     setItems([]);
-    const sedeInicial = usuario?.id_ubicacion || 1;
-    setUbicacionPedido(sedeInicial);
+    setCantidad(1);
+    const sedeInicialFallback = usuario?.id_ubicacion || '';
+    setUbicacionPedido(sedeInicialFallback);
     try {
       const [resStockSede, resClientes, resUbic] = await Promise.all([
         api.get('/stock?vista=sede'),
@@ -233,11 +234,32 @@ export default function Pedidos({ usuario }) {
         api.get('/ubicaciones').catch(() => ({ data: { ubicaciones: [] } }))
       ]);
 
-      const registrosSede = resStockSede.data.datos || [];
+      const registrosSede =
+        resStockSede.data.stock_por_ubicacion ||
+        resStockSede.data.datos ||
+        [];
       setStockPorSede(registrosSede);
 
       const sedes = resUbic.data.ubicaciones || resUbic.data.datos || [];
       setUbicacionesDisponibles(sedes);
+
+      const idsSedesValidas = new Set(sedes.map(u => Number(u.id_ubicacion)));
+      const sedeUsuario =
+        Number(resStockSede.data.id_ubicacion_usuario) ||
+        Number(usuario?.id_ubicacion) ||
+        0;
+      const sedeConStock = sedes.find(u =>
+        registrosSede.some(s => Number(s.id_ubicacion) === Number(u.id_ubicacion))
+      );
+      const sedeUsuarioExiste =
+        sedeUsuario > 0 &&
+        (idsSedesValidas.size > 0
+          ? idsSedesValidas.has(sedeUsuario)
+          : registrosSede.some(s => Number(s.id_ubicacion) === sedeUsuario));
+      const sedeInicial = sedeUsuarioExiste
+        ? sedeUsuario
+        : Number(sedeConStock?.id_ubicacion || sedes[0]?.id_ubicacion || registrosSede[0]?.id_ubicacion || sedeUsuario || '');
+      setUbicacionPedido(sedeInicial);
 
       const deSedeActual = registrosSede.filter(s => Number(s.id_ubicacion) === Number(sedeInicial));
       if (deSedeActual.length > 0) {
@@ -336,7 +358,7 @@ export default function Pedidos({ usuario }) {
 
       await api.post('/pedidos', {
         id_cliente: Number(clienteSeleccionado),
-        id_ubicacion: Number(ubicacionPedido) || usuario?.id_ubicacion || 1,
+        id_ubicacion: Number(ubicacionPedido) || Number(usuario?.id_ubicacion) || undefined,
         id_usuario: usuario?.id_usuario,
         fecha_limite_despacho: fechaLimiteCompleta,
         items: items,
@@ -792,7 +814,7 @@ export default function Pedidos({ usuario }) {
                         >
                           {productosDeLaSede.map(p => (
                             <option key={p.id_producto} value={p.id_producto}>
-                              {p.nombre_producto || p.nombre} · S/ {parseFloat(p.precio_venta).toFixed(2)} (Disp: {stockRestanteProducto(p)} {p.simbolo_unidad || 'und'})
+                              {p.nombre_producto || p.nombre} · S/ {(Number(p.precio_venta) || 0).toFixed(2)} (Disp: {stockRestanteProducto(p)} {p.simbolo_unidad || 'und'})
                             </option>
                           ))}
                         </select>
