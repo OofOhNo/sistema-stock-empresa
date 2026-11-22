@@ -33,7 +33,8 @@ function dentroDeHorarioLima(horaInicio = '08:00', horaFin = '20:00') {
         timeZone: 'America/Lima',
         hour: '2-digit',
         minute: '2-digit',
-        hour12: false
+        hour12: false,
+        hourCycle: 'h23'
     });
     if (horaInicio <= horaFin) {
         return ahora >= horaInicio && ahora <= horaFin;

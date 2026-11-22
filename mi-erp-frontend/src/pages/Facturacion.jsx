@@ -143,7 +143,9 @@ export default function Facturacion({ usuario }) {
     modo_integracion: 'DEMO_NUBEFACT',
     nubefact_ruta: 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
     nubefact_token: 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
-    detraccion_cuenta_bn: '00-000-000000'
+    detraccion_cuenta_bn: '00-000-000000',
+    serie_gre_remitente: 'T001',
+    serie_gre_transportista: 'V001'
   });
   const [guardandoConfig, setGuardandoConfig] = useState(false);
   const [probandoConexion, setProbandoConexion] = useState(false);
@@ -167,12 +169,13 @@ export default function Facturacion({ usuario }) {
   const [montoEntregadoPos, setMontoEntregadoPos] = useState('');
   const [cobrandoPos, setCobrandoPos] = useState(false);
 
-  // Guías de Remisión Electrónica (GRE EG07)
+  // Guías de Remisión Electrónica (GRE)
   const [catalogosGre, setCatalogosGre] = useState({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
   const [guiasRemision, setGuiasRemision] = useState([]);
   const [greFormPedido, setGreFormPedido] = useState(() => crearEstadoGreInicial());
   const [greFormManual, setGreFormManual] = useState(() => crearEstadoGreInicial());
   const [guiaPreview, setGuiaPreview] = useState(null);
+  const [procesandoGreId, setProcesandoGreId] = useState(null);
   const yaSeleccionoPedidoRef = useRef(false);
   const catalogosGreRef = useRef({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
 
@@ -286,7 +289,9 @@ export default function Facturacion({ usuario }) {
           modo_integracion: resConf.data.configuracion.modo_integracion || 'DEMO_NUBEFACT',
           nubefact_ruta: resConf.data.configuracion.nubefact_ruta || '',
           nubefact_token: resConf.data.configuracion.nubefact_token || '',
-          detraccion_cuenta_bn: resConf.data.configuracion.detraccion_cuenta_bn || '00-000-000000'
+          detraccion_cuenta_bn: resConf.data.configuracion.detraccion_cuenta_bn || '00-000-000000',
+          serie_gre_remitente: resConf.data.configuracion.serie_gre_remitente || 'T001',
+          serie_gre_transportista: resConf.data.configuracion.serie_gre_transportista || 'V001'
         });
       }
 
@@ -529,7 +534,11 @@ export default function Facturacion({ usuario }) {
       };
 
       const res = await api.post('/facturacion/emitir', payload);
-      toast.success(res.data.mensaje || '¡Comprobante emitido y validado con SUNAT!');
+      if (res.data?.gre_observada) {
+        toast.error(res.data.mensaje, { duration: 6000 });
+      } else {
+        toast.success(res.data.mensaje || '¡Comprobante emitido y validado con SUNAT!');
+      }
       setModalEmitir(false);
       await cargarDatos();
     } catch (err) {
@@ -649,7 +658,11 @@ export default function Facturacion({ usuario }) {
         gre: manualTipoComp === '01' ? greFormManual : null
       });
 
-      toast.success(res.data.mensaje || '¡Factura manual emitida y stock descontado!');
+      if (res.data?.gre_observada) {
+        toast.error(res.data.mensaje, { duration: 6000 });
+      } else {
+        toast.success(res.data.mensaje || '¡Factura manual emitida y stock descontado!');
+      }
       setModalManual(false);
       await cargarDatos();
     } catch (err) {
@@ -1149,6 +1162,32 @@ export default function Facturacion({ usuario }) {
       return true;
     });
   }, [productos, categoriaPos, busquedaProdPos]);
+
+  const handleConsultarGreSunat = async (g) => {
+    setProcesandoGreId(g.id_gre);
+    try {
+      const res = await api.post(`/facturacion/gre/${g.id_gre}/consultar`);
+      toast.success(res.data?.mensaje || 'Estado de GRE actualizado.');
+      await cargarDatos();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo consultar la GRE en NubeFact.');
+    } finally {
+      setProcesandoGreId(null);
+    }
+  };
+
+  const handleReenviarGreSunat = async (g) => {
+    setProcesandoGreId(g.id_gre);
+    try {
+      const res = await api.post(`/facturacion/gre/${g.id_gre}/reenviar`);
+      toast.success(res.data?.mensaje || 'GRE reenviada a NubeFact.');
+      await cargarDatos();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo reenviar la GRE.');
+    } finally {
+      setProcesandoGreId(null);
+    }
+  };
 
   // Handlers para Configuración SUNAT
   const handleProbarConexion = async () => {
@@ -2180,19 +2219,21 @@ export default function Facturacion({ usuario }) {
         </div>
       )}
 
-      {/* PESTAÑA: GUÍAS DE REMISIÓN ELECTRÓNICAS (EG07) */}
+      {/* PESTAÑA: GUÍAS DE REMISIÓN ELECTRÓNICAS */}
       {tabActiva === 'gre' && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sky-50/40">
             <div>
-              <h3 className="text-base font-bold text-blue-950">Guías de Remisión Electrónica (Serie EG07)</h3>
+              <h3 className="text-base font-bold text-blue-950">
+                Guías de Remisión Electrónica (Serie {configSunat?.serie_gre_remitente || 'T001'})
+              </h3>
               <p className="text-xs text-slate-500">
-                Emitidas automáticamente junto a cada Factura (01) • Documentos relacionados vinculados automáticamente en SUNAT
+                Emitidas automáticamente junto a cada Factura (01) • Envío integrado a NubeFact / SUNAT
               </p>
             </div>
             <BotonExportarExcel
               onClick={exportarGreExcel}
-              label="Exportar Excel (Guías EG07)"
+              label="Exportar Excel (Guías)"
               cantidad={guiasRemision.length}
             />
           </div>
@@ -2206,14 +2247,15 @@ export default function Facturacion({ usuario }) {
                   <th className="p-4">Traslado</th>
                   <th className="p-4">Vehículo / Conductor</th>
                   <th className="p-4 text-right">Peso Total</th>
+                  <th className="p-4 text-center">Estado SUNAT</th>
                   <th className="p-4 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {guiasRemision.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="p-10 text-center text-slate-400">
-                      Aún no se han emitido Guías de Remisión EG07. Se generan automáticamente al emitir una Factura (01).
+                    <td colSpan="8" className="p-10 text-center text-slate-400">
+                      Aún no se han emitido Guías de Remisión. Se generan automáticamente al emitir una Factura (01).
                     </td>
                   </tr>
                 ) : (
@@ -2241,14 +2283,49 @@ export default function Facturacion({ usuario }) {
                         {Number(g.peso_bruto_total || 0).toFixed(2)} {g.unidad_peso_bruto || 'KGM'}
                       </td>
                       <td className="p-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() => setGuiaPreview(g)}
-                          className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
-                        >
-                          <Eye size={13} />
-                          <span>Ver / Imprimir</span>
-                        </button>
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          g.estado_sunat === 'ACEPTADO'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : g.estado_sunat === 'OBSERVADO'
+                              ? 'bg-red-50 text-red-700 border-red-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {g.estado_sunat || 'ACEPTADO'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
+                          <button
+                            type="button"
+                            onClick={() => setGuiaPreview(g)}
+                            className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                          >
+                            <Eye size={13} />
+                            <span>Ver</span>
+                          </button>
+                          {g.modo_emision === 'NUBEFACT_REAL' && g.estado_sunat === 'PENDIENTE_ENVIO' && (
+                            <button
+                              type="button"
+                              onClick={() => handleConsultarGreSunat(g)}
+                              disabled={procesandoGreId === g.id_gre}
+                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <RefreshCw size={12} className={procesandoGreId === g.id_gre ? 'animate-spin' : ''} />
+                              <span>Consultar</span>
+                            </button>
+                          )}
+                          {g.modo_emision === 'NUBEFACT_REAL' && g.estado_sunat === 'OBSERVADO' && (
+                            <button
+                              type="button"
+                              onClick={() => handleReenviarGreSunat(g)}
+                              disabled={procesandoGreId === g.id_gre}
+                              className="px-2.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <RefreshCw size={12} className={procesandoGreId === g.id_gre ? 'animate-spin' : ''} />
+                              <span>Reenviar</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -3628,7 +3705,12 @@ export default function Facturacion({ usuario }) {
 
                   <button
                     type="button"
-                    onClick={() => setFormConfig({ ...formConfig, modo_integracion: 'NUBEFACT_REAL' })}
+                    onClick={() => setFormConfig((prev) => ({
+                      ...prev,
+                      modo_integracion: 'NUBEFACT_REAL',
+                      nubefact_ruta: prev.nubefact_ruta?.includes('demo-integrada-erp') ? '' : prev.nubefact_ruta,
+                      nubefact_token: prev.nubefact_token === 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO' ? '' : prev.nubefact_token
+                    }))}
                     className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                       formConfig.modo_integracion === 'NUBEFACT_REAL'
                         ? 'border-emerald-600 bg-emerald-50/70 text-emerald-950 font-bold ring-2 ring-emerald-500/20'
@@ -3729,15 +3811,39 @@ export default function Facturacion({ usuario }) {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Cuenta Detracciones Banco de la Nación</label>
-                  <input
-                    type="text"
-                    value={formConfig.detraccion_cuenta_bn}
-                    onChange={(e) => setFormConfig({ ...formConfig, detraccion_cuenta_bn: e.target.value })}
-                    placeholder="00-000-000000"
-                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Cuenta Detracciones Banco de la Nación</label>
+                    <input
+                      type="text"
+                      value={formConfig.detraccion_cuenta_bn}
+                      onChange={(e) => setFormConfig({ ...formConfig, detraccion_cuenta_bn: e.target.value })}
+                      placeholder="00-000-000000"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Serie GRE Remitente (NubeFact)</label>
+                    <input
+                      type="text"
+                      maxLength={4}
+                      value={formConfig.serie_gre_remitente}
+                      onChange={(e) => setFormConfig({ ...formConfig, serie_gre_remitente: e.target.value.toUpperCase() })}
+                      placeholder="T001"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono font-bold uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Serie GRE Transportista</label>
+                    <input
+                      type="text"
+                      maxLength={4}
+                      value={formConfig.serie_gre_transportista}
+                      onChange={(e) => setFormConfig({ ...formConfig, serie_gre_transportista: e.target.value.toUpperCase() })}
+                      placeholder="V001"
+                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono font-bold uppercase"
+                    />
+                  </div>
                 </div>
               </div>
 

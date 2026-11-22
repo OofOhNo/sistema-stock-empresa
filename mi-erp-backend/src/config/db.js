@@ -25,10 +25,12 @@ function getSslConfig(connectionUrl) {
     };
 }
 
+const poolMax = Number(process.env.PG_POOL_MAX) || 15;
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: getSslConfig(process.env.DATABASE_URL),
-    max: 20,
+    max: poolMax,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000
 });

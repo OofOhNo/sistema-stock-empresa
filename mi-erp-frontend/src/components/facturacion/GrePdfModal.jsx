@@ -141,6 +141,16 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
             <h3 className="font-bold text-sm text-white">Guía de Remisión Electrónica {numeroGre}</h3>
           </div>
           <div className="flex items-center space-x-2">
+            {guia.enlace_pdf && (
+              <a
+                href={guia.enlace_pdf}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+              >
+                <span>PDF SUNAT</span>
+              </a>
+            )}
             <button
               type="button"
               onClick={imprimirGre}
@@ -156,6 +166,28 @@ export default function GrePdfModal({ guia, emisor = {}, onClose }) {
         </div>
 
         <div className="p-6 space-y-4 text-xs max-h-[80vh] overflow-y-auto">
+          {(guia.estado_sunat || guia.mensaje_cdr) && (
+            <div className={`px-3.5 py-2.5 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+              guia.estado_sunat === 'ACEPTADO'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                : guia.estado_sunat === 'OBSERVADO'
+                  ? 'bg-red-50 border-red-200 text-red-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}>
+              <div>
+                <span className="font-bold">Estado SUNAT ({guia.modo_emision || 'DEMO_NUBEFACT'}): {guia.estado_sunat}</span>
+                {guia.mensaje_cdr && <p className="text-[11px] opacity-90 mt-0.5">{guia.mensaje_cdr}</p>}
+              </div>
+              <div className="flex items-center gap-2">
+                {guia.enlace_xml && (
+                  <a href={guia.enlace_xml} target="_blank" rel="noopener noreferrer" className="underline font-bold">XML</a>
+                )}
+                {guia.enlace_cdr && (
+                  <a href={guia.enlace_cdr} target="_blank" rel="noopener noreferrer" className="underline font-bold">CDR</a>
+                )}
+              </div>
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row justify-between items-start gap-4 border-b border-slate-200 pb-4">
             <div className="flex items-center gap-3.5">
               <img

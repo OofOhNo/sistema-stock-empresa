@@ -1,0 +1,18 @@
+# ==============================================================================
+# CADDYFILE - PROXY INVERSO CON HTTPS AUTOMÁTICO (LET'S ENCRYPT)
+# ==============================================================================
+# Cubre el dominio principal procesoscarnicos.com y www.procesoscarnicos.com.
+# Si preferís usar un subdominio (ej. erp.procesoscarnicos.com), reemplazá la
+# primera línea por: erp.procesoscarnicos.com {
+# ==============================================================================
+
+procesoscarnicos.com, www.procesoscarnicos.com {
+	encode gzip
+
+	# Permitir subida de fotos grandes desde celulares (hasta 50 MB)
+	request_body {
+		max_size 50MB
+	}
+
+	reverse_proxy frontend:80
+}

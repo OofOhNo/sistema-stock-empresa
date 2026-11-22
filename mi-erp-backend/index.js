@@ -81,6 +81,16 @@ app.get('/', (req, res) => {
   res.json({ mensaje: 'El backend del ERP está funcionando' });
 });
 
+// Healthcheck completo (API + conectividad a Supabase/PostgreSQL)
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.status(200).json({ ok: true, db: 'ok' });
+  } catch (err) {
+    res.status(503).json({ ok: false, db: 'error', mensaje: err.message });
+  }
+});
+
 //importamos rutas de usuarios
 const usuarioRoutes = require('./src/routes/usuarioRoutes.js');
 //le decimos a Express: "cualquier peticion que empiece con /api/usuarios, mandala a este archivo de rutas"
@@ -150,10 +160,18 @@ const pagosCalendarioRoutes = require('./src/routes/pagosCalendarioRoutes.js');
 app.use('/api/pagos-calendario', pagosCalendarioRoutes);
 
 app.use((err, req, res, next) => {
-  if (err && err.status === 403) {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ exito: false, mensaje: 'La imagen supera el tamaño máximo permitido (30 MB).' });
+  }
+  if (err.status === 403) {
     return res.status(403).json({ exito: false, mensaje: err.message });
   }
-  return next(err);
+  if (err.message && err.message.includes('Solo se permiten archivos de imagen')) {
+    return res.status(400).json({ exito: false, mensaje: err.message });
+  }
+  console.error('Error no controlado en API:', err.message);
+  return res.status(err.status || 500).json({ exito: false, mensaje: 'Error interno en el servidor.' });
 });
 
 //configurar el puerto y encender el servidor

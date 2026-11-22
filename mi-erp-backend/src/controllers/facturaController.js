@@ -15,7 +15,13 @@ const {
     calcularProximaEjecucionAleatoria,
     dentroDeHorarioLima
 } = require('../utils/boletaAutoService');
-const { obtenerCatalogosGre, crearGreInterna, consultarPuntosLlegadaPorRuc } = require('../utils/greService');
+const {
+    obtenerCatalogosGre,
+    crearGreInterna,
+    consultarGreEnNubefact,
+    reenviarGreEnNubefact,
+    consultarPuntosLlegadaPorRuc
+} = require('../utils/greService');
 
 async function obtenerConfigEmisor(clientOrPool = pool) {
     try {
@@ -35,11 +41,77 @@ async function obtenerConfigEmisor(clientOrPool = pool) {
         modo_integracion: process.env.NUBEFACT_MODO || 'DEMO_NUBEFACT',
         nubefact_ruta: process.env.NUBEFACT_RUTA || 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
         nubefact_token: process.env.NUBEFACT_TOKEN || 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+        serie_gre_remitente: 'T001',
+        serie_gre_transportista: 'V001',
         igv_porcentaje: 18.00,
         detraccion_cuenta_bn: '00-000-000000',
         enviar_automaticamente_sunat: true,
         enviar_automaticamente_cliente: true
     };
+}
+
+/**
+ * Sirve el XML firmado o la Constancia CDR de un comprobante electrónico,
+ * regenerando la estructura UBL 2.1 si aún no estuviera persistida.
+ */
+async function descargarArchivoSunatComprobante(req, res, tipoArchivo) {
+    const esCdr = tipoArchivo === 'cdr';
+    try {
+        const { id } = req.params;
+        const resComp = await pool.query(`
+            SELECT c.*, cl.tipo_documento, cl.numero_documento, cl.razon_social_o_nombre
+            FROM comprobantes c
+            LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
+            LEFT JOIN clientes cl ON COALESCE(c.id_cliente, p.id_cliente) = cl.id_cliente
+            WHERE c.id_comprobante = $1
+        `, [id]);
+
+        if (resComp.rows.length === 0) {
+            return res.status(404).json({ exito: false, mensaje: 'Comprobante no encontrado.' });
+        }
+
+        const comp = resComp.rows[0];
+        const configEmisor = await obtenerConfigEmisor(pool);
+        let contenido = esCdr ? comp.cdr_xml : comp.xml_firmado;
+
+        if (!contenido) {
+            const { itemsCalculados, totales } = calcularDesgloseTributario([{
+                id_producto: 1,
+                sku: 'ITEM-01',
+                descripcion: `Pedido #${comp.id_pedido || comp.id_comprobante}`,
+                codigo_unidad_sunat: 'NIU',
+                tipo_afectacion_igv: '10',
+                cantidad: 1,
+                precio_unitario: Number(comp.monto_total),
+                subtotal: Number(comp.monto_total)
+            }]);
+            const generado = generarXmlUbl21YDatosSunat({
+                tipo_comprobante: comp.tipo_comprobante,
+                serie: comp.serie,
+                correlativo: comp.correlativo,
+                configEmisor,
+                cliente: comp,
+                itemsCalculados,
+                totales,
+                monto_en_letras: comp.monto_en_letras || numeroALetrasSoles(comp.monto_total)
+            });
+            contenido = esCdr ? generado.cdrXml : generado.xmlFirmado;
+        }
+
+        const baseName = `${configEmisor.ruc_emisor}-${comp.tipo_comprobante}-${comp.serie}-${String(comp.correlativo).padStart(8, '0')}.xml`;
+        const filename = esCdr ? `R-${baseName}` : baseName;
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.status(200).send(contenido);
+    } catch (error) {
+        console.error(`Error al descargar ${esCdr ? 'CDR' : 'XML'}:`, error);
+        return res.status(500).json({
+            exito: false,
+            mensaje: esCdr
+                ? 'No se pudo descargar la Constancia CDR de SUNAT.'
+                : 'No se pudo descargar el XML del comprobante.'
+        });
+    }
 }
 
 const facturaController = {
@@ -95,6 +167,8 @@ const facturaController = {
                 nubefact_ruta,
                 nubefact_token,
                 detraccion_cuenta_bn,
+                serie_gre_remitente,
+                serie_gre_transportista,
                 enviar_automaticamente_sunat,
                 enviar_automaticamente_cliente
             } = req.body;
@@ -115,16 +189,37 @@ const facturaController = {
             }
 
             const modoFinal = modo_integracion === 'NUBEFACT_REAL' ? 'NUBEFACT_REAL' : 'DEMO_NUBEFACT';
+            const rutaLimpia = nubefact_ruta ? String(nubefact_ruta).trim() : '';
+            const tokenLimpio = nubefact_token ? String(nubefact_token).trim() : '';
+
+            if (modoFinal === 'NUBEFACT_REAL') {
+                if (!rutaLimpia || !/^https?:\/\//i.test(rutaLimpia) || rutaLimpia.includes('demo-integrada-erp')) {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'Para activar NubeFact Oficial Real debes ingresar la Ruta API oficial (https://api.nubefact.com/api/v1/...).'
+                    });
+                }
+                if (!tokenLimpio || tokenLimpio === 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO') {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'Para activar NubeFact Oficial Real debes ingresar tu Token real de seguridad de NubeFact.'
+                    });
+                }
+            }
+
+            const serieGreRemFinal = String(serie_gre_remitente || 'T001').trim().toUpperCase().slice(0, 10) || 'T001';
+            const serieGreTranspFinal = String(serie_gre_transportista || 'V001').trim().toUpperCase().slice(0, 10) || 'V001';
 
             const { rows } = await pool.query(`
                 INSERT INTO configuracion_empresa_sunat (
                     id_config, ruc_emisor, razon_social, nombre_comercial,
                     direccion_fiscal, ubigeo, modo_integracion,
                     nubefact_ruta, nubefact_token, detraccion_cuenta_bn,
+                    serie_gre_remitente, serie_gre_transportista,
                     enviar_automaticamente_sunat, enviar_automaticamente_cliente,
                     actualizado_en
                 ) VALUES (
-                    1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP
+                    1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP
                 )
                 ON CONFLICT (id_config) DO UPDATE SET
                     ruc_emisor = EXCLUDED.ruc_emisor,
@@ -136,6 +231,8 @@ const facturaController = {
                     nubefact_ruta = EXCLUDED.nubefact_ruta,
                     nubefact_token = EXCLUDED.nubefact_token,
                     detraccion_cuenta_bn = EXCLUDED.detraccion_cuenta_bn,
+                    serie_gre_remitente = EXCLUDED.serie_gre_remitente,
+                    serie_gre_transportista = EXCLUDED.serie_gre_transportista,
                     enviar_automaticamente_sunat = EXCLUDED.enviar_automaticamente_sunat,
                     enviar_automaticamente_cliente = EXCLUDED.enviar_automaticamente_cliente,
                     actualizado_en = CURRENT_TIMESTAMP
@@ -147,9 +244,11 @@ const facturaController = {
                 direccion_fiscal ? String(direccion_fiscal).trim() : '',
                 ubigeo ? String(ubigeo).trim() : '150101',
                 modoFinal,
-                nubefact_ruta ? String(nubefact_ruta).trim() : 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
-                nubefact_token ? String(nubefact_token).trim() : 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
+                rutaLimpia || 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
+                tokenLimpio || 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
                 detraccion_cuenta_bn ? String(detraccion_cuenta_bn).trim() : '00-000-000000',
+                serieGreRemFinal,
+                serieGreTranspFinal,
                 enviar_automaticamente_sunat !== false,
                 enviar_automaticamente_cliente !== false
             ]);
@@ -185,23 +284,38 @@ const facturaController = {
             }
 
             // Si es NUBEFACT_REAL, hacemos una consulta de estado de prueba a la ruta configurada
+            if (!token || token === 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO') {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'Ingresa tu Token real de NubeFact antes de probar la conexión oficial.'
+                });
+            }
+
             const authHeader = token.startsWith('Token ') || token.startsWith('Bearer ')
                 ? token
                 : `Bearer ${token}`;
 
-            const resPing = await fetch(ruta, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': authHeader
-                },
-                body: JSON.stringify({
-                    operacion: 'consultar_comprobante',
-                    tipo_de_comprobante: 1,
-                    serie: 'F001',
-                    numero: 1
-                })
-            });
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            let resPing;
+            try {
+                resPing = await fetch(ruta, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': authHeader
+                    },
+                    body: JSON.stringify({
+                        operacion: 'consultar_comprobante',
+                        tipo_de_comprobante: 1,
+                        serie: 'F001',
+                        numero: 1
+                    }),
+                    signal: controller.signal
+                });
+            } finally {
+                clearTimeout(timeout);
+            }
 
             const dataPing = await resPing.json().catch(() => ({}));
             if (resPing.status === 401 || resPing.status === 403) {
@@ -495,7 +609,8 @@ const facturaController = {
                             peso_bruto_total: pesoProp > 0 ? pesoProp : undefined,
                             gre: req.body.gre || {},
                             configEmisor,
-                            idUsuario: req.usuario?.id_usuario || null
+                            idUsuario: req.usuario?.id_usuario || null,
+                            noLanzarSiFallaOse: true
                         });
                     }
                     comprobantesEmitidos.push(compDivCreado);
@@ -809,7 +924,8 @@ const facturaController = {
                     peso_bruto_total: req.body.peso_total || pedido.peso_total || null,
                     gre: req.body.gre || {},
                     configEmisor,
-                    idUsuario: req.usuario?.id_usuario || null
+                    idUsuario: req.usuario?.id_usuario || null,
+                    noLanzarSiFallaOse: true
                 });
             }
 
@@ -832,10 +948,14 @@ const facturaController = {
 
             await client.query('COMMIT');
 
+            const greObservada = guiaRemisionCreada?.estado_sunat === 'OBSERVADO';
             res.status(201).json({
                 exito: true,
+                gre_observada: greObservada,
                 mensaje: guiaRemisionCreada
-                    ? `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas con éxito!`
+                    ? (greObservada
+                        ? `Factura ${serie}-${String(correlativo).padStart(8, '0')} emitida, pero la GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} quedó OBSERVADA: ${guiaRemisionCreada.mensaje_cdr}`
+                        : `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas con éxito!`)
                     : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y aceptado por SUNAT!`,
                 comprobante: compCreado,
                 guia_remision: guiaRemisionCreada
@@ -919,6 +1039,19 @@ const facturaController = {
                     WHERE dp.id_pedido = $1
                 `, [compOriginal.id_pedido]);
                 itemsOriginales = resDet.rows;
+            } else {
+                if (compOriginal.id_cliente) {
+                    const resCliDirecto = await client.query(
+                        'SELECT tipo_documento, numero_documento, razon_social_o_nombre, direccion, email FROM clientes WHERE id_cliente = $1',
+                        [compOriginal.id_cliente]
+                    );
+                    if (resCliDirecto.rows.length > 0) {
+                        clienteDatos = resCliDirecto.rows[0];
+                    }
+                }
+                if (Array.isArray(compOriginal.items_json) && compOriginal.items_json.length > 0) {
+                    itemsOriginales = compOriginal.items_json;
+                }
             }
 
             if (itemsOriginales.length === 0) {
@@ -1106,6 +1239,30 @@ const facturaController = {
                         WHERE id_pedido = $1
                     `, [ped.id_pedido]);
                 }
+            } else if (compOriginal.origen_facturacion === 'MANUAL' && Array.isArray(compOriginal.items_json) && motivoCat09.devuelve_stock) {
+                const idUbicDev = compOriginal.id_ubicacion || req.usuario?.id_ubicacion || 1;
+                for (const item of compOriginal.items_json) {
+                    const cantDev = Number(item.cantidad) || 0;
+                    if (item.id_producto && cantDev > 0) {
+                        await client.query(`
+                            UPDATE inventario
+                            SET cantidad_fisica = cantidad_fisica + $1,
+                                ultima_actualizacion = CURRENT_TIMESTAMP
+                            WHERE id_producto = $2 AND id_ubicacion = $3;
+                        `, [cantDev, item.id_producto, idUbicDev]);
+
+                        await client.query(`
+                            INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                            VALUES ($1, $2, $3, 'INGRESO', $4, $5);
+                        `, [
+                            item.id_producto,
+                            idUbicDev,
+                            req.usuario?.id_usuario || null,
+                            cantDev,
+                            `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula venta manual ${compOriginal.serie}-${compOriginal.correlativo})`
+                        ]);
+                    }
+                }
             }
 
             await registrarAuditoria(client, req.usuario?.id_usuario || null, 'ANULAR_COMPROBANTE', 'comprobantes', id_comprobante, { id_comprobante, estado_sunat: compOriginal.estado_sunat }, { id_comprobante, estado_sunat: 'ANULADO', motivo: descripcionMotivoFinal });
@@ -1280,109 +1437,11 @@ const facturaController = {
     },
 
     descargarXmlComprobante: async (req, res) => {
-        try {
-            const { id } = req.params;
-            const resComp = await pool.query(`
-                SELECT c.*, cl.tipo_documento, cl.numero_documento, cl.razon_social_o_nombre
-                FROM comprobantes c
-                LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
-                LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
-                WHERE c.id_comprobante = $1
-            `, [id]);
-
-            if (resComp.rows.length === 0) {
-                return res.status(404).json({ exito: false, mensaje: 'Comprobante no encontrado.' });
-            }
-
-            const comp = resComp.rows[0];
-            const configEmisor = await obtenerConfigEmisor(pool);
-            let xmlContent = comp.xml_firmado;
-
-            if (!xmlContent) {
-                const { itemsCalculados, totales } = calcularDesgloseTributario([{
-                    id_producto: 1,
-                    sku: 'ITEM-01',
-                    descripcion: `Pedido #${comp.id_pedido || comp.id_comprobante}`,
-                    codigo_unidad_sunat: 'NIU',
-                    tipo_afectacion_igv: '10',
-                    cantidad: 1,
-                    precio_unitario: Number(comp.monto_total),
-                    subtotal: Number(comp.monto_total)
-                }]);
-                const generado = generarXmlUbl21YDatosSunat({
-                    tipo_comprobante: comp.tipo_comprobante,
-                    serie: comp.serie,
-                    correlativo: comp.correlativo,
-                    configEmisor,
-                    cliente: comp,
-                    itemsCalculados,
-                    totales,
-                    monto_en_letras: comp.monto_en_letras || numeroALetrasSoles(comp.monto_total)
-                });
-                xmlContent = generado.xmlFirmado;
-            }
-
-            const filename = `${configEmisor.ruc_emisor}-${comp.tipo_comprobante}-${comp.serie}-${String(comp.correlativo).padStart(8, '0')}.xml`;
-            res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-            res.status(200).send(xmlContent);
-        } catch (error) {
-            console.error('Error al descargar XML:', error);
-            res.status(500).json({ exito: false, mensaje: 'No se pudo descargar el XML del comprobante.' });
-        }
+        return descargarArchivoSunatComprobante(req, res, 'xml');
     },
 
     descargarCdrComprobante: async (req, res) => {
-        try {
-            const { id } = req.params;
-            const resComp = await pool.query(`
-                SELECT c.*, cl.tipo_documento, cl.numero_documento, cl.razon_social_o_nombre
-                FROM comprobantes c
-                LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
-                LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente
-                WHERE c.id_comprobante = $1
-            `, [id]);
-
-            if (resComp.rows.length === 0) {
-                return res.status(404).json({ exito: false, mensaje: 'Comprobante no encontrado.' });
-            }
-
-            const comp = resComp.rows[0];
-            const configEmisor = await obtenerConfigEmisor(pool);
-            let cdrContent = comp.cdr_xml;
-
-            if (!cdrContent) {
-                const { itemsCalculados, totales } = calcularDesgloseTributario([{
-                    id_producto: 1,
-                    sku: 'ITEM-01',
-                    descripcion: `Pedido #${comp.id_pedido || comp.id_comprobante}`,
-                    codigo_unidad_sunat: 'NIU',
-                    tipo_afectacion_igv: '10',
-                    cantidad: 1,
-                    precio_unitario: Number(comp.monto_total),
-                    subtotal: Number(comp.monto_total)
-                }]);
-                const generado = generarXmlUbl21YDatosSunat({
-                    tipo_comprobante: comp.tipo_comprobante,
-                    serie: comp.serie,
-                    correlativo: comp.correlativo,
-                    configEmisor,
-                    cliente: comp,
-                    itemsCalculados,
-                    totales,
-                    monto_en_letras: comp.monto_en_letras || numeroALetrasSoles(comp.monto_total)
-                });
-                cdrContent = generado.cdrXml;
-            }
-
-            const filename = `R-${configEmisor.ruc_emisor}-${comp.tipo_comprobante}-${comp.serie}-${String(comp.correlativo).padStart(8, '0')}.xml`;
-            res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-            res.status(200).send(cdrContent);
-        } catch (error) {
-            console.error('Error al descargar CDR:', error);
-            res.status(500).json({ exito: false, mensaje: 'No se pudo descargar la Constancia CDR de SUNAT.' });
-        }
+        return descargarArchivoSunatComprobante(req, res, 'cdr');
     },
 
     obtenerGraficosFacturacion: async (req, res) => {
@@ -1804,7 +1863,8 @@ const facturaController = {
                     peso_bruto_total: pesoFinal,
                     gre: req.body.gre || {},
                     configEmisor,
-                    idUsuario: req.usuario?.id_usuario || null
+                    idUsuario: req.usuario?.id_usuario || null,
+                    noLanzarSiFallaOse: true
                 });
             }
 
@@ -1819,10 +1879,14 @@ const facturaController = {
             );
 
             await client.query('COMMIT');
+            const greObservada = guiaRemisionCreada?.estado_sunat === 'OBSERVADO';
             res.status(201).json({
                 exito: true,
+                gre_observada: greObservada,
                 mensaje: guiaRemisionCreada
-                    ? `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas y stock descontado con éxito!`
+                    ? (greObservada
+                        ? `Factura ${serie}-${String(correlativo).padStart(8, '0')} emitida, pero la GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} quedó OBSERVADA: ${guiaRemisionCreada.mensaje_cdr}`
+                        : `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas y stock descontado con éxito!`)
                     : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y stock descontado con éxito!`,
                 comprobante: compCreado,
                 guia_remision: guiaRemisionCreada
@@ -2455,6 +2519,42 @@ const facturaController = {
             res.json({ exito: true, guia: rows[0], emisor: configEmisor });
         } catch (error) {
             res.status(500).json({ exito: false, mensaje: 'Error al obtener detalle de GRE.' });
+        }
+    },
+
+    consultarGreSunat: async (req, res) => {
+        try {
+            const id = parseInt(req.params.id, 10);
+            if (!id || Number.isNaN(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de GRE inválido.' });
+            }
+            const configEmisor = await obtenerConfigEmisor(pool);
+            const guiaActualizada = await consultarGreEnNubefact(pool, id, configEmisor);
+            res.json({
+                exito: true,
+                mensaje: guiaActualizada.mensaje_cdr || `Estado GRE: ${guiaActualizada.estado_sunat}`,
+                guia: guiaActualizada
+            });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo consultar el estado de la GRE en NubeFact.' });
+        }
+    },
+
+    reenviarGreSunat: async (req, res) => {
+        try {
+            const id = parseInt(req.params.id, 10);
+            if (!id || Number.isNaN(id)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de GRE inválido.' });
+            }
+            const configEmisor = await obtenerConfigEmisor(pool);
+            const guiaActualizada = await reenviarGreEnNubefact(pool, id, configEmisor);
+            res.json({
+                exito: true,
+                mensaje: guiaActualizada.mensaje_cdr || `GRE procesada (${guiaActualizada.estado_sunat}).`,
+                guia: guiaActualizada
+            });
+        } catch (error) {
+            res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo reenviar la GRE a NubeFact.' });
         }
     },
 

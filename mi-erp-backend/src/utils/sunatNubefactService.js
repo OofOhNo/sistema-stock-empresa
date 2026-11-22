@@ -677,6 +677,8 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
 
     // Si el usuario configuró su URL y Token reales/demo personalizados de NubeFact en modo NUBEFACT_REAL
     if (!esUrlDemoInterna) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
             const authHeader = tokenEnv.startsWith('Token ') || tokenEnv.startsWith('Bearer ')
                 ? tokenEnv
@@ -688,7 +690,8 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
                     'Content-Type': 'application/json',
                     'Authorization': authHeader
                 },
-                body: JSON.stringify(payloadNubefact)
+                body: JSON.stringify(payloadNubefact),
+                signal: controller.signal
             });
 
             const data = await response.json().catch(() => ({}));
@@ -712,7 +715,12 @@ async function enviarAConectorNubefact({ payloadNubefact, configEmisor, datosUbl
                 }
             };
         } catch (error) {
-            throw new Error(`Error al comunicar con NubeFact API (${rutaEnv}): ${error.message}`);
+            const msg = error?.name === 'AbortError'
+                ? 'Tiempo de espera agotado (15s) al conectar con NubeFact.'
+                : error.message;
+            throw new Error(`Error al comunicar con NubeFact API (${rutaEnv}): ${msg}`);
+        } finally {
+            clearTimeout(timeout);
         }
     }
 

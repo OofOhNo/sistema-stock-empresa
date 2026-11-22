@@ -1,0 +1,73 @@
+# ==============================================================================
+# DOCKER COMPOSE DE PRODUCCIÓN (VPS + SUPABASE + HTTPS AUTOMÁTICO CON CADDY)
+# ==============================================================================
+# Uso en el servidor VPS:
+#   1. Configurá mi-erp-backend/.env con DATABASE_URL (Supabase), JWT_SECRET y CORS_ORIGIN
+#   2. Ejecutá: docker compose -f docker-compose.prod.yml up -d --build
+# ==============================================================================
+
+services:
+  backend:
+    build:
+      context: ./mi-erp-backend
+      dockerfile: Dockerfile
+    container_name: erp-backend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    env_file:
+      - ./mi-erp-backend/.env
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    volumes:
+      - ./mi-erp-backend/uploads:/app/uploads
+    networks:
+      - erp-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./mi-erp-frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+    container_name: erp-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - erp-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: erp-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+    networks:
+      - erp-network
+
+networks:
+  erp-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

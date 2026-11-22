@@ -1,7 +1,10 @@
 # ==============================================================================
-# DOCKER COMPOSE - SISTEMA ERP STOCK & GESTIÓN
+# DOCKER COMPOSE - SISTEMA ERP STOCK & GESTIÓN (DESARROLLO / LOCAL)
 # ==============================================================================
-# Uso estándar (Conectado a Supabase):
+# Uso en producción (VPS + HTTPS automático con Caddy + dominio):
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Uso local estándar (Conectado a Supabase):
 #   1. Configurá tu DATABASE_URL de Supabase en mi-erp-backend/.env
 #   2. Ejecutá: docker compose up --build
 #
