@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import {
   MessageSquare, Send, Search, Eye, Lock,
   CheckCheck, Check, ArrowLeft, Phone,
-  QrCode, Wifi, WifiOff, RefreshCw, X, Loader2
+  QrCode, Wifi, RefreshCw, X, Loader2
 } from 'lucide-react';
 import { normalizarNumeroWhatsApp } from '../utils/whatsapp';
 
@@ -36,7 +36,6 @@ export default function Mensajes({ usuario }) {
   const [modalWhatsapp, setModalWhatsapp] = useState(false);
   const [cargandoQrWa, setCargandoQrWa] = useState(false);
   const [desconectandoWa, setDesconectandoWa] = useState(false);
-  const [reenviandoWaId, setReenviandoWaId] = useState(null);
 
   // Estados para Supervisión Silenciosa (exclusivo Admin Central)
   const [paresSupervision, setParesSupervision] = useState([]);
@@ -243,7 +242,7 @@ export default function Mensajes({ usuario }) {
 
   const abrirModalVincularWhatsapp = async () => {
     setModalWhatsapp(true);
-    if (!esAdminCentral || estadoWhatsapp.conectado) return;
+    if (estadoWhatsapp.conectado) return;
     setCargandoQrWa(true);
     try {
       const res = await api.post('/mensajes/whatsapp/vincular', { forzar_nuevo_qr: false });
@@ -258,7 +257,7 @@ export default function Mensajes({ usuario }) {
   };
 
   const generarNuevoQrWhatsapp = async () => {
-    if (!esAdminCentral || cargandoQrWa) return;
+    if (cargandoQrWa) return;
     setCargandoQrWa(true);
     try {
       const res = await api.post('/mensajes/whatsapp/vincular', { forzar_nuevo_qr: true });
@@ -273,8 +272,8 @@ export default function Mensajes({ usuario }) {
   };
 
   const handleDesconectarWhatsapp = async () => {
-    if (!esAdminCentral || desconectandoWa) return;
-    if (!window.confirm('¿Desvincular la cuenta de WhatsApp de la empresa? Tendrás que escanear el código QR nuevamente para enviar mensajes por WhatsApp.')) {
+    if (desconectandoWa) return;
+    if (!window.confirm('¿Desvincular tu cuenta de WhatsApp del ERP? Tendrás que escanear el código QR nuevamente para enviar desde tu número.')) {
       return;
     }
     setDesconectandoWa(true);
@@ -282,7 +281,7 @@ export default function Mensajes({ usuario }) {
       const res = await api.post('/mensajes/whatsapp/desconectar');
       if (res.data?.exito) {
         setEstadoWhatsapp(res.data);
-        toast.success('WhatsApp desvinculado correctamente.');
+        toast.success('Tu WhatsApp fue desvinculado correctamente.');
       }
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo desvincular WhatsApp.');
@@ -346,27 +345,6 @@ export default function Mensajes({ usuario }) {
     await enviarTextoInterno(texto, contactoActivo.id_usuario, true);
   };
 
-  const handleEnviarBurbujaWhatsApp = async (msg) => {
-    if (!msg?.id_mensaje || reenviandoWaId) return;
-    setReenviandoWaId(msg.id_mensaje);
-    try {
-      const res = await api.post(`/mensajes/${msg.id_mensaje}/whatsapp`);
-      toast.success(res.data?.mensaje || 'Mensaje enviado por WhatsApp.');
-      setMensajesChat(prev =>
-        prev.map(item =>
-          item.id_mensaje === msg.id_mensaje
-            ? { ...item, enviado_whatsapp: true }
-            : item
-        )
-      );
-    } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'No se pudo enviar este mensaje por WhatsApp.');
-      void cargarEstadoWhatsapp();
-    } finally {
-      setReenviandoWaId(null);
-    }
-  };
-
   const numeroWhatsappActivo = contactoActivo
     ? normalizarNumeroWhatsApp(contactoActivo.telefono_whatsapp)
     : '';
@@ -413,50 +391,30 @@ export default function Mensajes({ usuario }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Estado / Configuración WhatsApp Empresa */}
-          {esAdminCentral ? (
-            <button
-              type="button"
-              onClick={abrirModalVincularWhatsapp}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border transition-colors cursor-pointer ${
-                estadoWhatsapp.conectado
-                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
-                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
-              }`}
-              title={
-                estadoWhatsapp.conectado
-                  ? `WhatsApp vinculado (+${estadoWhatsapp.numero || 'activo'}). Haz clic para administrar.`
-                  : 'Escanea un QR para activar el envío automático por WhatsApp sin salir del ERP'
-              }
-            >
-              {estadoWhatsapp.conectado ? <Wifi size={14} /> : <QrCode size={14} />}
-              <span>
-                {estadoWhatsapp.conectado
-                  ? `WhatsApp Conectado (+${estadoWhatsapp.numero || 'OK'})`
-                  : estadoWhatsapp.estado === 'ESPERANDO_QR'
-                  ? 'Escanear QR WhatsApp'
-                  : 'Vincular WhatsApp (QR)'}
-              </span>
-            </button>
-          ) : (
-            <span
-              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold inline-flex items-center gap-1.5 border ${
-                estadoWhatsapp.conectado
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-slate-50 text-slate-500 border-slate-200'
-              }`}
-              title={
-                estadoWhatsapp.conectado
-                  ? 'El envío automático por WhatsApp está activo'
-                  : 'Pide al Admin Central vincular el WhatsApp QR de la empresa para usar Enviar + WhatsApp'
-              }
-            >
-              {estadoWhatsapp.conectado ? <Wifi size={13} /> : <WifiOff size={13} />}
-              <span className="hidden sm:inline">
-                {estadoWhatsapp.conectado ? 'WhatsApp automático activo' : 'WhatsApp sin vincular'}
-              </span>
+          {/* Estado / Configuración personal de WhatsApp QR */}
+          <button
+            type="button"
+            onClick={abrirModalVincularWhatsapp}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border transition-colors cursor-pointer ${
+              estadoWhatsapp.conectado
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+            }`}
+            title={
+              estadoWhatsapp.conectado
+                ? `Tu WhatsApp está vinculado (+${estadoWhatsapp.numero || 'activo'}). Haz clic para administrar.`
+                : 'Escanea un QR con tu WhatsApp para enviar mensajes directos desde tu número sin salir del ERP'
+            }
+          >
+            {estadoWhatsapp.conectado ? <Wifi size={14} /> : <QrCode size={14} />}
+            <span>
+              {estadoWhatsapp.conectado
+                ? `Mi WhatsApp (+${estadoWhatsapp.numero || 'OK'})`
+                : estadoWhatsapp.estado === 'ESPERANDO_QR'
+                ? 'Escanear mi QR WhatsApp'
+                : 'Vincular mi WhatsApp (QR)'}
             </span>
-          )}
+          </button>
 
           {/* Pestañas visibles ÚNICAMENTE para Admin Central */}
           {esAdminCentral && (
@@ -610,15 +568,15 @@ export default function Mensajes({ usuario }) {
                         <span className="hidden sm:inline">{contactoActivo.telefono_whatsapp}</span>
                         <span className="sm:hidden">WA</span>
                       </span>
-                      {!estadoWhatsapp.conectado && esAdminCentral && (
+                      {!estadoWhatsapp.conectado && (
                         <button
                           type="button"
                           onClick={abrirModalVincularWhatsapp}
                           className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
-                          title="Vincular código QR de WhatsApp para enviar directo sin salir del ERP"
+                          title="Vincular tu WhatsApp QR para enviar desde tu número sin salir del ERP"
                         >
                           <QrCode size={12} />
-                          <span className="hidden md:inline">Vincular QR</span>
+                          <span className="hidden md:inline">Vincular mi QR</span>
                         </button>
                       )}
                     </div>
@@ -648,7 +606,6 @@ export default function Mensajes({ usuario }) {
                   ) : (
                     mensajesChat.map((m) => {
                       const soyEmisor = m.id_emisor === usuario.id_usuario;
-                      const enviandoEsteWa = reenviandoWaId === m.id_mensaje;
                       return (
                         <div key={m.id_mensaje} className={`flex ${soyEmisor ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[75%] rounded-2xl p-3 shadow-xs text-xs leading-relaxed ${
@@ -660,29 +617,17 @@ export default function Mensajes({ usuario }) {
                             <div className={`flex items-center justify-end space-x-1.5 mt-1 text-[10px] font-mono ${
                               soyEmisor ? 'text-indigo-200' : 'text-slate-400'
                             }`}>
-                              {Boolean(numeroWhatsappActivo) && (
-                                <button
-                                  type="button"
-                                  disabled={Boolean(reenviandoWaId)}
-                                  onClick={() => handleEnviarBurbujaWhatsApp(m)}
-                                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
-                                    m.enviado_whatsapp
-                                      ? (soyEmisor
-                                        ? 'text-emerald-200 bg-emerald-500/20 hover:bg-emerald-500/35'
-                                        : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100')
-                                      : (soyEmisor
-                                        ? 'text-emerald-200 hover:text-white hover:bg-indigo-500/40'
-                                        : 'text-emerald-700 hover:bg-emerald-50')
+                              {Boolean(m.enviado_whatsapp) && (
+                                <span
+                                  className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-sans font-semibold select-none ${
+                                    soyEmisor
+                                      ? 'text-emerald-200 bg-emerald-500/20'
+                                      : 'text-emerald-700 bg-emerald-50'
                                   }`}
-                                  title={
-                                    m.enviado_whatsapp
-                                      ? 'Ya enviado por WhatsApp (clic para reenviar sin salir de la página)'
-                                      : 'Enviar este mensaje automáticamente por WhatsApp sin salir de la página'
-                                  }
                                 >
-                                  {enviandoEsteWa ? <Loader2 size={10} className="animate-spin" /> : <Phone size={10} />}
-                                  <span>{m.enviado_whatsapp ? '✓ WhatsApp' : 'WhatsApp'}</span>
-                                </button>
+                                  <Phone size={10} />
+                                  <span>✓ WhatsApp</span>
+                                </span>
                               )}
                               <span>{formatearHoraMensaje(m.creado_en)}</span>
                               {soyEmisor && (
@@ -881,8 +826,8 @@ export default function Mensajes({ usuario }) {
         </div>
       )}
 
-      {/* MODAL VINCULAR WHATSAPP EMPRESA POR QR (SOLO ADMIN CENTRAL) */}
-      {modalWhatsapp && esAdminCentral && (
+      {/* MODAL VINCULAR MI WHATSAPP POR QR */}
+      {modalWhatsapp && (
         <div
           onClick={() => setModalWhatsapp(false)}
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
@@ -897,8 +842,8 @@ export default function Mensajes({ usuario }) {
                   <QrCode size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">WhatsApp de la Empresa</h3>
-                  <p className="text-[11px] text-slate-500">Envío automático sin salir del sistema</p>
+                  <h3 className="text-base font-bold text-slate-900">Mi WhatsApp ({usuario?.nombre || 'Cuenta ERP'})</h3>
+                  <p className="text-[11px] text-slate-500">Envío automático directo desde tu número sin salir del sistema</p>
                 </div>
               </div>
               <button
@@ -916,14 +861,14 @@ export default function Mensajes({ usuario }) {
                   <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-1">
                     <div className="inline-flex items-center gap-1.5 text-emerald-700 font-extrabold text-sm">
                       <Wifi size={17} />
-                      <span>WhatsApp Conectado</span>
+                      <span>Tu WhatsApp está Conectado</span>
                     </div>
                     <p className="text-xs text-emerald-900 font-semibold">
                       +{estadoWhatsapp.numero || 'Número vinculado'}
                       {estadoWhatsapp.nombre ? ` · ${estadoWhatsapp.nombre}` : ''}
                     </p>
                     <p className="text-[11px] text-emerald-700">
-                      Cuando presionen &quot;Enviar + WhatsApp&quot;, el servidor enviará el mensaje automáticamente sin abrir pestañas ni salir de la página.
+                      Cuando presiones &quot;Enviar + WhatsApp&quot;, el mensaje saldrá directamente desde tu número al chat de tu compañero sin salir del ERP.
                     </p>
                   </div>
 
@@ -934,7 +879,7 @@ export default function Mensajes({ usuario }) {
                       disabled={desconectandoWa}
                       className="px-4 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold cursor-pointer disabled:opacity-50"
                     >
-                      {desconectandoWa ? 'Desvinculando...' : 'Desvincular cuenta'}
+                      {desconectandoWa ? 'Desvinculando...' : 'Desvincular mi cuenta'}
                     </button>
                     <button
                       type="button"
@@ -948,9 +893,9 @@ export default function Mensajes({ usuario }) {
               ) : (
                 <div className="space-y-4">
                   <ol className="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                    <li><strong>1.</strong> Abre <strong>WhatsApp</strong> en el teléfono de la empresa.</li>
+                    <li><strong>1.</strong> Abre <strong>WhatsApp</strong> en tu teléfono.</li>
                     <li><strong>2.</strong> Entra en <strong>Dispositivos vinculados → Vincular un dispositivo</strong>.</li>
-                    <li><strong>3.</strong> Escanea este código QR (el estado se actualizará solo).</li>
+                    <li><strong>3.</strong> Escanea este código QR para enviar desde tu propio chat al número de tus compañeros.</li>
                   </ol>
 
                   <div className="flex flex-col items-center justify-center min-h-[250px] bg-white rounded-2xl border border-dashed border-slate-300 p-4">

@@ -7,7 +7,7 @@ const soloAdminCentral = (req, res, next) => {
     if (req.usuario.nombre_rol !== 'Admin Central') {
         return res.status(403).json({
             exito: false,
-            mensaje: 'Acceso denegado. Esta acción es exclusiva para Admin Central.'
+            mensaje: 'Acceso denegado. Solo el Admin Central puede supervisar conversaciones.'
         });
     }
     next();
@@ -22,10 +22,10 @@ router.get('/contactos', mensajeController.listarContactos);
 router.get('/no-leidos', mensajeController.contarNoLeidos);
 router.get('/chat/:id_otro', mensajeController.obtenerChat);
 
-// Estado e integración directa de WhatsApp (solo Admin Central vincula o desvincula QR)
+// Cada usuario vincula, consulta y administra su propia sesión individual de WhatsApp QR
 router.get('/whatsapp/estado', mensajeController.estadoWhatsApp);
-router.post('/whatsapp/vincular', soloAdminCentral, mensajeController.vincularWhatsAppHandler);
-router.post('/whatsapp/desconectar', soloAdminCentral, mensajeController.desconectarWhatsAppHandler);
+router.post('/whatsapp/vincular', mensajeController.vincularWhatsAppHandler);
+router.post('/whatsapp/desconectar', mensajeController.desconectarWhatsAppHandler);
 
 // Rutas de Supervisión Silenciosa: EXCLUSIVAS para Admin Central
 router.get('/supervision', soloAdminCentral, mensajeController.supervisarConversaciones);

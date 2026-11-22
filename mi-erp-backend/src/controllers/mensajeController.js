@@ -49,9 +49,8 @@ const mensajeController = {
                         mensaje: 'Guardado en el chat interno, pero este compañero no tiene WhatsApp registrado en Personal y Roles.'
                     };
                 } else {
-                    const emisorNombre = nuevoMensaje?.nombre_emisor || 'Compañero (ERP)';
-                    const textoWa = `💬 *${emisorNombre} (ERP):*\n${textoLimpio}`;
-                    const envio = await enviarMensajeWhatsApp(telefonoDestino, textoWa);
+                    // Enviar únicamente el mensaje plano desde el WhatsApp del propio emisor
+                    const envio = await enviarMensajeWhatsApp(id_emisor, telefonoDestino, textoLimpio);
                     if (envio.enviado) {
                         await Mensaje.marcarEnviadoWhatsApp(nuevoMensaje.id_mensaje).catch(() => {});
                         nuevoMensaje.enviado_whatsapp = true;
@@ -111,11 +110,7 @@ const mensajeController = {
                 });
             }
 
-            const textoWa = soyEmisor
-                ? `💬 *${msg.nombre_emisor || 'Compañero'} (ERP):*\n${msg.mensaje}`
-                : `💬 *${msg.nombre_receptor || 'Compañero'} (reenviado de ${msg.nombre_emisor} en ERP):*\n${msg.mensaje}`;
-
-            const envio = await enviarMensajeWhatsApp(telefonoDestino, textoWa);
+            const envio = await enviarMensajeWhatsApp(idUsuarioActual, telefonoDestino, msg.mensaje);
             if (!envio.enviado) {
                 const status = envio.codigo === 'WHATSAPP_NO_CONECTADO' ? 503 : 400;
                 return res.status(status).json({
@@ -139,10 +134,9 @@ const mensajeController = {
 
     estadoWhatsApp: async (req, res) => {
         try {
-            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
             return res.status(200).json({
                 exito: true,
-                ...obtenerEstadoWhatsApp(esAdminCentral)
+                ...obtenerEstadoWhatsApp(req.usuario.id_usuario, true)
             });
         } catch (error) {
             console.error('Error consultando estado WhatsApp:', error);
@@ -153,7 +147,7 @@ const mensajeController = {
     vincularWhatsAppHandler: async (req, res) => {
         try {
             const forzarNuevoQr = Boolean(req.body?.forzar_nuevo_qr);
-            const estado = await vincularWhatsApp({ forzarNuevoQr });
+            const estado = await vincularWhatsApp(req.usuario.id_usuario, { forzarNuevoQr });
             return res.status(200).json({
                 exito: true,
                 ...estado
@@ -166,7 +160,7 @@ const mensajeController = {
 
     desconectarWhatsAppHandler: async (req, res) => {
         try {
-            const estado = await desconectarWhatsApp();
+            const estado = await desconectarWhatsApp(req.usuario.id_usuario);
             return res.status(200).json({
                 exito: true,
                 mensaje: 'Sesión de WhatsApp desvinculada correctamente.',
