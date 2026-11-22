@@ -267,6 +267,7 @@ const Mensaje = {
                 g.nombre,
                 g.descripcion,
                 g.creado_por,
+                g.whatsapp_group_jid,
                 g.creado_en,
                 gm_yo.rol_grupo AS mi_rol,
                 (
@@ -417,6 +418,17 @@ const Mensaje = {
                  actualizado_en = CURRENT_TIMESTAMP
              WHERE id_grupo = $3::int;`,
             [nombre, descripcion, id_grupo]
+        );
+        return await Mensaje.obtenerGrupoPorId(id_grupo);
+    },
+
+    asignarWhatsappGroupJid: async (id_grupo, whatsapp_group_jid) => {
+        await pool.query(
+            `UPDATE grupos_mensajes
+             SET whatsapp_group_jid = $1::varchar,
+                 actualizado_en = CURRENT_TIMESTAMP
+             WHERE id_grupo = $2::int;`,
+            [whatsapp_group_jid || null, id_grupo]
         );
         return await Mensaje.obtenerGrupoPorId(id_grupo);
     },
@@ -641,6 +653,7 @@ const Mensaje = {
                 g.id_grupo,
                 g.nombre,
                 g.descripcion,
+                g.whatsapp_group_jid,
                 g.creado_en,
                 u_cre.nombre_completo AS creador_nombre,
                 (SELECT COUNT(*)::int FROM grupos_mensajes_miembros gm WHERE gm.id_grupo = g.id_grupo) AS total_miembros,

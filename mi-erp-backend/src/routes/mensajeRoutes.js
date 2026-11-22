@@ -25,6 +25,7 @@ router.get('/grupos', mensajeController.listarGrupos);
 router.post('/grupos', mensajeController.crearGrupo);
 router.get('/grupos/:id_grupo', mensajeController.obtenerDetalleGrupo);
 router.put('/grupos/:id_grupo', mensajeController.actualizarGrupo);
+router.post('/grupos/:id_grupo/sincronizar-whatsapp', mensajeController.sincronizarGrupoWhatsapp);
 router.post('/grupos/:id_grupo/miembros', mensajeController.agregarMiembrosGrupo);
 router.patch('/grupos/:id_grupo/miembros/:id_usuario/rol', mensajeController.cambiarRolMiembroGrupo);
 router.delete('/grupos/:id_grupo/miembros/:id_usuario', mensajeController.quitarOSalirGrupo);

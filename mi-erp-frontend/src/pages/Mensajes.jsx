@@ -85,12 +85,37 @@ export default function Mensajes({ usuario }) {
   const supervisionScrollRef = useRef(null);
   const yaSeleccionoInicialRef = useRef(false);
   const yaSeleccionoSupRef = useRef(false);
+  const claveActivaRef = useRef(null);
+  const supActivaRef = useRef(null);
+  const ultimoScrollChatSigRef = useRef('');
+  const ultimoScrollSupSigRef = useRef('');
+  const [sincronizandoWaGrupo, setSincronizandoWaGrupo] = useState(false);
 
-  const claveChatActivo = grupoActivo
-    ? `grupo:${grupoActivo.id_grupo}`
-    : contactoActivo
-    ? `chat:${contactoActivo.id_usuario}`
+  const idContactoActivo = contactoActivo?.id_usuario ?? null;
+  const idGrupoActivo = grupoActivo?.id_grupo ?? null;
+  const parU1 = parActivo?.u1_id ?? null;
+  const parU2 = parActivo?.u2_id ?? null;
+  const idGrupoSup = grupoSupActivo?.id_grupo ?? null;
+
+  const claveChatActivo = idGrupoActivo
+    ? `grupo:${idGrupoActivo}`
+    : idContactoActivo
+    ? `chat:${idContactoActivo}`
     : null;
+  const claveSupActiva = idGrupoSup
+    ? `sup-grupo:${idGrupoSup}`
+    : parU1 && parU2
+    ? `sup-par:${parU1}-${parU2}`
+    : null;
+
+  useEffect(() => {
+    claveActivaRef.current = claveChatActivo;
+  }, [claveChatActivo]);
+
+  useEffect(() => {
+    supActivaRef.current = claveSupActiva;
+  }, [claveSupActiva]);
+
   const nuevoMensaje = claveChatActivo ? (borradores[claveChatActivo] || '') : '';
 
   const setBorrador = (clave, valor) => {
@@ -108,7 +133,31 @@ export default function Mensajes({ usuario }) {
       const listaGrup = resGrup.data?.datos || [];
       setContactos(listaCont);
       setGrupos(listaGrup);
-      setGrupoActivo(prev => (prev ? (listaGrup.find(g => g.id_grupo === prev.id_grupo) || null) : prev));
+      setGrupoActivo(prev => {
+        if (!prev) return prev;
+        const actual = listaGrup.find(g => g.id_grupo === prev.id_grupo);
+        if (!actual) return null;
+        const mismosMiembros =
+          (prev.miembros || []).length === (actual.miembros || []).length &&
+          (prev.miembros || []).every((m, idx) => {
+            const a = actual.miembros[idx];
+            return (
+              a &&
+              m.id_usuario === a.id_usuario &&
+              m.rol_grupo === a.rol_grupo &&
+              m.telefono_whatsapp === a.telefono_whatsapp &&
+              m.nombre_completo === a.nombre_completo
+            );
+          });
+        const sinCambiosMeta =
+          prev.nombre === actual.nombre &&
+          prev.descripcion === actual.descripcion &&
+          prev.whatsapp_group_jid === actual.whatsapp_group_jid &&
+          prev.total_miembros === actual.total_miembros &&
+          prev.mi_rol === actual.mi_rol &&
+          mismosMiembros;
+        return sinCambiosMeta ? prev : actual;
+      });
     } catch {
       /* silencioso en polling */
     }
@@ -127,8 +176,10 @@ export default function Mensajes({ usuario }) {
       if (!yaSeleccionoInicialRef.current) {
         yaSeleccionoInicialRef.current = true;
         if (listaCont.length > 0) {
+          claveActivaRef.current = `chat:${listaCont[0].id_usuario}`;
           setContactoActivo(listaCont[0]);
         } else if (listaGrup.length > 0) {
+          claveActivaRef.current = `grupo:${listaGrup[0].id_grupo}`;
           setGrupoActivo(listaGrup[0]);
         }
       }
@@ -138,22 +189,30 @@ export default function Mensajes({ usuario }) {
   }, []);
 
   const cargarHistorialChat = useCallback(async (idOtro) => {
+    const claveEsperada = `chat:${idOtro}`;
     setCargandoChat(true);
     try {
       const res = await api.get(`/mensajes/chat/${idOtro}`);
+      if (claveActivaRef.current !== claveEsperada) return;
       setMensajesChat(res.data.datos || []);
       void cargarListasSilencioso();
       window.dispatchEvent(new Event('actualizar_alertas_layout'));
     } catch {
-      toast.error('No se pudo cargar la conversación.');
+      if (claveActivaRef.current === claveEsperada) {
+        toast.error('No se pudo cargar la conversación.');
+      }
     } finally {
-      setCargandoChat(false);
+      if (claveActivaRef.current === claveEsperada) {
+        setCargandoChat(false);
+      }
     }
   }, [cargarListasSilencioso]);
 
   const cargarHistorialSilencioso = useCallback(async (idOtro) => {
+    const claveEsperada = `chat:${idOtro}`;
     try {
       const res = await api.get(`/mensajes/chat/${idOtro}`);
+      if (claveActivaRef.current !== claveEsperada) return;
       setMensajesChat(res.data.datos || []);
       window.dispatchEvent(new Event('actualizar_alertas_layout'));
     } catch {
@@ -162,22 +221,30 @@ export default function Mensajes({ usuario }) {
   }, []);
 
   const cargarHistorialGrupo = useCallback(async (idGrupo) => {
+    const claveEsperada = `grupo:${idGrupo}`;
     setCargandoChat(true);
     try {
       const res = await api.get(`/mensajes/grupos/${idGrupo}/mensajes`);
+      if (claveActivaRef.current !== claveEsperada) return;
       setMensajesGrupo(res.data?.datos || []);
       void cargarListasSilencioso();
       window.dispatchEvent(new Event('actualizar_alertas_layout'));
     } catch {
-      toast.error('No se pudieron cargar los mensajes del grupo.');
+      if (claveActivaRef.current === claveEsperada) {
+        toast.error('No se pudieron cargar los mensajes del grupo.');
+      }
     } finally {
-      setCargandoChat(false);
+      if (claveActivaRef.current === claveEsperada) {
+        setCargandoChat(false);
+      }
     }
   }, [cargarListasSilencioso]);
 
   const cargarHistorialGrupoSilencioso = useCallback(async (idGrupo) => {
+    const claveEsperada = `grupo:${idGrupo}`;
     try {
       const res = await api.get(`/mensajes/grupos/${idGrupo}/mensajes`);
+      if (claveActivaRef.current !== claveEsperada) return;
       setMensajesGrupo(res.data?.datos || []);
       window.dispatchEvent(new Event('actualizar_alertas_layout'));
     } catch {
@@ -186,24 +253,36 @@ export default function Mensajes({ usuario }) {
   }, []);
 
   const seleccionarParSupervision = useCallback(async (par) => {
+    const claveEsp = `sup-par:${par.u1_id}-${par.u2_id}`;
+    supActivaRef.current = claveEsp;
     setGrupoSupActivo(null);
     setParActivo(par);
     try {
       const res = await api.get(`/mensajes/supervision/${par.u1_id}/${par.u2_id}`);
-      setMensajesSupervision(res.data.datos || []);
+      if (supActivaRef.current === claveEsp) {
+        setMensajesSupervision(res.data.datos || []);
+      }
     } catch {
-      toast.error('No se pudo abrir la conversación seleccionada.');
+      if (supActivaRef.current === claveEsp) {
+        toast.error('No se pudo abrir la conversación seleccionada.');
+      }
     }
   }, []);
 
   const seleccionarGrupoSupervision = useCallback(async (grupo) => {
+    const claveEsp = `sup-grupo:${grupo.id_grupo}`;
+    supActivaRef.current = claveEsp;
     setParActivo(null);
     setGrupoSupActivo(grupo);
     try {
       const res = await api.get(`/mensajes/supervision-grupos/${grupo.id_grupo}`);
-      setMensajesSupervision(res.data?.datos || []);
+      if (supActivaRef.current === claveEsp) {
+        setMensajesSupervision(res.data?.datos || []);
+      }
     } catch {
-      toast.error('No se pudo abrir el grupo seleccionado.');
+      if (supActivaRef.current === claveEsp) {
+        toast.error('No se pudo abrir el grupo seleccionado.');
+      }
     }
   }, []);
 
@@ -235,18 +314,24 @@ export default function Mensajes({ usuario }) {
   }, [esAdminCentral, seleccionarParSupervision, seleccionarGrupoSupervision]);
 
   const cargarChatSupervisionSilencioso = useCallback(async (u1, u2) => {
+    const claveEsp = `sup-par:${u1}-${u2}`;
     try {
       const res = await api.get(`/mensajes/supervision/${u1}/${u2}`);
-      setMensajesSupervision(res.data.datos || []);
+      if (supActivaRef.current === claveEsp) {
+        setMensajesSupervision(res.data.datos || []);
+      }
     } catch {
       /* silencioso en polling */
     }
   }, []);
 
   const cargarGrupoSupervisionSilencioso = useCallback(async (idGrupo) => {
+    const claveEsp = `sup-grupo:${idGrupo}`;
     try {
       const res = await api.get(`/mensajes/supervision-grupos/${idGrupo}`);
-      setMensajesSupervision(res.data?.datos || []);
+      if (supActivaRef.current === claveEsp) {
+        setMensajesSupervision(res.data?.datos || []);
+      }
     } catch {
       /* silencioso en polling */
     }
@@ -321,37 +406,37 @@ export default function Mensajes({ usuario }) {
   useEffect(() => {
     let alive = true;
     if (tabActual === 'chat') {
-      if (contactoActivo) {
+      if (idGrupoActivo) {
         Promise.resolve().then(() => {
-          if (alive) void cargarHistorialChat(contactoActivo.id_usuario);
+          if (alive) void cargarHistorialGrupo(idGrupoActivo);
         });
-      } else if (grupoActivo) {
+      } else if (idContactoActivo) {
         Promise.resolve().then(() => {
-          if (alive) void cargarHistorialGrupo(grupoActivo.id_grupo);
+          if (alive) void cargarHistorialChat(idContactoActivo);
         });
       }
     }
     return () => {
       alive = false;
     };
-  }, [contactoActivo, grupoActivo, tabActual, cargarHistorialChat, cargarHistorialGrupo]);
+  }, [idContactoActivo, idGrupoActivo, tabActual, cargarHistorialChat, cargarHistorialGrupo]);
 
   useEffect(() => {
     if (tabActual !== 'chat') return undefined;
-    if (contactoActivo) {
+    if (idGrupoActivo) {
       const interval = setInterval(() => {
-        void cargarHistorialSilencioso(contactoActivo.id_usuario);
+        void cargarHistorialGrupoSilencioso(idGrupoActivo);
       }, 3500);
       return () => clearInterval(interval);
     }
-    if (grupoActivo) {
+    if (idContactoActivo) {
       const interval = setInterval(() => {
-        void cargarHistorialGrupoSilencioso(grupoActivo.id_grupo);
+        void cargarHistorialSilencioso(idContactoActivo);
       }, 3500);
       return () => clearInterval(interval);
     }
     return undefined;
-  }, [contactoActivo, grupoActivo, tabActual, cargarHistorialSilencioso, cargarHistorialGrupoSilencioso]);
+  }, [idContactoActivo, idGrupoActivo, tabActual, cargarHistorialSilencioso, cargarHistorialGrupoSilencioso]);
 
   useEffect(() => {
     let alive = true;
@@ -367,32 +452,39 @@ export default function Mensajes({ usuario }) {
 
   useEffect(() => {
     if (tabActual !== 'supervision' || !esAdminCentral) return undefined;
-    if (parActivo) {
+    if (parU1 && parU2) {
       const interval = setInterval(() => {
-        void cargarChatSupervisionSilencioso(parActivo.u1_id, parActivo.u2_id);
+        void cargarChatSupervisionSilencioso(parU1, parU2);
       }, 4500);
       return () => clearInterval(interval);
     }
-    if (grupoSupActivo) {
+    if (idGrupoSup) {
       const interval = setInterval(() => {
-        void cargarGrupoSupervisionSilencioso(grupoSupActivo.id_grupo);
+        void cargarGrupoSupervisionSilencioso(idGrupoSup);
       }, 4500);
       return () => clearInterval(interval);
     }
     return undefined;
-  }, [parActivo, grupoSupActivo, tabActual, esAdminCentral, cargarChatSupervisionSilencioso, cargarGrupoSupervisionSilencioso]);
+  }, [parU1, parU2, idGrupoSup, tabActual, esAdminCentral, cargarChatSupervisionSilencioso, cargarGrupoSupervisionSilencioso]);
 
   useEffect(() => {
-    if (chatScrollRef.current) {
+    const lista = idGrupoActivo ? mensajesGrupo : mensajesChat;
+    const ultimo = lista[lista.length - 1];
+    const sig = `${claveChatActivo || ''}|${lista.length}|${ultimo?.id_mensaje_grupo || ultimo?.id_mensaje || 0}`;
+    if (sig !== ultimoScrollChatSigRef.current && chatScrollRef.current) {
+      ultimoScrollChatSigRef.current = sig;
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
-  }, [mensajesChat, mensajesGrupo, claveChatActivo]);
+  }, [mensajesChat, mensajesGrupo, claveChatActivo, idGrupoActivo]);
 
   useEffect(() => {
-    if (supervisionScrollRef.current) {
+    const ultimo = mensajesSupervision[mensajesSupervision.length - 1];
+    const sig = `${claveSupActiva || ''}|${mensajesSupervision.length}|${ultimo?.id_mensaje_grupo || ultimo?.id_mensaje || 0}`;
+    if (sig !== ultimoScrollSupSigRef.current && supervisionScrollRef.current) {
+      ultimoScrollSupSigRef.current = sig;
       supervisionScrollRef.current.scrollTop = supervisionScrollRef.current.scrollHeight;
     }
-  }, [mensajesSupervision]);
+  }, [mensajesSupervision, claveSupActiva]);
 
   const abrirModalVincularWhatsapp = async () => {
     setModalWhatsapp(true);
@@ -445,11 +537,15 @@ export default function Mensajes({ usuario }) {
   };
 
   const seleccionarContacto = (c) => {
+    claveActivaRef.current = `chat:${c.id_usuario}`;
+    setMensajesGrupo([]);
     setGrupoActivo(null);
     setContactoActivo(c);
   };
 
   const seleccionarGrupo = (g) => {
+    claveActivaRef.current = `grupo:${g.id_grupo}`;
+    setMensajesChat([]);
     setContactoActivo(null);
     setGrupoActivo(g);
   };
@@ -491,6 +587,11 @@ export default function Mensajes({ usuario }) {
       });
       if (res.data?.exito && res.data?.datos) {
         setMensajesGrupo(prev => [...prev, res.data.datos]);
+        const jidNuevo = res.data?.whatsapp?.whatsapp_group_jid;
+        if (jidNuevo) {
+          setGrupoActivo(prev => (prev && prev.id_grupo === idGrupo ? { ...prev, whatsapp_group_jid: jidNuevo } : prev));
+          setDetalleGrupo(prev => (prev && prev.id_grupo === idGrupo ? { ...prev, whatsapp_group_jid: jidNuevo } : prev));
+        }
         void cargarListasSilencioso();
       }
       if (enviarWhatsapp && res.data?.whatsapp) {
@@ -532,9 +633,11 @@ export default function Mensajes({ usuario }) {
     }
 
     if (grupoActivo) {
-      const hayConWa = (grupoActivo.miembros || []).some(
-        m => Number(m.id_usuario) !== Number(usuario.id_usuario) && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
-      );
+      const hayConWa =
+        Boolean(grupoActivo.whatsapp_group_jid) ||
+        (grupoActivo.miembros || []).some(
+          m => Number(m.id_usuario) !== Number(usuario.id_usuario) && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
+        );
       if (!hayConWa) {
         toast.error('Ningún otro integrante de este grupo tiene un número de WhatsApp registrado en Personal y Roles.');
         return;
@@ -595,7 +698,15 @@ export default function Mensajes({ usuario }) {
         miembros: formNuevoGrupo.miembros
       });
       const creado = res.data?.datos;
-      toast.success(res.data?.mensaje || 'Grupo creado.');
+      const waGrupo = res.data?.whatsapp_grupo;
+      if (waGrupo?.creado) {
+        toast.success('Grupo creado en el ERP y en WhatsApp.');
+      } else {
+        toast.success(res.data?.mensaje || 'Grupo creado.');
+        if (waGrupo?.mensaje && waGrupo?.codigo !== 'WHATSAPP_NO_CONECTADO') {
+          toast(waGrupo.mensaje, { icon: 'ℹ️' });
+        }
+      }
       setModalCrearGrupo(false);
       await cargarListasSilencioso();
       if (creado) {
@@ -605,6 +716,29 @@ export default function Mensajes({ usuario }) {
       toast.error(err.response?.data?.mensaje || 'No se pudo crear el grupo.');
     } finally {
       setGuardandoGrupo(false);
+    }
+  };
+
+  const handleSincronizarGrupoWhatsapp = async () => {
+    if (!detalleGrupo || sincronizandoWaGrupo) return;
+    setSincronizandoWaGrupo(true);
+    try {
+      const res = await api.post(`/mensajes/grupos/${detalleGrupo.id_grupo}/sincronizar-whatsapp`);
+      const upd = res.data?.datos;
+      if (upd) {
+        setDetalleGrupo(upd);
+        setGrupoActivo(prev => (prev && prev.id_grupo === upd.id_grupo ? upd : prev));
+      }
+      if (res.data?.sincronizado) {
+        toast.success(res.data?.mensaje || 'Grupo sincronizado con WhatsApp.');
+      } else {
+        toast.error(res.data?.mensaje || 'No se pudo sincronizar con WhatsApp.');
+      }
+      void cargarListasSilencioso();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo sincronizar con WhatsApp.');
+    } finally {
+      setSincronizandoWaGrupo(false);
     }
   };
 
@@ -754,7 +888,10 @@ export default function Mensajes({ usuario }) {
       )
     : false;
 
-  const mostrarBotonEnviarWhatsapp = Boolean(numeroWhatsappActivo) || grupoTieneWhatsappDestinatarios;
+  const mostrarBotonEnviarWhatsapp =
+    Boolean(numeroWhatsappActivo) ||
+    grupoTieneWhatsappDestinatarios ||
+    Boolean(grupoActivo?.whatsapp_group_jid);
 
   const formatearHoraMensaje = (fechaISO) => {
     if (!fechaISO) return '';
@@ -953,6 +1090,14 @@ export default function Mensajes({ usuario }) {
                       <div className="flex items-center justify-between gap-1">
                         <p className="text-xs font-bold text-slate-800 truncate">{g.nombre}</p>
                         <div className="flex items-center gap-1 shrink-0">
+                          {Boolean(g.whatsapp_group_jid) && (
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              title="Grupo vinculado a WhatsApp real"
+                            >
+                              WA
+                            </span>
+                          )}
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             {g.total_miembros}
                           </span>
@@ -1084,9 +1229,19 @@ export default function Mensajes({ usuario }) {
                       className="min-w-0 cursor-pointer"
                       title="Ver integrantes del grupo"
                     >
-                      <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
-                        {grupoActivo.nombre}
-                      </h3>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className="text-sm font-bold text-slate-900 leading-tight truncate">
+                          {grupoActivo.nombre}
+                        </h3>
+                        {Boolean(grupoActivo.whatsapp_group_jid) && (
+                          <span
+                            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0"
+                            title="Conectado a un grupo real de WhatsApp"
+                          >
+                            WA Grupo
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-slate-500 mt-0.5 truncate">
                         {(grupoActivo.miembros || []).map(m => (Number(m.id_usuario) === Number(usuario.id_usuario) ? 'Tú' : m.nombre_completo)).join(', ')}
                       </p>
@@ -1681,6 +1836,16 @@ export default function Mensajes({ usuario }) {
                 </div>
               </div>
 
+              <div className={`p-3 rounded-xl border text-[11px] leading-relaxed ${
+                estadoWhatsapp.conectado
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                {estadoWhatsapp.conectado
+                  ? 'Al crear el grupo aquí, también se creará automáticamente el grupo real en tu WhatsApp con los integrantes que tengan número registrado.'
+                  : 'Tu WhatsApp QR no está conectado ahora; el grupo se creará en el chat interno y luego podrás sincronizarlo con WhatsApp.'}
+              </div>
+
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
@@ -1789,6 +1954,46 @@ export default function Mensajes({ usuario }) {
                   )}
                 </div>
               )}
+
+              {/* Estado / Sincronización con grupo real de WhatsApp */}
+              <div className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
+                detalleGrupo.whatsapp_group_jid
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                <div className="min-w-0">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <Phone size={13} />
+                    <span>
+                      {detalleGrupo.whatsapp_group_jid
+                        ? 'Vinculado a grupo real de WhatsApp'
+                        : 'Pendiente de crear en WhatsApp'}
+                    </span>
+                  </p>
+                  <p className="text-[11px] opacity-80 mt-0.5">
+                    {detalleGrupo.whatsapp_group_jid
+                      ? 'Los mensajes con "Enviar + WhatsApp" llegan directamente al chat grupal de WhatsApp.'
+                      : 'Sincronízalo con tu WhatsApp QR para crear el grupo real en WhatsApp.'}
+                  </p>
+                </div>
+                {esAdminDelGrupoActual && (
+                  <button
+                    type="button"
+                    onClick={handleSincronizarGrupoWhatsapp}
+                    disabled={sincronizandoWaGrupo}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    <RefreshCw size={12} className={sincronizandoWaGrupo ? 'animate-spin' : ''} />
+                    <span>
+                      {sincronizandoWaGrupo
+                        ? 'Sincronizando...'
+                        : detalleGrupo.whatsapp_group_jid
+                        ? 'Sincronizar WA'
+                        : 'Crear en WhatsApp'}
+                    </span>
+                  </button>
+                )}
+              </div>
 
               {/* Agregar participantes (solo admin del grupo) */}
               {esAdminDelGrupoActual && contactosDisponiblesParaAgregar.length > 0 && (

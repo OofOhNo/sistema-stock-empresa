@@ -5,6 +5,12 @@ const {
     desconectarWhatsApp,
     obtenerEstadoWhatsApp,
     enviarMensajeWhatsApp,
+    crearGrupoWhatsApp,
+    enviarMensajeGrupoWhatsApp,
+    sincronizarGrupoEnWhatsApp,
+    actualizarGrupoWhatsApp,
+    actualizarParticipantesGrupoWhatsApp,
+    salirGrupoWhatsApp,
     normalizarNumeroWhatsApp
 } = require('../utils/whatsappService');
 
@@ -298,21 +304,75 @@ const mensajeController = {
             if (nombreLimpio.length > 120) {
                 return res.status(400).json({ exito: false, mensaje: 'El nombre del grupo no debe superar 120 caracteres.' });
             }
+            const descLimpia = String(descripcion || '').trim() || null;
             const listaMiembros = Array.isArray(miembros) ? miembros : [];
-            const grupo = await Mensaje.crearGrupo({
+            let grupo = await Mensaje.crearGrupo({
                 nombre: nombreLimpio,
-                descripcion: String(descripcion || '').trim() || null,
+                descripcion: descLimpia,
                 id_creador: req.usuario.id_usuario,
                 miembros_ids: listaMiembros
             });
+
+            // Intentar crear automáticamente también el grupo real en WhatsApp del creador
+            const telefonosOtros = (grupo?.miembros || [])
+                .filter((m) => Number(m.id_usuario) !== Number(req.usuario.id_usuario))
+                .map((m) => m.telefono_whatsapp);
+
+            const waGrupo = await crearGrupoWhatsApp(req.usuario.id_usuario, {
+                nombre: nombreLimpio,
+                descripcion: descLimpia || '',
+                telefonosParticipantes: telefonosOtros
+            });
+
+            if (waGrupo?.creado && waGrupo.groupJid) {
+                grupo = await Mensaje.asignarWhatsappGroupJid(grupo.id_grupo, waGrupo.groupJid);
+            }
+
             return res.status(201).json({
                 exito: true,
-                mensaje: 'Grupo creado correctamente.',
-                datos: grupo
+                mensaje: waGrupo?.creado
+                    ? 'Grupo creado en el ERP y en WhatsApp.'
+                    : 'Grupo creado correctamente.',
+                datos: grupo,
+                whatsapp_grupo: waGrupo
             });
         } catch (error) {
             console.error('Error en crearGrupo:', error);
             return res.status(500).json({ exito: false, mensaje: 'No se pudo crear el grupo.' });
+        }
+    },
+
+    sincronizarGrupoWhatsapp: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if ((!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede sincronizarlo con WhatsApp.' });
+            }
+            let grupo = await Mensaje.obtenerGrupoPorId(idGrupo);
+            if (!grupo) {
+                return res.status(404).json({ exito: false, mensaje: 'Grupo no encontrado.' });
+            }
+
+            const syncRes = await sincronizarGrupoEnWhatsApp(req.usuario.id_usuario, grupo);
+            if (syncRes.sincronizado && syncRes.groupJid && !grupo.whatsapp_group_jid) {
+                grupo = await Mensaje.asignarWhatsappGroupJid(idGrupo, syncRes.groupJid);
+            }
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: syncRes.mensaje || (syncRes.sincronizado ? 'Grupo sincronizado con WhatsApp.' : 'No se pudo sincronizar con WhatsApp.'),
+                sincronizado: Boolean(syncRes.sincronizado),
+                whatsapp_grupo: syncRes,
+                datos: grupo
+            });
+        } catch (error) {
+            console.error('Error en sincronizarGrupoWhatsapp:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo sincronizar el grupo con WhatsApp.' });
         }
     },
 
@@ -358,6 +418,12 @@ const mensajeController = {
                 nombre: nombreLimpio,
                 descripcion: descripcion !== undefined ? (String(descripcion || '').trim() || null) : null
             });
+            if (grupo?.whatsapp_group_jid) {
+                await actualizarGrupoWhatsApp(req.usuario.id_usuario, grupo.whatsapp_group_jid, {
+                    nombre: nombreLimpio || grupo.nombre,
+                    descripcion: descripcion !== undefined ? (String(descripcion || '').trim() || '') : undefined
+                }).catch(() => {});
+            }
             return res.status(200).json({ exito: true, mensaje: 'Grupo actualizado.', datos: grupo });
         } catch (error) {
             console.error('Error en actualizarGrupo:', error);
@@ -380,7 +446,34 @@ const mensajeController = {
             if (miembros.length === 0) {
                 return res.status(400).json({ exito: false, mensaje: 'Elige al menos un compañero para agregar.' });
             }
-            const grupo = await Mensaje.agregarMiembrosGrupo(idGrupo, miembros);
+            let grupo = await Mensaje.agregarMiembrosGrupo(idGrupo, miembros);
+
+            const idsAgregados = new Set(miembros.map(Number));
+            const nuevosTelefonos = (grupo?.miembros || [])
+                .filter((m) => idsAgregados.has(Number(m.id_usuario)))
+                .map((m) => m.telefono_whatsapp);
+
+            if (grupo?.whatsapp_group_jid) {
+                await actualizarParticipantesGrupoWhatsApp(
+                    req.usuario.id_usuario,
+                    grupo.whatsapp_group_jid,
+                    nuevosTelefonos,
+                    'add'
+                ).catch(() => {});
+            } else {
+                const telefonosOtros = (grupo?.miembros || [])
+                    .filter((m) => Number(m.id_usuario) !== Number(req.usuario.id_usuario))
+                    .map((m) => m.telefono_whatsapp);
+                const waGrupo = await crearGrupoWhatsApp(req.usuario.id_usuario, {
+                    nombre: grupo?.nombre,
+                    descripcion: grupo?.descripcion || '',
+                    telefonosParticipantes: telefonosOtros
+                }).catch(() => null);
+                if (waGrupo?.creado && waGrupo.groupJid) {
+                    grupo = await Mensaje.asignarWhatsappGroupJid(idGrupo, waGrupo.groupJid);
+                }
+            }
+
             return res.status(200).json({ exito: true, mensaje: 'Integrantes agregados.', datos: grupo });
         } catch (error) {
             console.error('Error en agregarMiembrosGrupo:', error);
@@ -402,6 +495,17 @@ const mensajeController = {
                 return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede cambiar roles.' });
             }
             const grupo = await Mensaje.cambiarRolMiembroGrupo(idGrupo, idObjetivo, nuevoRol);
+            if (grupo?.whatsapp_group_jid) {
+                const miembroObj = (grupo.miembros || []).find((m) => Number(m.id_usuario) === idObjetivo);
+                if (miembroObj?.telefono_whatsapp) {
+                    await actualizarParticipantesGrupoWhatsApp(
+                        req.usuario.id_usuario,
+                        grupo.whatsapp_group_jid,
+                        [miembroObj.telefono_whatsapp],
+                        nuevoRol === 'ADMIN' ? 'promote' : 'demote'
+                    ).catch(() => {});
+                }
+            }
             return res.status(200).json({ exito: true, mensaje: 'Rol actualizado.', datos: grupo });
         } catch (error) {
             return res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo actualizar el rol.' });
@@ -425,7 +529,23 @@ const mensajeController = {
             if (esSalidaPropia && !membresia) {
                 return res.status(404).json({ exito: false, mensaje: 'Ya no eres parte de este grupo.' });
             }
+            const grupoAntes = await Mensaje.obtenerGrupoPorId(idGrupo);
             const resultado = await Mensaje.quitarMiembroGrupo(idGrupo, idObjetivo);
+            if (grupoAntes?.whatsapp_group_jid) {
+                if (esSalidaPropia) {
+                    await salirGrupoWhatsApp(idActual, grupoAntes.whatsapp_group_jid).catch(() => {});
+                } else {
+                    const miembroObj = (grupoAntes.miembros || []).find((m) => Number(m.id_usuario) === idObjetivo);
+                    if (miembroObj?.telefono_whatsapp) {
+                        await actualizarParticipantesGrupoWhatsApp(
+                            idActual,
+                            grupoAntes.whatsapp_group_jid,
+                            [miembroObj.telefono_whatsapp],
+                            'remove'
+                        ).catch(() => {});
+                    }
+                }
+            }
             return res.status(200).json({
                 exito: true,
                 mensaje: esSalidaPropia ? 'Saliste del grupo.' : 'Integrante eliminado del grupo.',
@@ -506,7 +626,7 @@ const mensajeController = {
                     (m) => Number(m.id_usuario) !== idEmisor && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
                 );
 
-                if (destinatariosWa.length === 0) {
+                if (destinatariosWa.length === 0 && !grupoDetalle?.whatsapp_group_jid) {
                     resultadoWhatsapp = {
                         solicitado: true,
                         enviado: false,
@@ -520,26 +640,39 @@ const mensajeController = {
                             solicitado: true,
                             enviado: false,
                             codigo: 'WHATSAPP_NO_CONECTADO',
-                            mensaje: 'Guardado en el grupo. Tu cuenta aún no tiene vinculado su WhatsApp QR para enviarlo a los integrantes.'
+                            mensaje: 'Guardado en el grupo. Tu cuenta aún no tiene vinculado su WhatsApp QR para enviarlo al grupo de WhatsApp.'
                         };
                     } else {
-                        let ok = 0;
-                        for (const dest of destinatariosWa) {
-                            const resWa = await enviarMensajeWhatsApp(idEmisor, dest.telefono_whatsapp, textoLimpio);
-                            if (resWa.enviado) ok += 1;
+                        const resWaGrupo = await enviarMensajeGrupoWhatsApp(idEmisor, {
+                            groupJid: grupoDetalle?.whatsapp_group_jid || null,
+                            nombre: grupoDetalle?.nombre,
+                            descripcion: grupoDetalle?.descripcion || '',
+                            telefonosParticipantes: destinatariosWa.map((m) => m.telefono_whatsapp),
+                            texto: textoLimpio
+                        });
+
+                        if (resWaGrupo.nuevoGroupJid) {
+                            await Mensaje.asignarWhatsappGroupJid(idGrupo, resWaGrupo.nuevoGroupJid).catch(() => {});
                         }
-                        await Mensaje.marcarMensajeGrupoWhatsApp(nuevoMsg.id_mensaje_grupo, ok, destinatariosWa.length).catch(() => {});
-                        nuevoMsg.enviado_whatsapp = ok > 0;
-                        nuevoMsg.whatsapp_destinatarios_ok = ok;
-                        nuevoMsg.whatsapp_destinatarios_total = destinatariosWa.length;
+
+                        const totalWa = Math.max(destinatariosWa.length, resWaGrupo.enviado ? 1 : 0);
+                        const okCount = resWaGrupo.enviado ? totalWa : 0;
+                        if (resWaGrupo.enviado) {
+                            await Mensaje.marcarMensajeGrupoWhatsApp(nuevoMsg.id_mensaje_grupo, okCount, totalWa).catch(() => {});
+                            nuevoMsg.enviado_whatsapp = true;
+                            nuevoMsg.whatsapp_destinatarios_ok = okCount;
+                            nuevoMsg.whatsapp_destinatarios_total = totalWa;
+                        }
+
                         resultadoWhatsapp = {
                             solicitado: true,
-                            enviado: ok > 0,
-                            enviados: ok,
-                            total_con_whatsapp: destinatariosWa.length,
-                            mensaje: ok > 0
-                                ? `Enviado al grupo y por WhatsApp a ${ok} de ${destinatariosWa.length} integrante(s).`
-                                : 'Guardado en el grupo, pero no se pudo entregar por WhatsApp a ningún integrante.'
+                            enviado: Boolean(resWaGrupo.enviado),
+                            codigo: resWaGrupo.codigo || null,
+                            whatsapp_group_jid: resWaGrupo.groupJid || grupoDetalle?.whatsapp_group_jid || null,
+                            grupo_creado_ahora: Boolean(resWaGrupo.creadoAhora),
+                            enviados: okCount,
+                            total_con_whatsapp: totalWa,
+                            mensaje: resWaGrupo.mensaje
                         };
                     }
                 }
