@@ -270,9 +270,7 @@ const facturaController = {
             }
 
             const modoNormalizado = String(modo_integracion || 'DEMO_NUBEFACT').toUpperCase();
-            const modoFinal = ['APISPERU', 'NUBEFACT_REAL'].includes(modoNormalizado)
-                ? modoNormalizado
-                : 'DEMO_NUBEFACT';
+            const modoFinal = modoNormalizado === 'APISPERU' ? 'APISPERU' : 'DEMO_NUBEFACT';
 
             const ubigeoLimpio = String(ubigeo || configActual?.ubigeo || '150101').trim();
             if (modoFinal === 'APISPERU' && !/^\d{6}$/.test(ubigeoLimpio)) {

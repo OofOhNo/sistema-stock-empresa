@@ -272,6 +272,330 @@ const mensajeController = {
             console.error('Error en supervisarChatPar:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al supervisar chat', error: error.message });
         }
+    },
+
+    // =========================================================================
+    // GRUPOS TIPO WHATSAPP
+    // =========================================================================
+
+    listarGrupos: async (req, res) => {
+        try {
+            const grupos = await Mensaje.listarGruposUsuario(req.usuario.id_usuario);
+            return res.status(200).json({ exito: true, datos: grupos });
+        } catch (error) {
+            console.error('Error en listarGrupos:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al cargar tus grupos.' });
+        }
+    },
+
+    crearGrupo: async (req, res) => {
+        try {
+            const { nombre, descripcion = '', miembros = [] } = req.body;
+            const nombreLimpio = String(nombre || '').trim();
+            if (!nombreLimpio) {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre del grupo es obligatorio.' });
+            }
+            if (nombreLimpio.length > 120) {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre del grupo no debe superar 120 caracteres.' });
+            }
+            const listaMiembros = Array.isArray(miembros) ? miembros : [];
+            const grupo = await Mensaje.crearGrupo({
+                nombre: nombreLimpio,
+                descripcion: String(descripcion || '').trim() || null,
+                id_creador: req.usuario.id_usuario,
+                miembros_ids: listaMiembros
+            });
+            return res.status(201).json({
+                exito: true,
+                mensaje: 'Grupo creado correctamente.',
+                datos: grupo
+            });
+        } catch (error) {
+            console.error('Error en crearGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo crear el grupo.' });
+        }
+    },
+
+    obtenerDetalleGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if (!membresia && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'No perteneces a este grupo.' });
+            }
+            const grupo = await Mensaje.obtenerGrupoPorId(idGrupo);
+            if (!grupo) {
+                return res.status(404).json({ exito: false, mensaje: 'Grupo no encontrado.' });
+            }
+            return res.status(200).json({ exito: true, datos: grupo });
+        } catch (error) {
+            console.error('Error en obtenerDetalleGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al consultar el grupo.' });
+        }
+    },
+
+    actualizarGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if ((!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede editarlo.' });
+            }
+            const { nombre, descripcion } = req.body;
+            const nombreLimpio = nombre !== undefined ? String(nombre || '').trim() : null;
+            if (nombre !== undefined && !nombreLimpio) {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre del grupo no puede quedar vacío.' });
+            }
+            const grupo = await Mensaje.actualizarGrupo(idGrupo, {
+                nombre: nombreLimpio,
+                descripcion: descripcion !== undefined ? (String(descripcion || '').trim() || null) : null
+            });
+            return res.status(200).json({ exito: true, mensaje: 'Grupo actualizado.', datos: grupo });
+        } catch (error) {
+            console.error('Error en actualizarGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo actualizar el grupo.' });
+        }
+    },
+
+    agregarMiembrosGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if ((!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede agregar integrantes.' });
+            }
+            const miembros = Array.isArray(req.body?.miembros) ? req.body.miembros : [];
+            if (miembros.length === 0) {
+                return res.status(400).json({ exito: false, mensaje: 'Elige al menos un compañero para agregar.' });
+            }
+            const grupo = await Mensaje.agregarMiembrosGrupo(idGrupo, miembros);
+            return res.status(200).json({ exito: true, mensaje: 'Integrantes agregados.', datos: grupo });
+        } catch (error) {
+            console.error('Error en agregarMiembrosGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo agregar participantes.' });
+        }
+    },
+
+    cambiarRolMiembroGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            const idObjetivo = parseInt(req.params.id_usuario, 10);
+            const nuevoRol = String(req.body?.rol_grupo || '').toUpperCase();
+            if (!Number.isFinite(idGrupo) || !Number.isFinite(idObjetivo) || !['ADMIN', 'MIEMBRO'].includes(nuevoRol)) {
+                return res.status(400).json({ exito: false, mensaje: 'Datos inválidos.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if ((!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede cambiar roles.' });
+            }
+            const grupo = await Mensaje.cambiarRolMiembroGrupo(idGrupo, idObjetivo, nuevoRol);
+            return res.status(200).json({ exito: true, mensaje: 'Rol actualizado.', datos: grupo });
+        } catch (error) {
+            return res.status(400).json({ exito: false, mensaje: error.message || 'No se pudo actualizar el rol.' });
+        }
+    },
+
+    quitarOSalirGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            const idObjetivo = parseInt(req.params.id_usuario, 10);
+            const idActual = Number(req.usuario.id_usuario);
+            if (!Number.isFinite(idGrupo) || !Number.isFinite(idObjetivo)) {
+                return res.status(400).json({ exito: false, mensaje: 'Parámetros inválidos.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, idActual);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            const esSalidaPropia = idObjetivo === idActual;
+            if (!esSalidaPropia && (!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede quitar integrantes.' });
+            }
+            if (esSalidaPropia && !membresia) {
+                return res.status(404).json({ exito: false, mensaje: 'Ya no eres parte de este grupo.' });
+            }
+            const resultado = await Mensaje.quitarMiembroGrupo(idGrupo, idObjetivo);
+            return res.status(200).json({
+                exito: true,
+                mensaje: esSalidaPropia ? 'Saliste del grupo.' : 'Integrante eliminado del grupo.',
+                ...resultado
+            });
+        } catch (error) {
+            console.error('Error en quitarOSalirGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo actualizar la membresía del grupo.' });
+        }
+    },
+
+    eliminarGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, req.usuario.id_usuario);
+            const esAdminCentral = req.usuario.nombre_rol === 'Admin Central';
+            if ((!membresia || membresia.rol_grupo !== 'ADMIN') && !esAdminCentral) {
+                return res.status(403).json({ exito: false, mensaje: 'Solo un administrador del grupo puede eliminarlo.' });
+            }
+            await Mensaje.eliminarGrupo(idGrupo);
+            return res.status(200).json({ exito: true, mensaje: 'Grupo eliminado correctamente.' });
+        } catch (error) {
+            console.error('Error en eliminarGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo eliminar el grupo.' });
+        }
+    },
+
+    obtenerMensajesGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            const idUsuario = Number(req.usuario.id_usuario);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, idUsuario);
+            if (!membresia) {
+                return res.status(403).json({ exito: false, mensaje: 'No perteneces a este grupo.' });
+            }
+            const mensajes = await Mensaje.obtenerHistorialGrupo(idGrupo);
+            await Mensaje.marcarGrupoLeido(idGrupo, idUsuario);
+            return res.status(200).json({ exito: true, datos: mensajes });
+        } catch (error) {
+            console.error('Error en obtenerMensajesGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al cargar los mensajes del grupo.' });
+        }
+    },
+
+    enviarMensajeGrupo: async (req, res) => {
+        try {
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            const idEmisor = Number(req.usuario.id_usuario);
+            const { mensaje, enviar_whatsapp = false } = req.body;
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const membresia = await Mensaje.esMiembroGrupo(idGrupo, idEmisor);
+            if (!membresia) {
+                return res.status(403).json({ exito: false, mensaje: 'No perteneces a este grupo.' });
+            }
+            const textoLimpio = String(mensaje || '').trim();
+            if (!textoLimpio) {
+                return res.status(400).json({ exito: false, mensaje: 'Escribe un mensaje antes de enviarlo.' });
+            }
+
+            const nuevoMsg = await Mensaje.enviarMensajeGrupo({
+                id_grupo: idGrupo,
+                id_emisor: idEmisor,
+                mensaje: textoLimpio
+            });
+
+            let resultadoWhatsapp = null;
+            if (Boolean(enviar_whatsapp)) {
+                const grupoDetalle = await Mensaje.obtenerGrupoPorId(idGrupo);
+                const destinatariosWa = (grupoDetalle?.miembros || []).filter(
+                    (m) => Number(m.id_usuario) !== idEmisor && Boolean(normalizarNumeroWhatsApp(m.telefono_whatsapp))
+                );
+
+                if (destinatariosWa.length === 0) {
+                    resultadoWhatsapp = {
+                        solicitado: true,
+                        enviado: false,
+                        codigo: 'SIN_NUMEROS_GRUPO',
+                        mensaje: 'Guardado en el grupo, pero ningún otro integrante tiene WhatsApp registrado en Personal y Roles.'
+                    };
+                } else {
+                    const estadoWa = obtenerEstadoWhatsApp(idEmisor, false);
+                    if (!estadoWa.conectado) {
+                        resultadoWhatsapp = {
+                            solicitado: true,
+                            enviado: false,
+                            codigo: 'WHATSAPP_NO_CONECTADO',
+                            mensaje: 'Guardado en el grupo. Tu cuenta aún no tiene vinculado su WhatsApp QR para enviarlo a los integrantes.'
+                        };
+                    } else {
+                        let ok = 0;
+                        for (const dest of destinatariosWa) {
+                            const resWa = await enviarMensajeWhatsApp(idEmisor, dest.telefono_whatsapp, textoLimpio);
+                            if (resWa.enviado) ok += 1;
+                        }
+                        await Mensaje.marcarMensajeGrupoWhatsApp(nuevoMsg.id_mensaje_grupo, ok, destinatariosWa.length).catch(() => {});
+                        nuevoMsg.enviado_whatsapp = ok > 0;
+                        nuevoMsg.whatsapp_destinatarios_ok = ok;
+                        nuevoMsg.whatsapp_destinatarios_total = destinatariosWa.length;
+                        resultadoWhatsapp = {
+                            solicitado: true,
+                            enviado: ok > 0,
+                            enviados: ok,
+                            total_con_whatsapp: destinatariosWa.length,
+                            mensaje: ok > 0
+                                ? `Enviado al grupo y por WhatsApp a ${ok} de ${destinatariosWa.length} integrante(s).`
+                                : 'Guardado en el grupo, pero no se pudo entregar por WhatsApp a ningún integrante.'
+                        };
+                    }
+                }
+            }
+
+            return res.status(201).json({
+                exito: true,
+                mensaje: 'Mensaje enviado al grupo.',
+                datos: nuevoMsg,
+                ...(resultadoWhatsapp ? { whatsapp: resultadoWhatsapp } : {})
+            });
+        } catch (error) {
+            console.error('Error en enviarMensajeGrupo:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al enviar el mensaje al grupo.' });
+        }
+    },
+
+    supervisarGrupos: async (req, res) => {
+        try {
+            if (req.usuario.nombre_rol !== 'Admin Central') {
+                return res.status(403).json({ exito: false, mensaje: 'Acceso restringido únicamente al Admin Central.' });
+            }
+            const grupos = await Mensaje.supervisarGrupos();
+            return res.status(200).json({ exito: true, datos: grupos });
+        } catch (error) {
+            console.error('Error en supervisarGrupos:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al cargar grupos en supervisión.' });
+        }
+    },
+
+    supervisarGrupoDetalle: async (req, res) => {
+        try {
+            if (req.usuario.nombre_rol !== 'Admin Central') {
+                return res.status(403).json({ exito: false, mensaje: 'Acceso restringido únicamente al Admin Central.' });
+            }
+            const idGrupo = parseInt(req.params.id_grupo, 10);
+            if (!Number.isFinite(idGrupo)) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de grupo inválido.' });
+            }
+            const [grupo, mensajes] = await Promise.all([
+                Mensaje.obtenerGrupoPorId(idGrupo),
+                Mensaje.obtenerHistorialGrupo(idGrupo)
+            ]);
+            if (!grupo) {
+                return res.status(404).json({ exito: false, mensaje: 'Grupo no encontrado.' });
+            }
+            return res.status(200).json({
+                exito: true,
+                modo_silencioso: true,
+                grupo,
+                datos: mensajes
+            });
+        } catch (error) {
+            console.error('Error en supervisarGrupoDetalle:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al supervisar grupo.' });
+        }
     }
 
 };

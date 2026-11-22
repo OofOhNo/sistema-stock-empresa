@@ -146,8 +146,6 @@ export default function Facturacion({ usuario }) {
     provincia: 'LIMA',
     distrito: 'LIMA',
     modo_integracion: 'DEMO_NUBEFACT',
-    nubefact_ruta: 'https://demo.nubefact.com/api/v1/demo-integrada-erp',
-    nubefact_token: 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO',
     apisperu_url: 'https://facturacion.apisperu.com/api/v1',
     apisperu_token: '',
     detraccion_cuenta_bn: '00-000-000000',
@@ -288,6 +286,7 @@ export default function Facturacion({ usuario }) {
 
       if (resConf.data?.configuracion) {
         setConfigSunat(resConf.data.configuracion);
+        const modoSeguro = resConf.data.configuracion.modo_integracion === 'APISPERU' ? 'APISPERU' : 'DEMO_NUBEFACT';
         setFormConfig({
           ruc_emisor: resConf.data.configuracion.ruc_emisor || '20608725394',
           razon_social: resConf.data.configuracion.razon_social || 'PROCESOS CARNICOS S.A.C.',
@@ -297,9 +296,7 @@ export default function Facturacion({ usuario }) {
           departamento: resConf.data.configuracion.departamento || 'LIMA',
           provincia: resConf.data.configuracion.provincia || 'LIMA',
           distrito: resConf.data.configuracion.distrito || 'LIMA',
-          modo_integracion: resConf.data.configuracion.modo_integracion || 'DEMO_NUBEFACT',
-          nubefact_ruta: resConf.data.configuracion.nubefact_ruta || '',
-          nubefact_token: resConf.data.configuracion.nubefact_token || '',
+          modo_integracion: modoSeguro,
           apisperu_url: resConf.data.configuracion.apisperu_url || 'https://facturacion.apisperu.com/api/v1',
           apisperu_token: resConf.data.configuracion.apisperu_token || '',
           detraccion_cuenta_bn: resConf.data.configuracion.detraccion_cuenta_bn || '00-000-000000',
@@ -1208,8 +1205,6 @@ export default function Facturacion({ usuario }) {
     try {
       const res = await api.post('/facturacion/probar-conexion', {
         modo_integracion: formConfig.modo_integracion,
-        nubefact_ruta: formConfig.nubefact_ruta,
-        nubefact_token: formConfig.nubefact_token,
         apisperu_url: formConfig.apisperu_url,
         apisperu_token: formConfig.apisperu_token,
         ruc_emisor: formConfig.ruc_emisor,
@@ -1406,11 +1401,6 @@ export default function Facturacion({ usuario }) {
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                   <span>APIsPERU Oficial (SUNAT Real) Activa</span>
-                </span>
-              ) : configSunat?.modo_integracion === 'NUBEFACT_REAL' ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>NubeFact Oficial (SUNAT Real) Activa</span>
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 shadow-2xs">
@@ -2255,7 +2245,7 @@ export default function Facturacion({ usuario }) {
                 Guías de Remisión Electrónica (Serie {configSunat?.serie_gre_remitente || 'T001'})
               </h3>
               <p className="text-xs text-slate-500">
-                Emitidas automáticamente junto a cada Factura (01) • Envío integrado a SUNAT ({configSunat?.modo_integracion === 'APISPERU' ? 'APIsPERU' : configSunat?.modo_integracion === 'NUBEFACT_REAL' ? 'NubeFact' : 'Modo Demo'})
+                Emitidas automáticamente junto a cada Factura (01) • Envío integrado a SUNAT ({configSunat?.modo_integracion === 'APISPERU' ? 'APIsPERU' : 'Modo Demo'})
               </p>
             </div>
             <BotonExportarExcel
@@ -3728,12 +3718,12 @@ export default function Facturacion({ usuario }) {
             </div>
 
             <form onSubmit={handleGuardarConfig} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
-              {/* 1. Selector de Modo: Demo vs APIsPERU vs NubeFact */}
+              {/* 1. Selector de Modo: Demo Sandbox vs APIsPERU */}
               <div>
                 <label className="block font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                   1. Modo de Facturación Electrónica *
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     type="button"
                     onClick={() => setFormConfig({ ...formConfig, modo_integracion: 'DEMO_NUBEFACT' })}
@@ -3770,30 +3760,7 @@ export default function Facturacion({ usuario }) {
                       <span className="font-bold text-xs">🚀 APIsPERU Oficial</span>
                     </div>
                     <p className="text-[11px] text-slate-500 mt-1 font-normal leading-relaxed">
-                      Recomendado: Facturas, Boletas, NC y GRE directas con SUNAT (Beta o Producción).
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFormConfig((prev) => ({
-                      ...prev,
-                      modo_integracion: 'NUBEFACT_REAL',
-                      nubefact_ruta: prev.nubefact_ruta?.includes('demo-integrada-erp') ? '' : prev.nubefact_ruta,
-                      nubefact_token: prev.nubefact_token === 'DEMO_TOKEN_NUBEFACT_2026_ACTIVO' ? '' : prev.nubefact_token
-                    }))}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                      formConfig.modo_integracion === 'NUBEFACT_REAL'
-                        ? 'border-sky-600 bg-sky-50/70 text-sky-950 font-bold ring-2 ring-sky-500/20'
-                        : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-sky-500 shrink-0"></span>
-                      <span className="font-bold text-xs">🟢 NubeFact Oficial</span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-1 font-normal leading-relaxed">
-                      Integración OSE alternativa vía API NubeFact v1.
+                      Facturas, Boletas, Notas de Crédito y GRE directas con SUNAT (Beta o Producción).
                     </p>
                   </button>
                 </div>
@@ -3830,38 +3797,6 @@ export default function Facturacion({ usuario }) {
                       value={formConfig.apisperu_token}
                       onChange={(e) => setFormConfig({ ...formConfig, apisperu_token: e.target.value })}
                       placeholder="Pega aquí el Token permanente de tu empresa generado en facturacion.apisperu.com"
-                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Parámetros de conexión Oficial NubeFact (Ruta y Token) */}
-              {formConfig.modo_integracion === 'NUBEFACT_REAL' && (
-                <div className="p-4 bg-sky-50/60 border border-sky-200 rounded-xl space-y-3">
-                  <p className="font-bold text-sky-950 text-xs flex items-center gap-1.5">
-                    <ShieldCheck size={16} className="text-sky-700" />
-                    <span>Credenciales de API NubeFact Oficial</span>
-                  </p>
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Ruta API NubeFact *</label>
-                    <input
-                      type="url"
-                      required
-                      value={formConfig.nubefact_ruta}
-                      onChange={(e) => setFormConfig({ ...formConfig, nubefact_ruta: e.target.value })}
-                      placeholder="https://api.nubefact.com/api/v1/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                      className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1">Token de Seguridad NubeFact *</label>
-                    <input
-                      type="password"
-                      required
-                      value={formConfig.nubefact_token}
-                      onChange={(e) => setFormConfig({ ...formConfig, nubefact_token: e.target.value })}
-                      placeholder="Pega aquí el Token que te da NubeFact en tu panel"
                       className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-mono text-xs"
                     />
                   </div>

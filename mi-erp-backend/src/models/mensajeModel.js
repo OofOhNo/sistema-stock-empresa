@@ -107,10 +107,20 @@ const Mensaje = {
     },
 
     contarNoLeidos: async (id_receptor) => {
-        const { rows } = await pool.query(
-            'SELECT COUNT(*)::int AS total FROM mensajes_internos WHERE id_receptor = $1 AND leido = false',
-            [id_receptor]
-        );
+        const { rows } = await pool.query(`
+            SELECT (
+                (SELECT COUNT(*)::int FROM mensajes_internos WHERE id_receptor = $1::int AND leido = false)
+                +
+                COALESCE((
+                    SELECT COUNT(*)::int
+                    FROM grupos_mensajes_chat mc
+                    JOIN grupos_mensajes_miembros gm ON gm.id_grupo = mc.id_grupo AND gm.id_usuario = $1::int
+                    LEFT JOIN grupos_mensajes_lecturas gl ON gl.id_grupo = mc.id_grupo AND gl.id_usuario = $1::int
+                    WHERE mc.id_emisor != $1::int
+                      AND mc.id_mensaje_grupo > COALESCE(gl.ultimo_mensaje_leido, 0)
+                ), 0)
+            )::int AS total;
+        `, [id_receptor]);
         return rows[0]?.total || 0;
     },
 
@@ -223,6 +233,8 @@ const Mensaje = {
                     m.id_receptor,
                     m.mensaje,
                     m.leido,
+                    COALESCE(m.enviado_whatsapp, false) AS enviado_whatsapp,
+                    m.enviado_whatsapp_en,
                     m.creado_en,
                     u_em.nombre_completo AS nombre_emisor,
                     r_em.nombre AS rol_emisor,
@@ -242,6 +254,413 @@ const Mensaje = {
         } catch (error) {
             throw error;
         }
+    },
+
+    // =========================================================================
+    // GRUPOS TIPO WHATSAPP
+    // =========================================================================
+
+    listarGruposUsuario: async (id_usuario) => {
+        const query = `
+            SELECT
+                g.id_grupo,
+                g.nombre,
+                g.descripcion,
+                g.creado_por,
+                g.creado_en,
+                gm_yo.rol_grupo AS mi_rol,
+                (
+                    SELECT COUNT(*)::int
+                    FROM grupos_mensajes_miembros gm2
+                    WHERE gm2.id_grupo = g.id_grupo
+                ) AS total_miembros,
+                (
+                    SELECT COALESCE(
+                        JSON_AGG(
+                            JSON_BUILD_OBJECT(
+                                'id_usuario', u.id_usuario,
+                                'nombre_completo', u.nombre_completo,
+                                'telefono_whatsapp', u.telefono_whatsapp,
+                                'rol_grupo', gm3.rol_grupo
+                            )
+                            ORDER BY (gm3.rol_grupo = 'ADMIN') DESC, u.nombre_completo ASC
+                        ),
+                        '[]'::json
+                    )
+                    FROM grupos_mensajes_miembros gm3
+                    JOIN usuarios u ON u.id_usuario = gm3.id_usuario
+                    WHERE gm3.id_grupo = g.id_grupo
+                ) AS miembros,
+                ult.mensaje AS ultimo_mensaje,
+                ult.creado_en AS fecha_ultimo_mensaje,
+                ult.id_emisor AS ultimo_emisor,
+                ult.nombre_emisor AS ultimo_emisor_nombre,
+                COALESCE((
+                    SELECT COUNT(*)::int
+                    FROM grupos_mensajes_chat mc
+                    LEFT JOIN grupos_mensajes_lecturas gl
+                      ON gl.id_grupo = g.id_grupo AND gl.id_usuario = $1::int
+                    WHERE mc.id_grupo = g.id_grupo
+                      AND mc.id_emisor != $1::int
+                      AND mc.id_mensaje_grupo > COALESCE(gl.ultimo_mensaje_leido, 0)
+                ), 0) AS no_leidos
+            FROM grupos_mensajes g
+            JOIN grupos_mensajes_miembros gm_yo
+              ON gm_yo.id_grupo = g.id_grupo AND gm_yo.id_usuario = $1::int
+            LEFT JOIN LATERAL (
+                SELECT mc.mensaje, mc.creado_en, mc.id_emisor, u.nombre_completo AS nombre_emisor
+                FROM grupos_mensajes_chat mc
+                JOIN usuarios u ON u.id_usuario = mc.id_emisor
+                WHERE mc.id_grupo = g.id_grupo
+                ORDER BY mc.creado_en DESC, mc.id_mensaje_grupo DESC
+                LIMIT 1
+            ) ult ON TRUE
+            ORDER BY COALESCE(ult.creado_en, g.creado_en) DESC, g.id_grupo DESC;
+        `;
+        const { rows } = await pool.query(query, [id_usuario]);
+        return rows;
+    },
+
+    obtenerGrupoPorId: async (id_grupo) => {
+        const resGrupo = await pool.query(`
+            SELECT g.*, u_cre.nombre_completo AS creador_nombre
+            FROM grupos_mensajes g
+            LEFT JOIN usuarios u_cre ON u_cre.id_usuario = g.creado_por
+            WHERE g.id_grupo = $1::int;
+        `, [id_grupo]);
+        if (resGrupo.rows.length === 0) return null;
+
+        const resMiembros = await pool.query(`
+            SELECT
+                u.id_usuario,
+                u.nombre_completo,
+                u.email,
+                r.nombre AS nombre_rol,
+                ub.nombre AS nombre_ubicacion,
+                u.telefono_whatsapp,
+                gm.rol_grupo,
+                gm.unido_en
+            FROM grupos_mensajes_miembros gm
+            JOIN usuarios u ON u.id_usuario = gm.id_usuario
+            LEFT JOIN roles r ON u.rol_id = r.id_rol
+            LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+            WHERE gm.id_grupo = $1::int
+            ORDER BY (gm.rol_grupo = 'ADMIN') DESC, u.nombre_completo ASC;
+        `, [id_grupo]);
+
+        return {
+            ...resGrupo.rows[0],
+            miembros: resMiembros.rows,
+            total_miembros: resMiembros.rows.length
+        };
+    },
+
+    esMiembroGrupo: async (id_grupo, id_usuario) => {
+        const { rows } = await pool.query(
+            'SELECT rol_grupo FROM grupos_mensajes_miembros WHERE id_grupo = $1::int AND id_usuario = $2::int LIMIT 1;',
+            [id_grupo, id_usuario]
+        );
+        return rows[0] || null;
+    },
+
+    crearGrupo: async ({ nombre, descripcion = null, id_creador, miembros_ids = [] }) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const resG = await client.query(
+                `INSERT INTO grupos_mensajes (nombre, descripcion, creado_por)
+                 VALUES ($1::varchar, $2::text, $3::int)
+                 RETURNING *;`,
+                [nombre, descripcion, id_creador]
+            );
+            const nuevoGrupo = resG.rows[0];
+
+            const idsUnicos = [...new Set([Number(id_creador), ...miembros_ids.map(Number)])]
+                .filter((id) => Number.isFinite(id) && id > 0);
+
+            const { rows: validUsers } = await client.query(
+                'SELECT id_usuario FROM usuarios WHERE id_usuario = ANY($1::int[]) AND COALESCE(activo, true) = true;',
+                [idsUnicos]
+            );
+
+            for (const u of validUsers) {
+                const rolGrupo = Number(u.id_usuario) === Number(id_creador) ? 'ADMIN' : 'MIEMBRO';
+                await client.query(
+                    `INSERT INTO grupos_mensajes_miembros (id_grupo, id_usuario, rol_grupo)
+                     VALUES ($1::int, $2::int, $3::varchar)
+                     ON CONFLICT (id_grupo, id_usuario) DO NOTHING;`,
+                    [nuevoGrupo.id_grupo, u.id_usuario, rolGrupo]
+                );
+                await client.query(
+                    `INSERT INTO grupos_mensajes_lecturas (id_grupo, id_usuario, ultimo_mensaje_leido)
+                     VALUES ($1::int, $2::int, 0)
+                     ON CONFLICT (id_grupo, id_usuario) DO NOTHING;`,
+                    [nuevoGrupo.id_grupo, u.id_usuario]
+                );
+            }
+
+            await client.query('COMMIT');
+            return await Mensaje.obtenerGrupoPorId(nuevoGrupo.id_grupo);
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    actualizarGrupo: async (id_grupo, { nombre, descripcion }) => {
+        await pool.query(
+            `UPDATE grupos_mensajes
+             SET nombre = COALESCE($1::varchar, nombre),
+                 descripcion = $2::text,
+                 actualizado_en = CURRENT_TIMESTAMP
+             WHERE id_grupo = $3::int;`,
+            [nombre, descripcion, id_grupo]
+        );
+        return await Mensaje.obtenerGrupoPorId(id_grupo);
+    },
+
+    agregarMiembrosGrupo: async (id_grupo, miembros_ids = []) => {
+        const idsUnicos = [...new Set(miembros_ids.map(Number))].filter((id) => Number.isFinite(id) && id > 0);
+        if (idsUnicos.length === 0) return await Mensaje.obtenerGrupoPorId(id_grupo);
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const { rows: validUsers } = await client.query(
+                'SELECT id_usuario FROM usuarios WHERE id_usuario = ANY($1::int[]) AND COALESCE(activo, true) = true;',
+                [idsUnicos]
+            );
+            const { rows: maxMsg } = await client.query(
+                'SELECT COALESCE(MAX(id_mensaje_grupo), 0)::int AS max_id FROM grupos_mensajes_chat WHERE id_grupo = $1::int;',
+                [id_grupo]
+            );
+            const maxMsgId = maxMsg[0]?.max_id || 0;
+
+            for (const u of validUsers) {
+                await client.query(
+                    `INSERT INTO grupos_mensajes_miembros (id_grupo, id_usuario, rol_grupo)
+                     VALUES ($1::int, $2::int, 'MIEMBRO')
+                     ON CONFLICT (id_grupo, id_usuario) DO NOTHING;`,
+                    [id_grupo, u.id_usuario]
+                );
+                await client.query(
+                    `INSERT INTO grupos_mensajes_lecturas (id_grupo, id_usuario, ultimo_mensaje_leido)
+                     VALUES ($1::int, $2::int, $3::int)
+                     ON CONFLICT (id_grupo, id_usuario) DO NOTHING;`,
+                    [id_grupo, u.id_usuario, maxMsgId]
+                );
+            }
+            await client.query('COMMIT');
+            return await Mensaje.obtenerGrupoPorId(id_grupo);
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    quitarMiembroGrupo: async (id_grupo, id_usuario_objetivo) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(
+                'DELETE FROM grupos_mensajes_miembros WHERE id_grupo = $1::int AND id_usuario = $2::int;',
+                [id_grupo, id_usuario_objetivo]
+            );
+            await client.query(
+                'DELETE FROM grupos_mensajes_lecturas WHERE id_grupo = $1::int AND id_usuario = $2::int;',
+                [id_grupo, id_usuario_objetivo]
+            );
+
+            const { rows: restantes } = await client.query(
+                `SELECT id_usuario, rol_grupo
+                 FROM grupos_mensajes_miembros
+                 WHERE id_grupo = $1::int
+                 ORDER BY (rol_grupo = 'ADMIN') DESC, unido_en ASC;`,
+                [id_grupo]
+            );
+
+            if (restantes.length === 0) {
+                await client.query('DELETE FROM grupos_mensajes WHERE id_grupo = $1::int;', [id_grupo]);
+                await client.query('COMMIT');
+                return { eliminado_grupo: true, grupo: null };
+            }
+
+            const tieneAdmin = restantes.some((r) => r.rol_grupo === 'ADMIN');
+            if (!tieneAdmin) {
+                await client.query(
+                    `UPDATE grupos_mensajes_miembros
+                     SET rol_grupo = 'ADMIN'
+                     WHERE id_grupo = $1::int AND id_usuario = $2::int;`,
+                    [id_grupo, restantes[0].id_usuario]
+                );
+            }
+
+            await client.query('COMMIT');
+            const grupo = await Mensaje.obtenerGrupoPorId(id_grupo);
+            return { eliminado_grupo: false, grupo };
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    cambiarRolMiembroGrupo: async (id_grupo, id_usuario_objetivo, rol_grupo) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (rol_grupo !== 'ADMIN') {
+                const { rows: admins } = await client.query(
+                    `SELECT id_usuario FROM grupos_mensajes_miembros
+                     WHERE id_grupo = $1::int AND rol_grupo = 'ADMIN';`,
+                    [id_grupo]
+                );
+                if (admins.length <= 1 && Number(admins[0]?.id_usuario) === Number(id_usuario_objetivo)) {
+                    throw new Error('Debe haber al menos un administrador en el grupo.');
+                }
+            }
+            await client.query(
+                `UPDATE grupos_mensajes_miembros
+                 SET rol_grupo = $1::varchar
+                 WHERE id_grupo = $2::int AND id_usuario = $3::int;`,
+                [rol_grupo, id_grupo, id_usuario_objetivo]
+            );
+            await client.query('COMMIT');
+            return await Mensaje.obtenerGrupoPorId(id_grupo);
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    eliminarGrupo: async (id_grupo) => {
+        await pool.query('DELETE FROM grupos_mensajes WHERE id_grupo = $1::int;', [id_grupo]);
+        return true;
+    },
+
+    obtenerHistorialGrupo: async (id_grupo) => {
+        const { rows } = await pool.query(`
+            SELECT
+                mc.id_mensaje_grupo,
+                mc.id_grupo,
+                mc.id_emisor,
+                mc.mensaje,
+                COALESCE(mc.enviado_whatsapp, false) AS enviado_whatsapp,
+                COALESCE(mc.whatsapp_destinatarios_ok, 0) AS whatsapp_destinatarios_ok,
+                COALESCE(mc.whatsapp_destinatarios_total, 0) AS whatsapp_destinatarios_total,
+                mc.creado_en,
+                u.nombre_completo AS nombre_emisor,
+                r.nombre AS rol_emisor
+            FROM grupos_mensajes_chat mc
+            JOIN usuarios u ON mc.id_emisor = u.id_usuario
+            LEFT JOIN roles r ON u.rol_id = r.id_rol
+            WHERE mc.id_grupo = $1::int
+            ORDER BY mc.creado_en ASC, mc.id_mensaje_grupo ASC;
+        `, [id_grupo]);
+        return rows;
+    },
+
+    marcarGrupoLeido: async (id_grupo, id_usuario) => {
+        await pool.query(`
+            INSERT INTO grupos_mensajes_lecturas (id_grupo, id_usuario, ultimo_mensaje_leido, leido_en)
+            VALUES (
+                $1::int,
+                $2::int,
+                COALESCE((SELECT MAX(id_mensaje_grupo) FROM grupos_mensajes_chat WHERE id_grupo = $1::int), 0),
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (id_grupo, id_usuario)
+            DO UPDATE SET
+                ultimo_mensaje_leido = GREATEST(grupos_mensajes_lecturas.ultimo_mensaje_leido, EXCLUDED.ultimo_mensaje_leido),
+                leido_en = CURRENT_TIMESTAMP;
+        `, [id_grupo, id_usuario]);
+    },
+
+    enviarMensajeGrupo: async ({ id_grupo, id_emisor, mensaje }) => {
+        const resIns = await pool.query(`
+            INSERT INTO grupos_mensajes_chat (id_grupo, id_emisor, mensaje)
+            VALUES ($1::int, $2::int, $3::text)
+            RETURNING id_mensaje_grupo;
+        `, [id_grupo, id_emisor, mensaje]);
+        const nuevoId = resIns.rows[0].id_mensaje_grupo;
+
+        await pool.query(
+            'UPDATE grupos_mensajes SET actualizado_en = CURRENT_TIMESTAMP WHERE id_grupo = $1::int;',
+            [id_grupo]
+        ).catch(() => {});
+
+        await pool.query(`
+            INSERT INTO grupos_mensajes_lecturas (id_grupo, id_usuario, ultimo_mensaje_leido, leido_en)
+            VALUES ($1::int, $2::int, $3::int, CURRENT_TIMESTAMP)
+            ON CONFLICT (id_grupo, id_usuario)
+            DO UPDATE SET
+                ultimo_mensaje_leido = GREATEST(grupos_mensajes_lecturas.ultimo_mensaje_leido, EXCLUDED.ultimo_mensaje_leido),
+                leido_en = CURRENT_TIMESTAMP;
+        `, [id_grupo, id_emisor, nuevoId]).catch(() => {});
+
+        const { rows } = await pool.query(`
+            SELECT
+                mc.id_mensaje_grupo,
+                mc.id_grupo,
+                mc.id_emisor,
+                mc.mensaje,
+                COALESCE(mc.enviado_whatsapp, false) AS enviado_whatsapp,
+                COALESCE(mc.whatsapp_destinatarios_ok, 0) AS whatsapp_destinatarios_ok,
+                COALESCE(mc.whatsapp_destinatarios_total, 0) AS whatsapp_destinatarios_total,
+                mc.creado_en,
+                u.nombre_completo AS nombre_emisor,
+                r.nombre AS rol_emisor
+            FROM grupos_mensajes_chat mc
+            JOIN usuarios u ON mc.id_emisor = u.id_usuario
+            LEFT JOIN roles r ON u.rol_id = r.id_rol
+            WHERE mc.id_mensaje_grupo = $1::int;
+        `, [nuevoId]);
+        return rows[0];
+    },
+
+    marcarMensajeGrupoWhatsApp: async (id_mensaje_grupo, okCount, totalCount) => {
+        await pool.query(`
+            UPDATE grupos_mensajes_chat
+            SET enviado_whatsapp = ($2::int > 0),
+                whatsapp_destinatarios_ok = $2::int,
+                whatsapp_destinatarios_total = $3::int
+            WHERE id_mensaje_grupo = $1::int;
+        `, [id_mensaje_grupo, okCount, totalCount]);
+    },
+
+    supervisarGrupos: async () => {
+        const { rows } = await pool.query(`
+            SELECT
+                g.id_grupo,
+                g.nombre,
+                g.descripcion,
+                g.creado_en,
+                u_cre.nombre_completo AS creador_nombre,
+                (SELECT COUNT(*)::int FROM grupos_mensajes_miembros gm WHERE gm.id_grupo = g.id_grupo) AS total_miembros,
+                (SELECT COUNT(*)::int FROM grupos_mensajes_chat mc WHERE mc.id_grupo = g.id_grupo) AS total_mensajes,
+                COALESCE(ult.creado_en, g.creado_en) AS ultima_fecha,
+                ult.mensaje AS ultimo_mensaje,
+                ult.nombre_emisor AS ultimo_emisor_nombre
+            FROM grupos_mensajes g
+            LEFT JOIN usuarios u_cre ON u_cre.id_usuario = g.creado_por
+            LEFT JOIN LATERAL (
+                SELECT mc.mensaje, mc.creado_en, u.nombre_completo AS nombre_emisor
+                FROM grupos_mensajes_chat mc
+                JOIN usuarios u ON u.id_usuario = mc.id_emisor
+                WHERE mc.id_grupo = g.id_grupo
+                ORDER BY mc.creado_en DESC, mc.id_mensaje_grupo DESC
+                LIMIT 1
+            ) ult ON TRUE
+            ORDER BY COALESCE(ult.creado_en, g.creado_en) DESC, g.id_grupo DESC;
+        `);
+        return rows;
     }
 
 };

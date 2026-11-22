@@ -195,7 +195,7 @@ export default function Ubicaciones({ usuario, onPermisosActualizados }) {
   };
 
   const confirmarEliminar = async () => {
-    if (!ubicacionAEliminar) return;
+    if (!ubicacionAEliminar || eliminando) return;
     setEliminando(true);
     try {
       await api.delete(`/ubicaciones/${ubicacionAEliminar.id_ubicacion}`);

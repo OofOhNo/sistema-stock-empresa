@@ -55,18 +55,30 @@ const UbicacionModel = {
     },
 
     delete: async (id, db = pool) => {
-        // Verificar si tiene dependencias críticas
+        // Verificar si tiene dependencias críticas no anulables
         const check = await db.query(`
             SELECT 
                 (SELECT COUNT(*) FROM usuarios WHERE id_ubicacion = $1) AS usuarios,
                 (SELECT COUNT(*) FROM pedidos WHERE id_ubicacion = $1) AS pedidos,
-                (SELECT COUNT(*) FROM inventario WHERE id_ubicacion = $1 AND cantidad_fisica > 0) AS inventario
+                (SELECT COUNT(*) FROM inventario WHERE id_ubicacion = $1 AND cantidad_fisica > 0) AS inventario,
+                (SELECT COUNT(*) FROM movimientos_kardex WHERE id_ubicacion = $1) AS kardex
         `, [id]);
 
         const counts = check.rows[0];
-        if (Number(counts.usuarios) > 0 || Number(counts.pedidos) > 0 || Number(counts.inventario) > 0) {
-            throw new Error(`No se puede eliminar la ubicación: tiene ${counts.usuarios} usuarios, ${counts.pedidos} pedidos o stock físico activo asociado.`);
+        if (
+            Number(counts.usuarios) > 0 ||
+            Number(counts.pedidos) > 0 ||
+            Number(counts.inventario) > 0 ||
+            Number(counts.kardex) > 0
+        ) {
+            throw new Error(
+                `No se puede eliminar la ubicación: tiene ${counts.usuarios} usuario(s), ${counts.pedidos} pedido(s), ${counts.kardex} movimiento(s) de kardex o stock físico activo asociado.`
+            );
         }
+
+        // Desvincular notas_pedido / comprobantes históricos por seguridad si la FK aún existiera sin SET NULL
+        await db.query('UPDATE notas_pedido SET id_ubicacion = NULL WHERE id_ubicacion = $1', [id]).catch(() => {});
+        await db.query('UPDATE comprobantes SET id_ubicacion = NULL WHERE id_ubicacion = $1', [id]).catch(() => {});
 
         const query = 'DELETE FROM ubicaciones WHERE id_ubicacion = $1 RETURNING *;';
         const { rows } = await db.query(query, [id]);
