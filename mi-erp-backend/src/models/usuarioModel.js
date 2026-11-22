@@ -60,21 +60,38 @@ const Usuario = {
         }
     },
 
-    actualizarConfiguracion: async (id_usuario, puede_ver_celulares, area, seccion_facturacion = null, telefono_whatsapp = undefined) => {
+    actualizarConfiguracion: async (
+        id_usuario,
+        puede_ver_celulares = null,
+        area = null,
+        seccion_facturacion = null,
+        telefono_whatsapp = undefined,
+        id_ubicacion = null
+    ) => {
         try {
             const actualizaTel = telefono_whatsapp !== undefined;
             const telValor = actualizaTel ? (String(telefono_whatsapp || '').trim() || null) : null;
             const query = `
-                UPDATE usuarios 
+                UPDATE usuarios u
                 SET 
-                    puede_ver_celulares = COALESCE($1, puede_ver_celulares),
-                    area = COALESCE($2, area),
-                    seccion_facturacion = COALESCE($3, seccion_facturacion),
-                    telefono_whatsapp = CASE WHEN $4::boolean THEN $5::varchar ELSE telefono_whatsapp END
-                WHERE id_usuario = $6::int
-                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion, telefono_whatsapp;
+                    puede_ver_celulares = COALESCE($1, u.puede_ver_celulares),
+                    area = COALESCE($2, u.area),
+                    seccion_facturacion = COALESCE($3, u.seccion_facturacion),
+                    telefono_whatsapp = CASE WHEN $4::boolean THEN $5::varchar ELSE u.telefono_whatsapp END,
+                    id_ubicacion = COALESCE($6::int, u.id_ubicacion)
+                WHERE u.id_usuario = $7::int
+                RETURNING u.id_usuario, u.nombre_completo, u.email, u.rol_id, u.id_ubicacion, u.area, u.puede_ver_celulares, u.seccion_facturacion, u.telefono_whatsapp,
+                          (SELECT nombre FROM ubicaciones WHERE id_ubicacion = u.id_ubicacion) AS nombre_ubicacion;
             `;
-            const res = await pool.query(query, [puede_ver_celulares, area, seccion_facturacion, actualizaTel, telValor, id_usuario]);
+            const res = await pool.query(query, [
+                puede_ver_celulares === undefined ? null : puede_ver_celulares,
+                area === undefined ? null : area,
+                seccion_facturacion === undefined ? null : seccion_facturacion,
+                actualizaTel,
+                telValor,
+                id_ubicacion ? Number(id_ubicacion) : null,
+                id_usuario
+            ]);
             return res.rows[0];
         } catch (error) {
             throw error;

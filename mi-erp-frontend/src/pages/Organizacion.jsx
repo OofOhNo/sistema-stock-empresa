@@ -8,17 +8,21 @@ import toast from 'react-hot-toast';
 import { exportarTablaExcel } from '../utils/excelExport';
 import BotonExportarExcel from '../components/BotonExportarExcel';
 
-export default function Organizacion({ usuario }) {
+export default function Organizacion({ usuario, onPermisosActualizados }) {
   const [sedes, setSedes] = useState([]);
   const [todosUsuarios, setTodosUsuarios] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [modalEditar, setModalEditar] = useState(null);
   const [guardando, setGuardando] = useState(false);
+  const [moviendoSedeId, setMoviendoSedeId] = useState(null);
 
+  const esAdminCentral = usuario?.rol === 'Admin Central';
   const puedeEditarOrganizacion =
-    usuario?.rol === 'Admin Central' ||
+    esAdminCentral ||
     usuario?.permisos?.organizacion?.puede_editar === true ||
     usuario?.permisos?.ubicaciones?.puede_editar === true;
+  const puedeMoverPersonal =
+    esAdminCentral || usuario?.permisos?.usuarios?.puede_editar === true;
 
   const [form, setForm] = useState({
     id_gerente: '',
@@ -82,6 +86,25 @@ export default function Organizacion({ usuario }) {
       toast.error(err.response?.data?.mensaje || 'No se pudieron guardar los cambios.');
     } finally {
       setGuardando(false);
+    }
+  };
+
+  const moverEmpleadoASede = async (idUsuario, idUbicacionDestino) => {
+    if (!idUsuario || !idUbicacionDestino) return;
+    setMoviendoSedeId(idUbicacionDestino);
+    try {
+      const res = await api.put(`/usuarios/${idUsuario}/ubicacion`, {
+        id_ubicacion: Number(idUbicacionDestino)
+      });
+      toast.success(res.data?.mensaje || 'Empleado trasladado de sede con éxito.');
+      await cargarDatos();
+      if (Number(idUsuario) === Number(usuario?.id_usuario)) {
+        onPermisosActualizados?.();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo mover al empleado de sede.');
+    } finally {
+      setMoviendoSedeId(null);
     }
   };
 
@@ -248,6 +271,32 @@ export default function Organizacion({ usuario }) {
                   ) : (
                     <p className="text-xs text-slate-400 italic">No hay empleados asignados a esta sede.</p>
                   )}
+
+                  {puedeMoverPersonal && (() => {
+                    const disponiblesParaMover = todosUsuarios.filter(
+                      (u) => Number(u.id_ubicacion) !== Number(sede.id_ubicacion) && (esAdminCentral || u.nombre_rol !== 'Admin Central')
+                    );
+                    if (disponiblesParaMover.length === 0) return null;
+                    return (
+                      <div className="mt-3">
+                        <select
+                          value=""
+                          disabled={moviendoSedeId === sede.id_ubicacion}
+                          onChange={(e) => {
+                            if (e.target.value) moverEmpleadoASede(Number(e.target.value), sede.id_ubicacion);
+                          }}
+                          className="w-full sm:w-auto text-xs border border-indigo-200 bg-indigo-50/60 hover:bg-indigo-50 text-indigo-800 font-semibold rounded-xl px-3 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 cursor-pointer disabled:opacity-50"
+                        >
+                          <option value="">+ Mover empleado a {sede.nombre_sede}...</option>
+                          {disponiblesParaMover.map((u) => (
+                            <option key={u.id_usuario} value={u.id_usuario}>
+                              {u.nombre_completo} ({u.nombre_rol})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 

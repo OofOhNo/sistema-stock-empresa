@@ -176,9 +176,11 @@ app.use((err, req, res, next) => {
 
 //configurar el puerto y encender el servidor
 const { iniciarCronBoletasAutomaticas } = require('./src/utils/boletaAutoService');
+const { iniciarWhatsAppSiTieneSesion } = require('./src/utils/whatsappService');
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   iniciarCronBoletasAutomaticas();
+  iniciarWhatsAppSiTieneSesion();
 });

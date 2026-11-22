@@ -20,6 +20,7 @@ router.put('/roles/:id_rol/duracion-sesion', verificarToken, requierePermiso('us
 router.put('/roles/:id_rol/jerarquia', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarNivelJerarquiaRol);
 
 router.put('/:id_usuario/rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarRol);
+router.put('/:id_usuario/ubicacion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarUbicacion);
 router.put('/:id_usuario/configuracion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarConfiguracion);
 router.delete('/:id_usuario', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.eliminarUsuario);
 

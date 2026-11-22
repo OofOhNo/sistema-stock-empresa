@@ -20,6 +20,11 @@ const TRADUCCION_ACCION = {
   CREAR_USUARIO: 'Creó un nuevo empleado',
   ELIMINAR_USUARIO: 'Eliminó / desactivó un empleado',
   CAMBIAR_ROL_USUARIO: 'Cambió el rol de un empleado',
+  MOVER_SEDE_USUARIO: 'Movió a un empleado de sede',
+  ACTUALIZAR_CONFIGURACION_USUARIO: 'Actualizó configuración de un empleado',
+  CREAR_DIVISION: 'Creó un área / división',
+  ACTUALIZAR_DIVISION: 'Actualizó un área / división',
+  ELIMINAR_DIVISION: 'Eliminó un área / división',
   RESTABLECER_PASSWORD_USUARIO: 'Puso una nueva contraseña a un empleado',
   CAMBIAR_PROPIA_PASSWORD: 'Cambió su propia contraseña',
   SOLICITAR_RECUPERACION_PASSWORD: 'Pidió ayuda por contraseña olvidada',
@@ -57,6 +62,7 @@ const TRADUCCION_ENTIDAD = {
   roles_permisos: 'Permisos',
   productos: 'Productos',
   ubicaciones: 'Ubicaciones',
+  divisiones: 'Áreas / Divisiones',
   clientes: 'Clientes'
 };
 
@@ -347,6 +353,25 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       onPermisosActualizados?.();
     } catch (err) {
       toast.error(err.response?.data?.mensaje || 'No se pudo cambiar el rol.');
+    } finally {
+      setActualizando(null);
+    }
+  };
+
+  const moverUsuarioDeSede = async (user, nuevoIdUbicacion) => {
+    if (!nuevoIdUbicacion || Number(nuevoIdUbicacion) === Number(user.id_ubicacion)) return;
+    setActualizando(user.id_usuario);
+    try {
+      const res = await api.put(`/usuarios/${user.id_usuario}/ubicacion`, {
+        id_ubicacion: Number(nuevoIdUbicacion)
+      });
+      toast.success(res.data?.mensaje || 'Sede actualizada correctamente.');
+      await cargarDatos(true);
+      if (user.id_usuario === usuarioLogueado?.id_usuario) {
+        onPermisosActualizados?.();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo mover al empleado de sede.');
     } finally {
       setActualizando(null);
     }
@@ -1048,7 +1073,19 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                                   )}
                                 </td>
                                 <td className="p-4 text-slate-600 font-medium">
-                                  {user.nombre_ubicacion || 'Sede Central'}
+                                  <select
+                                    disabled={!puedeEditarUsuarios || actualizando === user.id_usuario || noPuedoModificarEsteAdmin || ubicaciones.length === 0}
+                                    value={user.id_ubicacion || ''}
+                                    onChange={(e) => moverUsuarioDeSede(user, Number(e.target.value))}
+                                    className="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 focus:outline-hidden focus:border-indigo-500 disabled:opacity-50 disabled:bg-slate-100 cursor-pointer font-medium max-w-[180px]"
+                                    title="Mover empleado a otra sede"
+                                  >
+                                    {ubicaciones.map(ub => (
+                                      <option key={ub.id_ubicacion} value={ub.id_ubicacion}>
+                                        {ub.nombre}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </td>
 
                                 {/* Rol */}

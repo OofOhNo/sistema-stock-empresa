@@ -104,6 +104,7 @@ const usuarioController = {
             );
 
             await client.query('COMMIT');
+            invalidarCacheSesionUsuario(id_usuario);
             
             res.status(200).json({ 
                 exito: true, 
@@ -222,25 +223,110 @@ const usuarioController = {
 
     actualizarConfiguracion: async (req, res) => {
         const { id_usuario } = req.params;
-        const { puede_ver_celulares, area, seccion_facturacion, telefono_whatsapp } = req.body;
+        const { puede_ver_celulares, area, seccion_facturacion, telefono_whatsapp, id_ubicacion } = req.body;
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante?.nombre_rol === 'Admin Central';
 
         try {
+            const resPrev = await pool.query(`
+                SELECT u.id_usuario, u.nombre_completo, u.id_ubicacion, u.area, u.seccion_facturacion,
+                       r.nombre AS nombre_rol, ub.nombre AS nombre_ubicacion
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
+                WHERE u.id_usuario = $1::int AND COALESCE(u.activo, true) = true
+            `, [id_usuario]);
+
+            if (resPrev.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Empleado no encontrado.' });
+            }
+
+            const usuarioAnterior = resPrev.rows[0];
+            if (!esAdminCentral && usuarioAnterior.nombre_rol === 'Admin Central') {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede modificar la configuración de otro Admin Central.'
+                });
+            }
+
+            let idUbicacionFinal = null;
+            let nombreNuevaSede = null;
+            if (id_ubicacion !== undefined && id_ubicacion !== null && id_ubicacion !== '') {
+                idUbicacionFinal = parseInt(id_ubicacion, 10);
+                if (!idUbicacionFinal || Number.isNaN(idUbicacionFinal)) {
+                    return res.status(400).json({ exito: false, mensaje: 'La sede seleccionada no es válida.' });
+                }
+                const ubRes = await pool.query(
+                    'SELECT id_ubicacion, nombre FROM ubicaciones WHERE id_ubicacion = $1::int AND COALESCE(activo, true) = true',
+                    [idUbicacionFinal]
+                );
+                if (ubRes.rows.length === 0) {
+                    return res.status(400).json({ exito: false, mensaje: 'La sede o ubicación seleccionada no existe o está inactiva.' });
+                }
+                nombreNuevaSede = ubRes.rows[0].nombre;
+            }
+
+            let areaFinal = null;
+            if (area !== undefined && area !== null && area !== '') {
+                const areaNorm = String(area).trim().toUpperCase();
+                if (!['ADMINISTRACION', 'PRODUCCION'].includes(areaNorm)) {
+                    return res.status(400).json({ exito: false, mensaje: 'Área de trabajo inválida.' });
+                }
+                areaFinal = areaNorm;
+            }
+
             const actualizado = await Usuario.actualizarConfiguracion(
                 id_usuario,
                 puede_ver_celulares,
-                area,
+                areaFinal,
                 seccion_facturacion,
-                telefono_whatsapp
+                telefono_whatsapp,
+                idUbicacionFinal
             );
+
+            invalidarCacheSesionUsuario(id_usuario);
+
+            const cambioDeSede = idUbicacionFinal && Number(idUbicacionFinal) !== Number(usuarioAnterior.id_ubicacion);
+            if (cambioDeSede) {
+                await registrarAuditoria(
+                    pool,
+                    solicitante?.id_usuario || null,
+                    'MOVER_SEDE_USUARIO',
+                    'usuarios',
+                    Number(id_usuario),
+                    { id_ubicacion: usuarioAnterior.id_ubicacion, sede: usuarioAnterior.nombre_ubicacion },
+                    { id_ubicacion: idUbicacionFinal, sede: nombreNuevaSede, empleado: usuarioAnterior.nombre_completo }
+                );
+            } else {
+                await registrarAuditoria(
+                    pool,
+                    solicitante?.id_usuario || null,
+                    'ACTUALIZAR_CONFIGURACION_USUARIO',
+                    'usuarios',
+                    Number(id_usuario),
+                    { area: usuarioAnterior.area, seccion_facturacion: usuarioAnterior.seccion_facturacion },
+                    { area: actualizado.area, seccion_facturacion: actualizado.seccion_facturacion }
+                );
+            }
+
             res.status(200).json({
                 exito: true,
-                mensaje: 'Configuración de empleado actualizada correctamente.',
+                mensaje: cambioDeSede
+                    ? `"${usuarioAnterior.nombre_completo}" fue movido a "${nombreNuevaSede}".`
+                    : 'Configuración de empleado actualizada correctamente.',
                 usuario: actualizado
             });
         } catch (error) {
             console.error('Error al actualizar configuración de usuario:', error);
             res.status(500).json({ exito: false, mensaje: 'Error interno al actualizar usuario', error: error.message });
         }
+    },
+
+    cambiarUbicacion: async (req, res) => {
+        if (req.body?.id_ubicacion === undefined || req.body?.id_ubicacion === null || req.body?.id_ubicacion === '') {
+            return res.status(400).json({ exito: false, mensaje: 'Debes seleccionar una sede válida.' });
+        }
+        return usuarioController.actualizarConfiguracion(req, res);
     },
 
     listarRoles: async (req, res) => {
@@ -389,6 +475,7 @@ const usuarioController = {
 
         try {
             const rolActualizado = await Usuario.actualizarPermisoOtrasUbicaciones(id_rol, puede_ver_otras_ubicaciones);
+            invalidarCacheSesionTodos();
             await registrarAuditoria(
                 pool,
                 adminSolicitante.id_usuario,

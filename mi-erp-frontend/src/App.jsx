@@ -153,11 +153,11 @@ export default function App() {
       case 'errores':
         return <Errores usuario={usuario} />;
       case 'organizacion':
-        return <Organizacion usuario={usuario} />;
+        return <Organizacion usuario={usuario} onPermisosActualizados={sincronizarPerfil} />;
       case 'usuarios':
         return <Usuarios usuarioLogueado={usuario} onPermisosActualizados={sincronizarPerfil} />;
       case 'ubicaciones':
-        return <Ubicaciones usuario={usuario} />;
+        return <Ubicaciones usuario={usuario} onPermisosActualizados={sincronizarPerfil} />;
       case 'mensajes':
         return <Mensajes usuario={usuario} />;
       default:

@@ -26,10 +26,19 @@ async function obtenerEstadoSesionUsuario(idUsuario) {
         SELECT COALESCE(u.activo, true) AS activo,
                u.password_actualizada_en,
                COALESCE(u.token_version, 1)::int AS token_version,
+               u.rol_id,
+               r.nombre AS nombre_rol,
+               COALESCE(r.puede_ver_otras_ubicaciones, false) AS puede_ver_otras_ubicaciones,
+               u.id_ubicacion,
+               ub.nombre AS nombre_ubicacion,
+               u.area,
+               COALESCE(u.seccion_facturacion, 'AMBAS') AS seccion_facturacion,
+               COALESCE(u.puede_ver_celulares, false) AS puede_ver_celulares,
                r.duracion_sesion_minutos,
                COALESCE(r.nivel_jerarquia, CASE WHEN r.nombre = 'Admin Central' THEN 1 ELSE 4 END) AS nivel_jerarquia
         FROM usuarios u
         LEFT JOIN roles r ON u.rol_id = r.id_rol
+        LEFT JOIN ubicaciones ub ON u.id_ubicacion = ub.id_ubicacion
         WHERE u.id_usuario = $1::int
     `, [clave]);
 
@@ -114,12 +123,25 @@ const verificarToken = async (req, res, next) => {
         }
     }
 
-    const nivelJerarquia = decodificado?.nombre_rol === 'Admin Central'
+    const nombreRolActual = estadoUsuario?.nombre_rol || decodificado?.nombre_rol;
+    const nivelJerarquia = nombreRolActual === 'Admin Central'
         ? 1
         : Number(estadoUsuario?.nivel_jerarquia || decodificado?.nivel_jerarquia || 4);
 
     req.usuario = {
         ...decodificado,
+        rol_id: estadoUsuario?.rol_id ?? decodificado?.rol_id,
+        nombre_rol: nombreRolActual,
+        id_ubicacion: estadoUsuario?.id_ubicacion ?? decodificado?.id_ubicacion,
+        nombre_ubicacion: estadoUsuario?.nombre_ubicacion || decodificado?.nombre_ubicacion || 'Sede Central',
+        area: estadoUsuario?.area || decodificado?.area || 'ADMINISTRACION',
+        seccion_facturacion: estadoUsuario?.seccion_facturacion || decodificado?.seccion_facturacion || 'AMBAS',
+        puede_ver_celulares: estadoUsuario
+            ? (estadoUsuario.puede_ver_celulares === true || nombreRolActual === 'Admin Central')
+            : decodificado?.puede_ver_celulares,
+        puede_ver_otras_ubicaciones: estadoUsuario
+            ? (estadoUsuario.puede_ver_otras_ubicaciones === true || nombreRolActual === 'Admin Central')
+            : decodificado?.puede_ver_otras_ubicaciones,
         nivel_jerarquia: nivelJerarquia
     };
     return next();

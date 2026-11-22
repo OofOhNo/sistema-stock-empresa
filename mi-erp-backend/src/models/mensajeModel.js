@@ -42,6 +42,8 @@ const Mensaje = {
                     m.id_receptor,
                     m.mensaje,
                     m.leido,
+                    COALESCE(m.enviado_whatsapp, false) AS enviado_whatsapp,
+                    m.enviado_whatsapp_en,
                     m.creado_en,
                     u_em.nombre_completo AS nombre_emisor,
                     r_em.nombre AS rol_emisor,
@@ -61,6 +63,34 @@ const Mensaje = {
         } catch (error) {
             throw error;
         }
+    },
+
+    obtenerPorId: async (id_mensaje) => {
+        const query = `
+            SELECT
+                m.*,
+                COALESCE(m.enviado_whatsapp, false) AS enviado_whatsapp,
+                u_em.nombre_completo AS nombre_emisor,
+                u_em.telefono_whatsapp AS telefono_emisor,
+                u_rec.nombre_completo AS nombre_receptor,
+                u_rec.telefono_whatsapp AS telefono_receptor
+            FROM mensajes_internos m
+            JOIN usuarios u_em ON m.id_emisor = u_em.id_usuario
+            JOIN usuarios u_rec ON m.id_receptor = u_rec.id_usuario
+            WHERE m.id_mensaje = $1::int;
+        `;
+        const { rows } = await pool.query(query, [id_mensaje]);
+        return rows[0] || null;
+    },
+
+    marcarEnviadoWhatsApp: async (id_mensaje) => {
+        await pool.query(
+            `UPDATE mensajes_internos
+             SET enviado_whatsapp = true,
+                 enviado_whatsapp_en = CURRENT_TIMESTAMP
+             WHERE id_mensaje = $1::int;`,
+            [id_mensaje]
+        );
     },
 
     marcarLeidos: async (id_receptor, id_emisor) => {
