@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
+const { descontarStockPorItems, parsearDecreceStock } = require('../utils/stockFacturacion');
 const {
     CATALOGOS_SUNAT,
     numeroALetrasSoles,
@@ -135,23 +136,13 @@ function resolverItemsComprobantePedido(detalleRows = [], bodyItems = []) {
  * Registra salida en kardex y descuenta stock físico/reservado usando el detalle real del pedido.
  */
 async function descontarStockPedido(client, { detalleRows, idUbicacion, idUsuario, motivo }) {
-    for (const item of detalleRows) {
-        const cantidadReal = Number(item.cantidad) || 0;
-        if (cantidadReal <= 0 || !item.id_producto) continue;
-
-        await client.query(`
-            INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-            VALUES ($1, $2, $3, 'SALIDA', $4, $5);
-        `, [item.id_producto, idUbicacion, idUsuario, cantidadReal, motivo]);
-
-        await client.query(`
-            UPDATE inventario 
-            SET cantidad_fisica = cantidad_fisica - $1,
-                cantidad_reservada = GREATEST(0, cantidad_reservada - $1),
-                ultima_actualizacion = CURRENT_TIMESTAMP
-            WHERE id_producto = $2 AND id_ubicacion = $3;
-        `, [cantidadReal, item.id_producto, idUbicacion]);
-    }
+    return descontarStockPorItems(client, {
+        items: detalleRows,
+        idUbicacion,
+        idUsuario,
+        motivo,
+        liberarReserva: true
+    });
 }
 
 /**
@@ -664,8 +655,10 @@ const facturaController = {
                 fecha_vencimiento_cuota,
                 medio_pago_sunat = '008',
                 aplica_detraccion = false,
-                codigo_detraccion = '014'
+                codigo_detraccion = '014',
+                decrece_stock = false
             } = req.body;
+            const decreceStock = parsearDecreceStock(decrece_stock);
 
             if (!id_pedido || !tipo_comprobante) {
                 await client.query('ROLLBACK');
@@ -718,6 +711,7 @@ const facturaController = {
                     mensaje: 'No se puede facturar un pedido que fue cancelado.'
                 });
             }
+            const descontarAhora = decreceStock && !pedido.stock_descontado;
 
             const queryDetalle = `
                 SELECT 
@@ -824,7 +818,7 @@ const facturaController = {
                             estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
                             enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, cdr_zip_base64,
                             respuesta_ose_json, modo_emision, peso_total, es_pago_dividido, monto_dividido,
-                            porcentaje_dividido, items_json
+                            porcentaje_dividido, stock_descontado, items_json
                         )
                         VALUES (
                             $1, $2, $3, $4, $5, $6,
@@ -832,7 +826,7 @@ const facturaController = {
                             $11, $12, $13, $14, $15,
                             $16, $17, $18, $19, $20,
                             $21, $22, $23, $24, $25, $26,
-                            $27, $28, $29, TRUE, $30, $31, $32
+                            $27, $28, $29, TRUE, $30, $31, $32, $33
                         ) RETURNING *;
                     `, [
                         id_pedido,
@@ -866,6 +860,7 @@ const facturaController = {
                         req.body.peso_total || pedido.peso_total || null,
                         montoPago,
                         porcPago,
+                        descontarAhora,
                         JSON.stringify(itemDiv)
                     ]);
                     const compDivCreado = resC.rows[0];
@@ -886,7 +881,7 @@ const facturaController = {
                     comprobantesEmitidos.push(compDivCreado);
                 }
 
-                if (!pedido.stock_descontado) {
+                if (descontarAhora) {
                     const detalleDescuento = resDetalle.rows.length > 0 ? resDetalle.rows : items;
                     await descontarStockPedido(client, {
                         detalleRows: detalleDescuento,
@@ -896,7 +891,10 @@ const facturaController = {
                     });
                 }
 
-                await client.query("UPDATE pedidos SET estado_pedido = 'FACTURADO', stock_descontado = true WHERE id_pedido = $1", [id_pedido]);
+                await client.query(
+                    "UPDATE pedidos SET estado_pedido = 'FACTURADO', stock_descontado = (COALESCE(stock_descontado, false) OR $2) WHERE id_pedido = $1",
+                    [id_pedido, descontarAhora]
+                );
                 await client.query('COMMIT');
 
                 return res.status(201).json({
@@ -1032,7 +1030,7 @@ const facturaController = {
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
                     xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision,
-                    peso_total, cantidad_cuotas, items_json, estado_pago
+                    peso_total, cantidad_cuotas, stock_descontado, items_json, estado_pago
                 )
                 VALUES (
                     $1, $2, $3, $4, $5, $6,
@@ -1045,7 +1043,7 @@ const facturaController = {
                     $25, $26,
                     $27, $28, $29,
                     $30, $31, $32, $33, $34,
-                    $35, $36, $37, $38
+                    $35, $36, $37, $38, $39
                 )
                 RETURNING *;
             `;
@@ -1086,6 +1084,7 @@ const facturaController = {
                 respuestaOse.modo_emision,
                 pesoTotalFinal,
                 cantidadCuotasFinal,
+                descontarAhora,
                 JSON.stringify(items),
                 formaPagoFinal === 'CREDITO' ? 'PENDIENTE' : 'PAGADO'
             ]);
@@ -1108,8 +1107,8 @@ const facturaController = {
                 Object.assign(compCreado, updEnlaces.rows[0]);
             }
 
-            // Descontar stock físico SOLO si no había sido descontado antes (ej. al despachar)
-            if (!pedido.stock_descontado) {
+            // Descontar stock físico SOLO si el usuario eligió "Sí" en ¿Decrece stock? y no había sido descontado antes
+            if (descontarAhora) {
                 const detalleDescuento = resDetalle.rows.length > 0 ? resDetalle.rows : items;
                 await descontarStockPedido(client, {
                     detalleRows: detalleDescuento,
@@ -1124,9 +1123,9 @@ const facturaController = {
             await client.query(`
                 UPDATE pedidos 
                 SET estado_pedido = $1,
-                    stock_descontado = true
-                WHERE id_pedido = $2;
-            `, [nuevoEstadoPedido, id_pedido]);
+                    stock_descontado = (COALESCE(stock_descontado, false) OR $2)
+                WHERE id_pedido = $3;
+            `, [nuevoEstadoPedido, descontarAhora, id_pedido]);
 
             let guiaRemisionCreada = null;
             if (tipo_comprobante === '01') {
@@ -1409,6 +1408,7 @@ const facturaController = {
                 WHERE id_comprobante = $1
             `, [id_comprobante]);
 
+            let seDevolvioStock = false;
             // Devolver el stock físico descontado al inventario y dejar registro de entrada en movimientos
             if (compOriginal.id_pedido) {
                 const resPedido = await client.query(
@@ -1442,6 +1442,7 @@ const facturaController = {
                                 `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula ${compOriginal.serie}-${compOriginal.correlativo})`
                             ]);
                         }
+                        seDevolvioStock = true;
                     }
 
                     await client.query(`
@@ -1451,7 +1452,12 @@ const facturaController = {
                         WHERE id_pedido = $1
                     `, [ped.id_pedido]);
                 }
-            } else if (compOriginal.origen_facturacion === 'MANUAL' && Array.isArray(compOriginal.items_json) && motivoCat09.devuelve_stock) {
+            } else if (
+                compOriginal.origen_facturacion === 'MANUAL'
+                && compOriginal.stock_descontado === true
+                && Array.isArray(compOriginal.items_json)
+                && motivoCat09.devuelve_stock
+            ) {
                 const idUbicDev = compOriginal.id_ubicacion || req.usuario?.id_ubicacion || 1;
                 for (const item of compOriginal.items_json) {
                     const cantDev = Number(item.cantidad) || 0;
@@ -1473,6 +1479,7 @@ const facturaController = {
                             cantDev,
                             `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula venta manual ${compOriginal.serie}-${compOriginal.correlativo})`
                         ]);
+                        seDevolvioStock = true;
                     }
                 }
             }
@@ -1484,7 +1491,9 @@ const facturaController = {
 
             res.status(201).json({
                 exito: true,
-                mensaje: `¡Comprobante anulado con Nota de Crédito ${serieNC}-${String(correlativoNC).padStart(8, '0')} y stock devuelto al inventario!`,
+                mensaje: seDevolvioStock
+                    ? `¡Comprobante anulado con Nota de Crédito ${serieNC}-${String(correlativoNC).padStart(8, '0')} y stock devuelto al inventario!`
+                    : `¡Comprobante anulado con Nota de Crédito ${serieNC}-${String(correlativoNC).padStart(8, '0')}!`,
                 nota_credito: ncCreada
             });
         } catch (error) {
@@ -1834,8 +1843,10 @@ const facturaController = {
                 aplica_detraccion = false,
                 codigo_detraccion = '014',
                 peso_total,
-                items
+                items,
+                decrece_stock = false
             } = req.body;
+            const decreceStock = parsearDecreceStock(decrece_stock);
 
             if (!tipo_comprobante) {
                 await client.query('ROLLBACK');
@@ -1906,43 +1917,13 @@ const facturaController = {
 
             const idUbicacionUsuario = req.body?.id_ubicacion || req.usuario?.id_ubicacion || 1;
 
-            // Procesar ítems y descontar stock automáticamente (Req 3)
+            // Procesar ítems y descontar stock SOLO si decreceStock === true
             const itemsValidados = [];
             for (const item of items) {
                 const cant = Number(item.cantidad) || 1;
                 const precio = Number(item.precio_unitario) || 0;
                 const peso = Number(item.peso) || 0;
                 const subtotal = +(cant * precio).toFixed(2);
-
-                if (item.id_producto) {
-                    const resInv = await client.query(
-                        'SELECT cantidad_fisica, cantidad_reservada FROM inventario WHERE id_producto = $1 AND id_ubicacion = $2 FOR UPDATE',
-                        [item.id_producto, idUbicacionUsuario]
-                    );
-                    if (resInv.rows.length === 0) {
-                        await client.query(
-                            'INSERT INTO inventario (id_producto, id_ubicacion, cantidad_fisica, cantidad_reservada) VALUES ($1, $2, 0, 0)',
-                            [item.id_producto, idUbicacionUsuario]
-                        );
-                    }
-                    await client.query(`
-                        UPDATE inventario 
-                        SET cantidad_fisica = cantidad_fisica - $1,
-                            ultima_actualizacion = CURRENT_TIMESTAMP
-                        WHERE id_producto = $2 AND id_ubicacion = $3;
-                    `, [cant, item.id_producto, idUbicacionUsuario]);
-
-                    await client.query(`
-                        INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                        VALUES ($1, $2, $3, 'SALIDA', $4, $5);
-                    `, [
-                        item.id_producto,
-                        idUbicacionUsuario,
-                        req.usuario?.id_usuario || null,
-                        cant,
-                        `Venta Manual Directa (${item.descripcion || 'Producto'})`
-                    ]);
-                }
 
                 itemsValidados.push({
                     id_producto: item.id_producto || null,
@@ -1955,6 +1936,16 @@ const facturaController = {
                     precio_unitario: precio,
                     peso: peso,
                     subtotal: subtotal
+                });
+            }
+
+            if (decreceStock) {
+                await descontarStockPorItems(client, {
+                    items: itemsValidados,
+                    idUbicacion: idUbicacionUsuario,
+                    idUsuario: req.usuario?.id_usuario || null,
+                    motivo: (it) => `Venta Manual Directa (${it.descripcion || 'Producto'})`,
+                    liberarReserva: false
                 });
             }
 
@@ -2017,7 +2008,7 @@ const facturaController = {
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
                     xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision,
-                    peso_total, cantidad_cuotas, origen_facturacion, items_json, estado_pago
+                    peso_total, cantidad_cuotas, origen_facturacion, stock_descontado, items_json, estado_pago
                 )
                 VALUES (
                     NULL, $1, $2, $3, $4, $5,
@@ -2029,7 +2020,7 @@ const facturaController = {
                     $19, $20,
                     $21, $22, $23,
                     $24, $25, $26, $27, $28,
-                    $29, $30, 'MANUAL', $31, $32
+                    $29, $30, 'MANUAL', $31, $32, $33
                 )
                 RETURNING *;
             `;
@@ -2065,6 +2056,7 @@ const facturaController = {
                 respuestaOse.modo_emision,
                 pesoFinal,
                 cuotasFinal,
+                decreceStock,
                 JSON.stringify(itemsValidados),
                 formaPagoFinal === 'CREDITO' ? 'PENDIENTE' : 'PAGADO'
             ]);
@@ -2112,14 +2104,15 @@ const facturaController = {
 
             await client.query('COMMIT');
             const greObservada = guiaRemisionCreada?.estado_sunat === 'OBSERVADO';
+            const textoStock = decreceStock ? ' y stock descontado' : '';
             res.status(201).json({
                 exito: true,
                 gre_observada: greObservada,
                 mensaje: guiaRemisionCreada
                     ? (greObservada
                         ? `Factura ${serie}-${String(correlativo).padStart(8, '0')} emitida, pero la GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} quedó OBSERVADA: ${guiaRemisionCreada.mensaje_cdr}`
-                        : `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas y stock descontado con éxito!`)
-                    : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido y stock descontado con éxito!`,
+                        : `¡Factura ${serie}-${String(correlativo).padStart(8, '0')} y GRE ${guiaRemisionCreada.serie}-${String(guiaRemisionCreada.correlativo).padStart(8, '0')} emitidas${textoStock} con éxito!`)
+                    : `¡Comprobante ${serie}-${String(correlativo).padStart(8, '0')} emitido${textoStock} con éxito!`,
                 comprobante: compCreado,
                 guia_remision: guiaRemisionCreada
             });
@@ -2165,8 +2158,11 @@ const facturaController = {
                 cliente_documento,
                 id_pedido,
                 observaciones,
-                items
+                items,
+                decrece_stock = false,
+                id_ubicacion: idUbicacionBody = null
             } = req.body;
+            const decreceStock = parsearDecreceStock(decrece_stock);
 
             if (!cliente_nombre || !cliente_nombre.trim()) {
                 await client.query('ROLLBACK');
@@ -2177,7 +2173,7 @@ const facturaController = {
                 return res.status(400).json({ exito: false, mensaje: 'Debes agregar al menos un producto a la nota de pedido.' });
             }
 
-            const idUbicacion = req.usuario?.id_ubicacion || 1;
+            const idUbicacion = idUbicacionBody || req.usuario?.id_ubicacion || 1;
             const idUsuario = req.usuario?.id_usuario || null;
 
             const resCorr = await client.query(`
@@ -2221,36 +2217,25 @@ const facturaController = {
                 };
             });
 
-            // Descontar inventario de la sede si no proviene de un pedido con stock reservado (Req 3)
-            for (const it of itemsValidados) {
-                if (it.id_producto && !id_pedido) {
-                    await client.query(`
-                        UPDATE inventario 
-                        SET cantidad_fisica = cantidad_fisica - $1,
-                            ultima_actualizacion = CURRENT_TIMESTAMP
-                        WHERE id_producto = $2 AND id_ubicacion = $3;
-                    `, [it.cantidad, it.id_producto, idUbicacion]);
-
-                    await client.query(`
-                        INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                        VALUES ($1, $2, $3, 'SALIDA', $4, $5);
-                    `, [
-                        it.id_producto,
-                        idUbicacion,
-                        idUsuario,
-                        it.cantidad,
-                        `Emisión de ${numeroNota}`
-                    ]);
-                }
+            const descontarAhoraNota = decreceStock && !id_pedido;
+            // Descontar inventario de la sede SOLO si el usuario marcó "Sí" y no proviene de un pedido con stock reservado
+            if (descontarAhoraNota) {
+                await descontarStockPorItems(client, {
+                    items: itemsValidados,
+                    idUbicacion,
+                    idUsuario,
+                    motivo: `Emisión de ${numeroNota}`,
+                    liberarReserva: false
+                });
             }
 
             const queryNota = `
                 INSERT INTO notas_pedido (
                     correlativo, numero_nota, id_pedido, id_cliente,
                     cliente_nombre, cliente_documento, fecha_emision, fecha_texto,
-                    id_ubicacion, id_usuario, peso_total, monto_total, observaciones
+                    id_ubicacion, id_usuario, peso_total, monto_total, stock_descontado, observaciones
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE, $7, $8, $9, $10, $11, $12)
+                VALUES ($1, $2, $3, $4, $5, $6, CURRENT_DATE, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING *;
             `;
             const resNota = await client.query(queryNota, [
@@ -2265,6 +2250,7 @@ const facturaController = {
                 idUsuario,
                 pesoTotal.toFixed(2),
                 montoTotal.toFixed(2),
+                descontarAhoraNota,
                 observaciones || null
             ]);
             const notaCreada = resNota.rows[0];
@@ -2382,7 +2368,8 @@ const facturaController = {
                 hora_fin,
                 solo_horario_laboral,
                 id_ubicacion,
-                auto_imprimir_navegador
+                auto_imprimir_navegador,
+                decrece_stock
             } = req.body;
 
             const resActual = await pool.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1');
@@ -2423,7 +2410,8 @@ const facturaController = {
                     solo_horario_laboral = $10::boolean,
                     id_ubicacion = COALESCE($11::int, id_ubicacion),
                     auto_imprimir_navegador = COALESCE($12::boolean, auto_imprimir_navegador),
-                    proxima_ejecucion = $13::timestamptz,
+                    decrece_stock = COALESCE($13::boolean, decrece_stock),
+                    proxima_ejecucion = $14::timestamptz,
                     actualizado_en = CURRENT_TIMESTAMP
                 WHERE id_config = 1
                 RETURNING *;
@@ -2440,6 +2428,7 @@ const facturaController = {
                 finalSoloHorario,
                 id_ubicacion ? parseInt(id_ubicacion, 10) : null,
                 auto_imprimir_navegador !== undefined ? Boolean(auto_imprimir_navegador) : null,
+                decrece_stock !== undefined ? parsearDecreceStock(decrece_stock) : null,
                 proximaEjecucion
             ]);
 
@@ -2708,9 +2697,14 @@ const facturaController = {
                 if (cRes.rows.length > 0) cliente = cRes.rows[0];
             }
 
+            const idComprobanteGre = req.body.id_comprobante ? parseInt(req.body.id_comprobante, 10) : null;
+            const idPedidoGre = req.body.id_pedido ? parseInt(req.body.id_pedido, 10) : null;
+            const decreceStock = parsearDecreceStock(req.body?.decrece_stock);
+            const descontarAhoraGre = decreceStock && !idComprobanteGre && !idPedidoGre;
+
             const greCreada = await crearGreInterna(client, {
-                id_comprobante: req.body.id_comprobante ? parseInt(req.body.id_comprobante, 10) : null,
-                id_pedido: req.body.id_pedido ? parseInt(req.body.id_pedido, 10) : null,
+                id_comprobante: idComprobanteGre,
+                id_pedido: idPedidoGre,
                 cliente,
                 items: req.body.bienes || [],
                 peso_bruto_total: req.body.peso_bruto_total,
@@ -2719,10 +2713,26 @@ const facturaController = {
                 idUsuario: req.usuario?.id_usuario || null
             });
 
+            if (descontarAhoraGre) {
+                const idUbicacionGre = req.body.id_ubicacion ? parseInt(req.body.id_ubicacion, 10) : (req.usuario?.id_ubicacion || 1);
+                await descontarStockPorItems(client, {
+                    items: req.body.bienes || [],
+                    idUbicacion: idUbicacionGre,
+                    idUsuario: req.usuario?.id_usuario || null,
+                    motivo: `GRE Independiente ${greCreada.serie}-${greCreada.correlativo}`,
+                    liberarReserva: false
+                });
+                const updGreStock = await client.query(
+                    'UPDATE guias_remision SET stock_descontado = TRUE WHERE id_gre = $1 RETURNING stock_descontado',
+                    [greCreada.id_gre]
+                );
+                greCreada.stock_descontado = updGreStock.rows[0]?.stock_descontado ?? true;
+            }
+
             await client.query('COMMIT');
             res.status(201).json({
                 exito: true,
-                mensaje: `GRE ${greCreada.serie}-${String(greCreada.correlativo).padStart(8, '0')} emitida con éxito.`,
+                mensaje: `GRE ${greCreada.serie}-${String(greCreada.correlativo).padStart(8, '0')} emitida${descontarAhoraGre ? ' y stock descontado' : ''} con éxito.`,
                 guia: greCreada
             });
         } catch (error) {

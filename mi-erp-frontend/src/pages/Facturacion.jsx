@@ -10,6 +10,7 @@ import {
   Truck, Bot, AlertTriangle, Wifi, WifiOff
 } from 'lucide-react';
 import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
+import SelectorDecreceStock from '../components/facturacion/SelectorDecreceStock';
 import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
 import ModalGreSuelta from '../components/facturacion/ModalGreSuelta';
@@ -94,6 +95,7 @@ export default function Facturacion({ usuario }) {
   const [aplicaDetraccion, setAplicaDetraccion] = useState(false);
   const [pesoTotalFactura, setPesoTotalFactura] = useState('');
   const [itemsEditables, setItemsEditables] = useState([]);
+  const [pedidoDecreceStock, setPedidoDecreceStock] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
   // Pago dividido entre múltiples clientes (Req 2 - Opción A)
@@ -111,12 +113,15 @@ export default function Facturacion({ usuario }) {
   const [manualMedioPago, setManualMedioPago] = useState('008');
   const [manualAplicaDetraccion, setManualAplicaDetraccion] = useState(false);
   const [manualPesoTotal, setManualPesoTotal] = useState('');
+  const [manualDecreceStock, setManualDecreceStock] = useState(false);
   const [manualItems, setManualItems] = useState([
     { id_producto: '', descripcion: '', cantidad: 1, peso: '', precio_unitario: 0, subtotal: 0 }
   ]);
 
   // Modal Crear Nota de Pedido (Req 13, 16)
   const [modalNotaPedido, setModalNotaPedido] = useState(false);
+  const [notaDecreceStock, setNotaDecreceStock] = useState(false);
+  const [notaUbicacionId, setNotaUbicacionId] = useState('');
   const [formNota, setFormNota] = useState({
     id_cliente: '',
     cliente_nombre: '',
@@ -173,6 +178,7 @@ export default function Facturacion({ usuario }) {
   const [carritoPos, setCarritoPos] = useState([]);
   const [metodoPagoPos, setMetodoPagoPos] = useState('EFECTIVO'); // 'EFECTIVO' | 'YAPE' | 'TARJETA'
   const [montoEntregadoPos, setMontoEntregadoPos] = useState('');
+  const [manualPosDecreceStock, setManualPosDecreceStock] = useState(false);
   const [cobrandoPos, setCobrandoPos] = useState(false);
 
   // Guías de Remisión Electrónica (GRE)
@@ -233,9 +239,10 @@ export default function Facturacion({ usuario }) {
       };
     }));
 
-    // Resetear pagos divididos
+    // Resetear pagos divididos y descuento de stock (por default en No)
     setEsPagoDividido(false);
     setPagosDivididos([]);
+    setPedidoDecreceStock(false);
     setGreFormPedido(crearEstadoGreInicial(catGre || catalogosGreRef.current, ped.direccion_cliente || ''));
   }, []);
 
@@ -535,6 +542,7 @@ export default function Facturacion({ usuario }) {
     setCantidadCuotas(1);
     setMedioPagoSunat('008');
     setAplicaDetraccion(false);
+    setPedidoDecreceStock(false);
     setModalEmitir(true);
   };
 
@@ -552,6 +560,7 @@ export default function Facturacion({ usuario }) {
         aplica_detraccion: tipoComprobante === '01' ? aplicaDetraccion : false,
         codigo_detraccion: '014',
         peso_total: pesoTotalFactura ? parseFloat(pesoTotalFactura) : null,
+        decrece_stock: Boolean(pedidoDecreceStock && !pedidoSeleccionado?.stock_descontado),
         items: itemsEditables,
         es_pago_dividido: esPagoDividido,
         pagos: esPagoDividido ? pagosDivididos : null,
@@ -618,6 +627,7 @@ export default function Facturacion({ usuario }) {
     setManualMedioPago('008');
     setManualAplicaDetraccion(false);
     setManualPesoTotal('');
+    setManualDecreceStock(false);
     setManualItems([
       { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || '', cantidad: 1, peso: '', precio_unitario: productos[0]?.precio_venta || 0, subtotal: productos[0]?.precio_venta || 0 }
     ]);
@@ -679,6 +689,7 @@ export default function Facturacion({ usuario }) {
         aplica_detraccion: manualTipoComp === '01' ? manualAplicaDetraccion : false,
         codigo_detraccion: '014',
         peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
+        decrece_stock: Boolean(manualDecreceStock),
         items: manualItems,
         gre: manualTipoComp === '01' ? greFormManual : null
       });
@@ -686,7 +697,7 @@ export default function Facturacion({ usuario }) {
       if (res.data?.gre_observada) {
         toast.error(res.data.mensaje, { duration: 6000 });
       } else {
-        toast.success(res.data.mensaje || '¡Factura manual emitida y stock descontado!');
+        toast.success(res.data.mensaje || '¡Comprobante manual emitido con éxito!');
       }
       setModalManual(false);
       await cargarDatos();
@@ -724,6 +735,8 @@ export default function Facturacion({ usuario }) {
 
   // Handlers para Notas de Pedido (Req 13, 16)
   const abrirModalNotaPedido = () => {
+    setNotaDecreceStock(false);
+    setNotaUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || 1);
     setFormNota({
       id_cliente: clientes[0]?.id_cliente || '',
       cliente_nombre: clientes[0]?.razon_social_o_nombre || clientes[0]?.nombre_comercial || '',
@@ -797,6 +810,8 @@ export default function Facturacion({ usuario }) {
         cliente_nombre: formNota.cliente_nombre.trim(),
         cliente_documento: formNota.cliente_documento.trim(),
         observaciones: formNota.observaciones,
+        decrece_stock: Boolean(notaDecreceStock),
+        id_ubicacion: notaDecreceStock && notaUbicacionId ? Number(notaUbicacionId) : null,
         items: formNota.items.map(it => ({
           id_producto: it.id_producto || null,
           descripcion: it.descripcion,
@@ -1126,6 +1141,7 @@ export default function Facturacion({ usuario }) {
         tipo_comprobante: '03',
         forma_pago: 'CONTADO',
         medio_pago_sunat: medioPagoMap[metodoPagoPos] || '008',
+        decrece_stock: Boolean(manualPosDecreceStock),
         items: carritoPos.map(it => ({
           id_producto: it.id_producto,
           descripcion: it.descripcion,
@@ -1139,9 +1155,10 @@ export default function Facturacion({ usuario }) {
         }))
       });
 
-      toast.success(res.data.mensaje || '¡Venta de mostrador registrada y stock descontado!');
+      toast.success(res.data.mensaje || '¡Venta de mostrador registrada con éxito!');
       setCarritoPos([]);
       setMontoEntregadoPos('');
+      setManualPosDecreceStock(false);
       await cargarDatos();
 
       if (res.data?.comprobante) {
@@ -2127,6 +2144,12 @@ export default function Facturacion({ usuario }) {
                   </div>
                 </div>
 
+                <SelectorDecreceStock
+                  value={manualPosDecreceStock}
+                  onChange={setManualPosDecreceStock}
+                  compact
+                />
+
                 {/* Botón de cobro rápido */}
                 <button
                   type="button"
@@ -3010,6 +3033,17 @@ export default function Facturacion({ usuario }) {
                 </div>
               </div>
 
+              <SelectorDecreceStock
+                value={Boolean(!pedidoSeleccionado.stock_descontado && pedidoDecreceStock)}
+                onChange={setPedidoDecreceStock}
+                disabled={Boolean(pedidoSeleccionado.stock_descontado)}
+                notaExtra={
+                  pedidoSeleccionado.stock_descontado
+                    ? 'El stock de este pedido ya fue descontado previamente (al despachar).'
+                    : ''
+                }
+              />
+
               {tipoComprobante === '01' && (
                 <div className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
                   estadoSunat?.estado === 'CAIDO'
@@ -3069,7 +3103,7 @@ export default function Facturacion({ usuario }) {
               <div className="flex items-center space-x-2.5">
                 <Plus size={18} className="text-emerald-400" />
                 <h3 className="text-base font-bold !text-white" style={{ color: '#ffffff' }}>
-                  Facturación Manual Directa (Descuenta Inventario)
+                  Facturación Manual Directa
                 </h3>
               </div>
               <button
@@ -3115,7 +3149,7 @@ export default function Facturacion({ usuario }) {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Sede / Almacén (Descuenta Stock) *
+                    Sede / Almacén *
                   </label>
                   <select
                     value={manualUbicacionId}
@@ -3283,6 +3317,11 @@ export default function Facturacion({ usuario }) {
                   </span>
                 </div>
               </div>
+
+              <SelectorDecreceStock
+                value={manualDecreceStock}
+                onChange={setManualDecreceStock}
+              />
 
               {manualTipoComp === '01' && (
                 <div className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
@@ -3468,6 +3507,32 @@ export default function Facturacion({ usuario }) {
                 <span className="text-2xl font-black text-amber-400 font-mono">
                   S/ {totalNotaCalculado.toFixed(2)}
                 </span>
+              </div>
+
+              <div className="space-y-2.5">
+                <SelectorDecreceStock
+                  value={notaDecreceStock}
+                  onChange={setNotaDecreceStock}
+                  compact
+                />
+                {notaDecreceStock && ubicaciones.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 bg-emerald-50/50 border border-emerald-200 rounded-xl p-2.5">
+                    <label className="text-[11px] font-bold text-emerald-950 shrink-0">
+                      Sede donde descontar stock:
+                    </label>
+                    <select
+                      value={notaUbicacionId}
+                      onChange={(e) => setNotaUbicacionId(e.target.value)}
+                      className="p-1.5 bg-white border border-emerald-300 rounded-lg text-xs font-bold text-slate-800"
+                    >
+                      {ubicaciones.map((u) => (
+                        <option key={u.id_ubicacion} value={u.id_ubicacion}>
+                          {u.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
@@ -4151,6 +4216,7 @@ export default function Facturacion({ usuario }) {
           onClose={() => setModalGreSuelta(false)}
           clientes={clientes}
           productos={productos}
+          ubicaciones={ubicaciones}
           comprobantes={comprobantes}
           configSunat={configSunat || {}}
           catalogosGre={catalogosGre}

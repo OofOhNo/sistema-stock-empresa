@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { X, Truck, Plus, Trash2, Loader2 } from 'lucide-react';
 import api from '../../api';
 import SeccionGreFactura from './SeccionGreFactura';
+import SelectorDecreceStock from './SelectorDecreceStock';
 import { crearEstadoGreInicial } from './greUtils';
 
 const MOTIVOS_GRE = [
@@ -17,6 +18,7 @@ export default function ModalGreSuelta({
   onClose,
   clientes = [],
   productos = [],
+  ubicaciones = [],
   comprobantes = [],
   configSunat = {},
   catalogosGre = {},
@@ -31,6 +33,8 @@ export default function ModalGreSuelta({
   const [destRazon, setDestRazon] = useState('');
   const [idComprobante, setIdComprobante] = useState('');
   const [observaciones, setObservaciones] = useState('');
+  const [decreceStock, setDecreceStock] = useState(false);
+  const [idUbicacionStock, setIdUbicacionStock] = useState(() => (ubicaciones[0] ? String(ubicaciones[0].id_ubicacion) : ''));
   const [items, setItems] = useState([
     { id_producto: '', codigo_bien: '', descripcion: '', codigo_unidad_sunat: 'KGM', unidad_medida: 'Kilogramo', cantidad: 1 }
   ]);
@@ -124,6 +128,8 @@ export default function ModalGreSuelta({
         motivo_traslado: motivoTraslado,
         id_cliente: idCliente ? Number(idCliente) : null,
         id_comprobante: idComprobante ? Number(idComprobante) : null,
+        decrece_stock: !idComprobante && Boolean(decreceStock),
+        id_ubicacion: !idComprobante && decreceStock && idUbicacionStock ? Number(idUbicacionStock) : null,
         destinatario_tipo_doc: destTipoDoc,
         destinatario_num_doc: destNumDoc.trim(),
         destinatario_razon_social: destRazon.trim(),
@@ -400,6 +406,38 @@ export default function ModalGreSuelta({
             titulo="Datos de Traslado, Partida, Llegada, Vehículo y Conductor"
             subtitulo="Verifica el Ubigeo (6 dígitos) de partida y llegada antes de enviar a SUNAT"
           />
+
+          <div className="space-y-2.5">
+            <SelectorDecreceStock
+              value={!idComprobante && decreceStock}
+              onChange={setDecreceStock}
+              disabled={Boolean(idComprobante)}
+              notaExtra={
+                idComprobante
+                  ? 'Al vincular a un comprobante existente no vuelve a descontar stock.'
+                  : ''
+              }
+              compact
+            />
+            {!idComprobante && decreceStock && ubicaciones.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 bg-emerald-50/50 border border-emerald-200 rounded-xl p-2.5">
+                <label className="text-[11px] font-bold text-emerald-950 shrink-0">
+                  Sede donde descontar stock:
+                </label>
+                <select
+                  value={idUbicacionStock}
+                  onChange={(e) => setIdUbicacionStock(e.target.value)}
+                  className="p-1.5 bg-white border border-emerald-300 rounded-lg text-xs font-bold text-slate-800"
+                >
+                  {ubicaciones.map((u) => (
+                    <option key={u.id_ubicacion} value={u.id_ubicacion}>
+                      {u.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
             <button

@@ -20,6 +20,7 @@ import api from '../../api';
 import { imprimirBoletaEnIframe } from '../../utils/boletaTicketHtml';
 import { exportarTablaExcel } from '../../utils/excelExport';
 import BotonExportarExcel from '../BotonExportarExcel';
+import SelectorDecreceStock from './SelectorDecreceStock';
 
 const CONFIG_INICIAL = {
   activo: false,
@@ -33,7 +34,8 @@ const CONFIG_INICIAL = {
   hora_fin: '20:00',
   solo_horario_laboral: false,
   id_ubicacion: '',
-  auto_imprimir_navegador: true
+  auto_imprimir_navegador: true,
+  decrece_stock: false
 };
 
 const RANGOS_RAPIDOS = [
@@ -57,7 +59,8 @@ function mapConfigAForm(cfg) {
     hora_fin: cfg?.hora_fin || '20:00',
     solo_horario_laboral: Boolean(cfg?.solo_horario_laboral),
     id_ubicacion: cfg?.id_ubicacion ? String(cfg.id_ubicacion) : '',
-    auto_imprimir_navegador: cfg?.auto_imprimir_navegador ?? true
+    auto_imprimir_navegador: cfg?.auto_imprimir_navegador ?? true,
+    decrece_stock: Boolean(cfg?.decrece_stock)
   };
 }
 
@@ -136,7 +139,8 @@ function validarFormulario(form, ubicaciones) {
       hora_fin: form.hora_fin || '20:00',
       solo_horario_laboral: Boolean(form.solo_horario_laboral),
       id_ubicacion: idUbicacion,
-      auto_imprimir_navegador: Boolean(form.auto_imprimir_navegador)
+      auto_imprimir_navegador: Boolean(form.auto_imprimir_navegador),
+      decrece_stock: Boolean(form.decrece_stock)
     }
   };
 }
@@ -847,6 +851,13 @@ export default function PanelBoletasAutomaticas({
               </span>
             </div>
           </label>
+
+          <SelectorDecreceStock
+            value={Boolean(form.decrece_stock)}
+            onChange={(val) => actualizarCampo('decrece_stock', val)}
+            disabled={!puedeEditar}
+            compact
+          />
         </div>
 
         {puedeEditar && (

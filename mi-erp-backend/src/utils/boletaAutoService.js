@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { registrarAuditoria } = require('./auditoria');
+const { descontarStockPorItems, parsearDecreceStock } = require('./stockFacturacion');
 const {
     numeroALetrasSoles,
     calcularDesgloseTributario,
@@ -248,6 +249,16 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         }
 
         const pesoTotal = +itemsElegidos.reduce((acc, it) => acc + Number(it.peso || it.cantidad || 0), 0).toFixed(2);
+        const decreceStockAuto = parsearDecreceStock(cfg.decrece_stock);
+        if (decreceStockAuto) {
+            await descontarStockPorItems(client, {
+                items: itemsElegidos,
+                idUbicacion,
+                idUsuario,
+                motivo: `Boleta Automática: ${serie}-${correlativo}`,
+                liberarReserva: false
+            });
+        }
 
         const datosUbl = generarXmlUbl21YDatosSunat({
             tipo_comprobante: tipoComprobante,
@@ -287,7 +298,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
                 estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
                 enlace_pdf, enlace_xml, enlace_cdr, xml_firmado, cdr_xml, cdr_zip_base64,
                 respuesta_ose_json, modo_emision, peso_total, cantidad_cuotas,
-                origen_facturacion, items_json
+                origen_facturacion, stock_descontado, items_json
             )
             VALUES (
                 NULL, $1, $2, $3, $4, $5,
@@ -297,7 +308,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
                 $12, $13, $14, $15, $16,
                 $17, $18, $19, $20, $21, $22,
                 $23, $24, $25, 1,
-                'AUTOMATICA', $26
+                'AUTOMATICA', $26, $27
             )
             RETURNING *;
         `, [
@@ -326,6 +337,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             JSON.stringify(respuestaOse.respuesta_ose_json || {}),
             respuestaOse.modo_emision,
             pesoTotal,
+            decreceStockAuto,
             JSON.stringify(itemsElegidos)
         ]);
 

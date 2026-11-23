@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS comprobantes (
     cdr_xml TEXT,
     respuesta_ose_json JSONB,
     modo_emision VARCHAR(30) DEFAULT 'DEMO_NUBEFACT',
+    stock_descontado BOOLEAN NOT NULL DEFAULT FALSE,
     fecha_emision TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT comprobantes_tipo_comprobante_serie_correlativo_key UNIQUE (tipo_comprobante, serie, correlativo)
 );
@@ -417,6 +418,7 @@ CREATE TABLE IF NOT EXISTS notas_pedido (
     id_usuario INTEGER REFERENCES usuarios(id_usuario),
     peso_total NUMERIC(10,2) NOT NULL DEFAULT 0,
     monto_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+    stock_descontado BOOLEAN NOT NULL DEFAULT FALSE,
     estado VARCHAR(30) NOT NULL DEFAULT 'EMITIDO' CHECK (estado IN ('EMITIDO', 'ANULADO')),
     observaciones TEXT,
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -478,6 +480,7 @@ CREATE TABLE IF NOT EXISTS config_boletas_automaticas (
     solo_horario_laboral BOOLEAN NOT NULL DEFAULT FALSE,
     id_ubicacion INTEGER REFERENCES ubicaciones(id_ubicacion) ON DELETE SET NULL,
     auto_imprimir_navegador BOOLEAN NOT NULL DEFAULT TRUE,
+    decrece_stock BOOLEAN NOT NULL DEFAULT FALSE,
     ultima_ejecucion TIMESTAMP WITH TIME ZONE,
     proxima_ejecucion TIMESTAMP WITH TIME ZONE,
     actualizado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -586,6 +589,7 @@ CREATE TABLE IF NOT EXISTS guias_remision (
     bienes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     cadena_qr TEXT,
     estado_sunat VARCHAR(30) NOT NULL DEFAULT 'ACEPTADO',
+    stock_descontado BOOLEAN NOT NULL DEFAULT FALSE,
     creado_por INTEGER REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(serie, correlativo)
