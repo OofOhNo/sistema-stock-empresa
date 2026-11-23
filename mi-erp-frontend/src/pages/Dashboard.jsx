@@ -138,10 +138,10 @@ export default function Dashboard({ usuario, setVistaActual }) {
   const [cargando, setCargando] = useState(true);
   const [cargandoGraficos, setCargandoGraficos] = useState(false);
 
-  const esAdmin = usuario?.rol === 'Admin Central';
-  const puedeVerPedidos = esAdmin || usuario?.permisos?.pedidos?.puede_ver !== false;
-  const puedeVerStock = esAdmin || usuario?.permisos?.stock?.puede_ver !== false;
-  const puedeVerFacturacion = esAdmin || usuario?.permisos?.facturacion?.puede_ver !== false;
+  const esAdmin = usuario?.rol === 'Admin Central' || usuario?.nombre_rol === 'Admin Central';
+  const puedeVerPedidos = esAdmin || Boolean(usuario?.permisos?.pedidos?.puede_ver || usuario?.permisos?.pedidos?.puede_editar);
+  const puedeVerStock = esAdmin || Boolean(usuario?.permisos?.stock?.puede_ver || usuario?.permisos?.stock?.puede_editar);
+  const puedeVerFacturacion = esAdmin || Boolean(usuario?.permisos?.facturacion?.puede_ver || usuario?.permisos?.facturacion?.puede_editar);
   const puedeVerCalendarioPagos = esAdmin || Boolean(usuario?.permisos?.calendario_pagos?.puede_ver || usuario?.permisos?.calendario_pagos?.puede_editar);
   const puedeEditarCalendarioPagos = esAdmin || Boolean(usuario?.permisos?.calendario_pagos?.puede_editar);
 

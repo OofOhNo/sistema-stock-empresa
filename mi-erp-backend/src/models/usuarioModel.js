@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { normalizarPermisosCanonicamente } = require('../utils/modulosSistema');
 
 const Usuario = {
     
@@ -247,7 +248,71 @@ const Usuario = {
         }
     },
 
-    crearRol: async (nombre, descripcion, duracion_sesion_minutos = null, nivel_jerarquia = 4) => {
+    buscarRolPorId: async (id_rol) => {
+        const { rows } = await pool.query('SELECT * FROM roles WHERE id_rol = $1', [id_rol]);
+        return rows[0] || null;
+    },
+
+    contarUsuariosRol: async (id_rol) => {
+        const { rows } = await pool.query(
+            `SELECT
+                COUNT(*) FILTER (WHERE COALESCE(activo, true) = true)::int AS activos,
+                COUNT(*) FILTER (WHERE COALESCE(activo, true) = false)::int AS inactivos,
+                COUNT(*)::int AS total
+             FROM usuarios
+             WHERE rol_id = $1`,
+            [id_rol]
+        );
+        return rows[0] || { activos: 0, inactivos: 0, total: 0 };
+    },
+
+    obtenerMapaPermisosRol: async (dbClient, id_rol) => {
+        const runner = dbClient || pool;
+        const { rows } = await runner.query(
+            `SELECT p.modulo, rp.puede_ver, rp.puede_editar
+             FROM roles_permisos rp
+             JOIN permisos p ON rp.permiso_id = p.id
+             WHERE rp.rol_id = $1`,
+            [id_rol]
+        );
+        const mapa = {};
+        for (const r of rows) {
+            mapa[r.modulo] = { puede_ver: Boolean(r.puede_ver), puede_editar: Boolean(r.puede_editar) };
+        }
+        return mapa;
+    },
+
+    reemplazarPermisosRol: async (client, idRol, permisosInput = null, fallbackMap = null) => {
+        const permisosNorm = normalizarPermisosCanonicamente(permisosInput, fallbackMap);
+        const modulos = permisosNorm.map((p) => p.modulo);
+        const vers = permisosNorm.map((p) => p.puede_ver);
+        const editars = permisosNorm.map((p) => p.puede_editar);
+
+        await client.query(`
+            WITH entrada AS (
+                SELECT * FROM UNNEST($2::text[], $3::boolean[], $4::boolean[]) AS t(modulo, puede_ver, puede_editar)
+            )
+            INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
+            SELECT $1, pm.id, e.puede_ver, e.puede_editar
+            FROM entrada e
+            JOIN permisos pm ON pm.modulo = e.modulo
+            ON CONFLICT (rol_id, permiso_id)
+            DO UPDATE SET
+                puede_ver = EXCLUDED.puede_ver,
+                puede_editar = EXCLUDED.puede_editar;
+        `, [idRol, modulos, vers, editars]);
+
+        return permisosNorm;
+    },
+
+    crearRol: async (
+        nombre,
+        descripcion,
+        duracion_sesion_minutos = null,
+        nivel_jerarquia = 4,
+        puede_ver_otras_ubicaciones = false,
+        permisos = null
+    ) => {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -258,18 +323,15 @@ const Usuario = {
                 ? parseInt(nivel_jerarquia, 10)
                 : 4;
             const insertRol = await client.query(
-                `INSERT INTO roles (nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia) VALUES ($1, $2, $3, $4) RETURNING *`,
-                [nombre, descripcion || null, duracion, nivel]
+                `INSERT INTO roles (nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia, puede_ver_otras_ubicaciones)
+                 VALUES ($1, $2, $3, $4, $5)
+                 RETURNING *`,
+                [nombre, descripcion || null, duracion, nivel, Boolean(puede_ver_otras_ubicaciones)]
             );
             const nuevoRol = insertRol.rows[0];
 
-            // Inicializar roles_permisos para todos los permisos existentes (mensajes activo por defecto)
-            await client.query(`
-                INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
-                SELECT $1, p.id, (p.modulo = 'mensajes'), (p.modulo = 'mensajes')
-                FROM permisos p
-                ON CONFLICT (rol_id, permiso_id) DO NOTHING;
-            `, [nuevoRol.id_rol]);
+            // Inicializa roles_permisos con las secciones seleccionadas (o solo mensajes por defecto)
+            await Usuario.reemplazarPermisosRol(client, nuevoRol.id_rol, permisos, null);
 
             await client.query('COMMIT');
             return nuevoRol;
@@ -279,6 +341,52 @@ const Usuario = {
         } finally {
             client.release();
         }
+    },
+
+    actualizarRol: async (
+        id_rol,
+        { nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia, puede_ver_otras_ubicaciones, permisos }
+    ) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const { rows } = await client.query(
+                `UPDATE roles
+                 SET nombre = $2,
+                     descripcion = $3,
+                     duracion_sesion_minutos = $4,
+                     nivel_jerarquia = $5,
+                     puede_ver_otras_ubicaciones = $6
+                 WHERE id_rol = $1
+                 RETURNING *`,
+                [
+                    id_rol,
+                    nombre,
+                    descripcion || null,
+                    duracion_sesion_minutos ?? null,
+                    nivel_jerarquia,
+                    Boolean(puede_ver_otras_ubicaciones),
+                ]
+            );
+            const rolActualizado = rows[0] || null;
+            if (rolActualizado && permisos !== undefined && permisos !== null) {
+                const fallbackMap = await Usuario.obtenerMapaPermisosRol(client, id_rol);
+                await Usuario.reemplazarPermisosRol(client, id_rol, permisos, fallbackMap);
+            }
+
+            await client.query('COMMIT');
+            return rolActualizado;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    eliminarRol: async (id_rol) => {
+        const { rows } = await pool.query('DELETE FROM roles WHERE id_rol = $1 RETURNING *', [id_rol]);
+        return rows[0] || null;
     },
 
     crearUsuario: async ({ nombre_completo, email, password_hash, rol_id, id_ubicacion, area, puede_ver_celulares, seccion_facturacion = 'AMBAS', telefono_whatsapp = null }) => {

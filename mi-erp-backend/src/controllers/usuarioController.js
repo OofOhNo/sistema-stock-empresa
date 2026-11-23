@@ -3,6 +3,12 @@ const pool = require('../config/db');
 const { registrarAuditoria } = require('../utils/auditoria');
 const { invalidarCacheSesionTodos, invalidarCacheSesionUsuario } = require('../middlewares/authMiddleware');
 const bcrypt = require('bcryptjs');
+const {
+    MODULOS_CANONICOS,
+    normalizarDuracionSesionMinutos,
+    normalizarNivelJerarquia,
+    normalizarPermisosCanonicamente,
+} = require('../utils/modulosSistema');
 
 const usuarioController = {
 
@@ -123,19 +129,20 @@ const usuarioController = {
     obtenerPermisos: async (req, res) => {
         try {
             const query = `
-                SELECT 
-                    rp.rol_id, 
-                    r.nombre AS nombre_rol, 
+                SELECT
+                    r.id_rol AS rol_id,
+                    r.nombre AS nombre_rol,
                     p.id AS permiso_id,
-                    p.modulo, 
-                    rp.puede_ver, 
-                    rp.puede_editar
-                FROM roles_permisos rp
-                JOIN roles r ON rp.rol_id = r.id_rol
-                JOIN permisos p ON rp.permiso_id = p.id
-                ORDER BY r.id_rol, p.modulo;
+                    p.modulo,
+                    COALESCE(rp.puede_ver, false) AS puede_ver,
+                    COALESCE(rp.puede_editar, false) AS puede_editar
+                FROM roles r
+                CROSS JOIN permisos p
+                LEFT JOIN roles_permisos rp ON rp.rol_id = r.id_rol AND rp.permiso_id = p.id
+                WHERE p.modulo = ANY($1::text[])
+                ORDER BY r.id_rol, ARRAY_POSITION($1::text[], p.modulo);
             `;
-            const { rows } = await pool.query(query);
+            const { rows } = await pool.query(query, [MODULOS_CANONICOS]);
             res.json({ 
                 exito: true, 
                 datos: rows, 
@@ -188,6 +195,11 @@ const usuarioController = {
                 });
             }
 
+            let verFinal = puede_ver !== undefined ? puede_ver : null;
+            let editarFinal = puede_editar !== undefined ? puede_editar : null;
+            if (editarFinal === true) verFinal = true;
+            if (verFinal === false) editarFinal = false;
+
             const queryUpsert = `
                 INSERT INTO roles_permisos (rol_id, permiso_id, puede_ver, puede_editar)
                 SELECT $1::int, p.id, COALESCE($2::boolean, false), COALESCE($3::boolean, false)
@@ -198,7 +210,7 @@ const usuarioController = {
                     puede_ver = CASE WHEN $2::boolean IS NOT NULL THEN EXCLUDED.puede_ver ELSE roles_permisos.puede_ver END,
                     puede_editar = CASE WHEN $3::boolean IS NOT NULL THEN EXCLUDED.puede_editar ELSE roles_permisos.puede_editar END;
             `;
-            await client.query(queryUpsert, [rol_id, puede_ver, puede_editar, modulo]);
+            await client.query(queryUpsert, [rol_id, verFinal, editarFinal, modulo]);
 
             await registrarAuditoria(
                 client, 
@@ -207,10 +219,11 @@ const usuarioController = {
                 'roles_permisos', 
                 rol_id, 
                 null, 
-                { rol_id, modulo, puede_ver, puede_editar }
+                { rol_id, modulo, puede_ver: verFinal, puede_editar: editarFinal }
             );
 
             await client.query('COMMIT');
+            invalidarCacheSesionTodos();
             res.json({ exito: true, mensaje: 'Permisos guardados correctamente.' });
         } catch (error) {
             await client.query('ROLLBACK');
@@ -343,31 +356,57 @@ const usuarioController = {
     },
 
     crearRol: async (req, res) => {
-        const { nombre, descripcion, duracion_sesion_minutos, nivel_jerarquia } = req.body;
+        const {
+            nombre,
+            descripcion,
+            duracion_sesion_minutos,
+            nivel_jerarquia,
+            puede_ver_otras_ubicaciones,
+            permisos,
+        } = req.body;
         const usuarioSolicitante = req.usuario;
         const esAdminCentral = usuarioSolicitante.nombre_rol === 'Admin Central';
 
-        if (!nombre || !nombre.trim()) {
+        const nombreLimpio = typeof nombre === 'string' ? nombre.trim() : '';
+        if (!nombreLimpio) {
             return res.status(400).json({ exito: false, mensaje: 'El nombre del rol es obligatorio.' });
         }
-
-        const nivelParsed = nivel_jerarquia !== undefined && nivel_jerarquia !== ''
-            ? parseInt(nivel_jerarquia, 10)
-            : 4;
-        if (Number.isNaN(nivelParsed) || nivelParsed < 1 || nivelParsed > 10) {
-            return res.status(400).json({ exito: false, mensaje: 'El nivel jerárquico debe estar entre 1 (más alto) y 10 (más bajo).' });
+        if (nombreLimpio.length > 50) {
+            return res.status(400).json({ exito: false, mensaje: 'El nombre del rol no puede superar los 50 caracteres.' });
         }
+        if (nombreLimpio.toLowerCase() === 'admin central') {
+            return res.status(400).json({ exito: false, mensaje: 'El nombre "Admin Central" está reservado para el rol principal.' });
+        }
+
+        const nivelCheck = normalizarNivelJerarquia(nivel_jerarquia, 4);
+        if (!nivelCheck.ok) {
+            return res.status(400).json({ exito: false, mensaje: nivelCheck.mensaje });
+        }
+        const nivelParsed = nivelCheck.nivel;
         if (!esAdminCentral && nivelParsed < Number(usuarioSolicitante.nivel_jerarquia || 4)) {
             return res.status(403).json({ exito: false, mensaje: 'No puedes crear un rol con un nivel jerárquico superior al tuyo.' });
         }
 
+        const durCheck = normalizarDuracionSesionMinutos(duracion_sesion_minutos);
+        if (!durCheck.ok) {
+            return res.status(400).json({ exito: false, mensaje: durCheck.mensaje });
+        }
+
         try {
-            const rolExistente = await pool.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nombre.trim()]);
+            const rolExistente = await pool.query('SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1)', [nombreLimpio]);
             if (rolExistente.rows.length > 0) {
                 return res.status(400).json({ exito: false, mensaje: 'Ya existe un rol con ese nombre.' });
             }
 
-            const nuevoRol = await Usuario.crearRol(nombre.trim(), descripcion, duracion_sesion_minutos, nivelParsed);
+            const descripcionLimpia = typeof descripcion === 'string' ? descripcion.trim() : null;
+            const nuevoRol = await Usuario.crearRol(
+                nombreLimpio,
+                descripcionLimpia,
+                durCheck.minutos,
+                nivelParsed,
+                Boolean(puede_ver_otras_ubicaciones),
+                permisos ?? null
+            );
 
             await registrarAuditoria(
                 pool,
@@ -376,17 +415,240 @@ const usuarioController = {
                 'roles',
                 nuevoRol.id_rol,
                 null,
-                nuevoRol
+                { ...nuevoRol, con_permisos_iniciales: Boolean(permisos) }
             );
+            invalidarCacheSesionTodos();
 
             res.status(201).json({
                 exito: true,
-                mensaje: `Rol "${nuevoRol.nombre}" creado con éxito. Ahora puedes activar qué pestañas puede ver en la pestaña de Permisos.`,
+                mensaje: `Rol "${nuevoRol.nombre}" creado con éxito.`,
                 rol: nuevoRol
             });
         } catch (error) {
             console.error('Error al crear rol:', error);
             res.status(500).json({ exito: false, mensaje: 'Error al crear el rol', error: error.message });
+        }
+    },
+
+    actualizarRol: async (req, res) => {
+        const idRol = parseInt(req.params.id_rol, 10);
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante.nombre_rol === 'Admin Central';
+
+        if (!idRol || Number.isNaN(idRol)) {
+            return res.status(400).json({ exito: false, mensaje: 'Rol inválido.' });
+        }
+
+        const {
+            nombre,
+            descripcion,
+            duracion_sesion_minutos,
+            nivel_jerarquia,
+            puede_ver_otras_ubicaciones,
+            permisos,
+        } = req.body || {};
+
+        try {
+            const rolActual = await Usuario.buscarRolPorId(idRol);
+            if (!rolActual) {
+                return res.status(404).json({ exito: false, mensaje: 'Rol no encontrado.' });
+            }
+
+            const esRolAdminCentral = idRol === 1 || rolActual.nombre === 'Admin Central';
+            const nivelSolicitante = Number(solicitante.nivel_jerarquia || 4);
+            const nivelActual = Number(rolActual.nivel_jerarquia ?? (esRolAdminCentral ? 1 : 4));
+
+            if (!esAdminCentral && esRolAdminCentral) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede modificar el rol Admin Central.'
+                });
+            }
+            if (!esAdminCentral && nivelActual < nivelSolicitante) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'No puedes modificar un rol con un nivel jerárquico superior al tuyo.'
+                });
+            }
+
+            const nombreLimpio = nombre !== undefined ? String(nombre).trim() : rolActual.nombre;
+            if (!nombreLimpio) {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre del rol es obligatorio.' });
+            }
+            if (nombreLimpio.length > 50) {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre del rol no puede superar los 50 caracteres.' });
+            }
+            if (esRolAdminCentral && nombreLimpio !== 'Admin Central') {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El rol principal "Admin Central" no puede cambiar de nombre.'
+                });
+            }
+            if (!esRolAdminCentral && nombreLimpio.toLowerCase() === 'admin central') {
+                return res.status(400).json({ exito: false, mensaje: 'El nombre "Admin Central" está reservado.' });
+            }
+
+            const duplicado = await pool.query(
+                'SELECT id_rol FROM roles WHERE LOWER(nombre) = LOWER($1) AND id_rol <> $2',
+                [nombreLimpio, idRol]
+            );
+            if (duplicado.rows.length > 0) {
+                return res.status(400).json({ exito: false, mensaje: 'Ya existe otro rol con ese nombre.' });
+            }
+
+            const nivelCheck = normalizarNivelJerarquia(
+                nivel_jerarquia !== undefined ? nivel_jerarquia : nivelActual,
+                nivelActual
+            );
+            if (!nivelCheck.ok) {
+                return res.status(400).json({ exito: false, mensaje: nivelCheck.mensaje });
+            }
+            if (esRolAdminCentral && nivelCheck.nivel !== 1) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El rol Admin Central siempre conserva el Nivel 1 (máxima jerarquía).'
+                });
+            }
+            if (!esAdminCentral && nivelCheck.nivel < nivelSolicitante) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'No puedes asignar a un rol un nivel jerárquico superior al tuyo.'
+                });
+            }
+
+            const durCheck = normalizarDuracionSesionMinutos(
+                duracion_sesion_minutos !== undefined ? duracion_sesion_minutos : rolActual.duracion_sesion_minutos
+            );
+            if (!durCheck.ok) {
+                return res.status(400).json({ exito: false, mensaje: durCheck.mensaje });
+            }
+
+            const descripcionFinal = descripcion !== undefined
+                ? (typeof descripcion === 'string' && descripcion.trim() ? descripcion.trim() : null)
+                : rolActual.descripcion;
+            const multiSedeFinal = esRolAdminCentral
+                ? true
+                : (puede_ver_otras_ubicaciones !== undefined
+                    ? Boolean(puede_ver_otras_ubicaciones)
+                    : Boolean(rolActual.puede_ver_otras_ubicaciones));
+
+            // Proteger al propio usuario de quitarse el módulo usuarios si está editando su propio rol
+            const esPropioRol = Number(solicitante.rol_id) === idRol || rolActual.nombre === solicitante.nombre_rol;
+            if (!esRolAdminCentral && permisos !== undefined && permisos !== null && esPropioRol) {
+                const mapaPrevio = await Usuario.obtenerMapaPermisosRol(pool, idRol);
+                const permNorm = normalizarPermisosCanonicamente(permisos, mapaPrevio);
+                const permUsuarios = permNorm.find((p) => p.modulo === 'usuarios');
+                if (!permUsuarios || !permUsuarios.puede_ver || !permUsuarios.puede_editar) {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'No puedes quitarte a tu propio rol el permiso de Personal y Roles porque quedarías sin acceso.'
+                    });
+                }
+            }
+
+            const rolActualizado = await Usuario.actualizarRol(idRol, {
+                nombre: nombreLimpio,
+                descripcion: descripcionFinal,
+                duracion_sesion_minutos: durCheck.minutos,
+                nivel_jerarquia: esRolAdminCentral ? 1 : nivelCheck.nivel,
+                puede_ver_otras_ubicaciones: multiSedeFinal,
+                permisos: esRolAdminCentral ? null : (permisos ?? null),
+            });
+
+            invalidarCacheSesionTodos();
+
+            await registrarAuditoria(
+                pool,
+                solicitante.id_usuario,
+                'ACTUALIZAR_ROL',
+                'roles',
+                idRol,
+                rolActual,
+                { ...rolActualizado, secciones_actualizadas: Boolean(!esRolAdminCentral && permisos) }
+            );
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: `Rol "${rolActualizado.nombre}" actualizado correctamente.`,
+                rol: rolActualizado
+            });
+        } catch (error) {
+            console.error('Error al actualizar rol:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al actualizar el rol', error: error.message });
+        }
+    },
+
+    eliminarRol: async (req, res) => {
+        const idRol = parseInt(req.params.id_rol, 10);
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante.nombre_rol === 'Admin Central';
+
+        if (!idRol || Number.isNaN(idRol)) {
+            return res.status(400).json({ exito: false, mensaje: 'Rol inválido.' });
+        }
+
+        try {
+            const rolObjetivo = await Usuario.buscarRolPorId(idRol);
+            if (!rolObjetivo) {
+                return res.status(404).json({ exito: false, mensaje: 'Rol no encontrado.' });
+            }
+
+            if (idRol === 1 || rolObjetivo.nombre === 'Admin Central') {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El rol principal "Admin Central" no se puede eliminar.'
+                });
+            }
+
+            if (Number(solicitante.rol_id) === idRol || rolObjetivo.nombre === solicitante.nombre_rol) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'No puedes eliminar el rol que estás utilizando actualmente.'
+                });
+            }
+
+            if (!esAdminCentral && Number(rolObjetivo.nivel_jerarquia || 4) < Number(solicitante.nivel_jerarquia || 4)) {
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'No puedes eliminar un rol con un nivel jerárquico superior al tuyo.'
+                });
+            }
+
+            const conteo = await Usuario.contarUsuariosRol(idRol);
+            if (conteo.activos > 0) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: `No puedes eliminar "${rolObjetivo.nombre}" porque tiene ${conteo.activos} ${conteo.activos === 1 ? 'empleado activo asignado' : 'empleados activos asignados'}. Cámbiales de rol primero.`
+                });
+            }
+            if (conteo.inactivos > 0) {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: `No se puede eliminar "${rolObjetivo.nombre}" porque existen ${conteo.inactivos} registro(s) históricos de empleados desactivados vinculados a este rol.`
+                });
+            }
+
+            const rolEliminado = await Usuario.eliminarRol(idRol);
+            invalidarCacheSesionTodos();
+
+            await registrarAuditoria(
+                pool,
+                solicitante.id_usuario,
+                'ELIMINAR_ROL',
+                'roles',
+                idRol,
+                rolObjetivo,
+                null
+            );
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: `Rol "${rolObjetivo.nombre}" eliminado correctamente.`,
+                rol: rolEliminado
+            });
+        } catch (error) {
+            console.error('Error al eliminar rol:', error);
+            return res.status(500).json({ exito: false, mensaje: 'Error al eliminar el rol', error: error.message });
         }
     },
 
@@ -507,17 +769,14 @@ const usuarioController = {
             return res.status(400).json({ exito: false, mensaje: 'Rol inválido.' });
         }
 
-        let valorFinal = null;
-        if (duracion_sesion_minutos !== null && duracion_sesion_minutos !== undefined && duracion_sesion_minutos !== '') {
-            const num = parseInt(duracion_sesion_minutos, 10);
-            if (Number.isNaN(num) || num < 1 || num > 525600) {
-                return res.status(400).json({
-                    exito: false,
-                    mensaje: 'El tiempo de sesión debe estar entre 1 minuto y 525600 minutos (1 año), o vacío para no expirar.'
-                });
-            }
-            valorFinal = num;
+        const durCheck = normalizarDuracionSesionMinutos(duracion_sesion_minutos);
+        if (!durCheck.ok) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: durCheck.mensaje
+            });
         }
+        const valorFinal = durCheck.minutos;
 
         try {
             const rolCheck = await pool.query('SELECT id_rol, nombre, duracion_sesion_minutos FROM roles WHERE id_rol = $1', [idRol]);
@@ -819,6 +1078,135 @@ const usuarioController = {
         } catch (error) {
             console.error('Error al descartar solicitud:', error);
             res.status(500).json({ exito: false, mensaje: 'No se pudo descartar el aviso.' });
+        }
+    },
+
+    /**
+     * Actualiza el correo electrónico de inicio de sesión de un empleado activo,
+     * validando formato, unicidad (sin distinguir mayúsculas) y jerarquía Admin Central.
+     */
+    cambiarEmail: async (req, res) => {
+        const idUsuario = Number(req.params.id_usuario);
+        if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
+            return res.status(400).json({ exito: false, mensaje: 'ID de usuario inválido.' });
+        }
+
+        const rawEmail = req.body?.nuevo_email ?? req.body?.email ?? '';
+        const emailFinal = String(rawEmail).trim().toLowerCase();
+        const esEmailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailFinal);
+
+        if (!emailFinal || emailFinal.length > 150 || !esEmailValido) {
+            return res.status(400).json({
+                exito: false,
+                mensaje: 'Ingresa un correo electrónico válido (máximo 150 caracteres).'
+            });
+        }
+
+        const solicitante = req.usuario;
+        const esAdminCentral = solicitante?.nombre_rol === 'Admin Central';
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const resPrev = await client.query(`
+                SELECT u.id_usuario, u.nombre_completo, u.email, u.rol_id, u.id_ubicacion, r.nombre AS nombre_rol
+                FROM usuarios u
+                LEFT JOIN roles r ON u.rol_id = r.id_rol
+                WHERE u.id_usuario = $1::int AND COALESCE(u.activo, true) = true
+                FOR UPDATE OF u;
+            `, [idUsuario]);
+
+            if (resPrev.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ exito: false, mensaje: 'Usuario no encontrado o inactivo.' });
+            }
+
+            const usuarioAnterior = resPrev.rows[0];
+            if (!esAdminCentral && usuarioAnterior.nombre_rol === 'Admin Central') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({
+                    exito: false,
+                    mensaje: 'Solo un Admin Central puede modificar el correo de una cuenta Admin Central.'
+                });
+            }
+
+            const emailAnteriorNormalizado = String(usuarioAnterior.email || '').trim().toLowerCase();
+            if (emailFinal === emailAnteriorNormalizado && usuarioAnterior.email === emailFinal) {
+                await client.query('ROLLBACK');
+                return res.status(200).json({
+                    exito: true,
+                    sin_cambios: true,
+                    mensaje: 'El correo ya coincide con el actual.',
+                    usuario: {
+                        id_usuario: usuarioAnterior.id_usuario,
+                        nombre_completo: usuarioAnterior.nombre_completo,
+                        email: usuarioAnterior.email,
+                        rol_id: usuarioAnterior.rol_id,
+                        id_ubicacion: usuarioAnterior.id_ubicacion
+                    }
+                });
+            }
+
+            const resDuplicado = await client.query(`
+                SELECT id_usuario
+                FROM usuarios
+                WHERE LOWER(TRIM(email)) = LOWER($1) AND id_usuario <> $2::int
+                LIMIT 1;
+            `, [emailFinal, idUsuario]);
+
+            if (resDuplicado.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(409).json({
+                    exito: false,
+                    mensaje: 'Ya existe otro usuario registrado con ese correo electrónico.'
+                });
+            }
+
+            // Si edita a otra persona, invalidamos sus tokens anteriores para que ingrese con el correo nuevo;
+            // si edita su propio correo, conservamos su token_version actual para refrescar sesión sin cerrarla.
+            const esMismoUsuario = idUsuario === Number(solicitante?.id_usuario);
+            const resUpdate = await client.query(`
+                UPDATE usuarios
+                SET email = $1,
+                    token_version = CASE
+                        WHEN $3::boolean THEN COALESCE(token_version, 1)
+                        ELSE COALESCE(token_version, 1) + 1
+                    END
+                WHERE id_usuario = $2::int
+                RETURNING id_usuario, nombre_completo, email, rol_id, id_ubicacion;
+            `, [emailFinal, idUsuario, esMismoUsuario]);
+
+            await registrarAuditoria(
+                client,
+                solicitante.id_usuario,
+                'ACTUALIZAR_EMAIL_USUARIO',
+                'usuarios',
+                idUsuario,
+                { email: usuarioAnterior.email },
+                { email: emailFinal }
+            );
+
+            await client.query('COMMIT');
+            invalidarCacheSesionUsuario(idUsuario);
+
+            res.status(200).json({
+                exito: true,
+                mensaje: `Correo de ${usuarioAnterior.nombre_completo} actualizado a ${emailFinal}.`,
+                usuario: resUpdate.rows[0]
+            });
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Error al actualizar correo de usuario:', error);
+            if (error?.code === '23505') {
+                return res.status(409).json({
+                    exito: false,
+                    mensaje: 'Ya existe otro usuario registrado con ese correo electrónico.'
+                });
+            }
+            res.status(500).json({ exito: false, mensaje: 'Error al actualizar el correo electrónico.', error: error.message });
+        } finally {
+            client.release();
         }
     }
 

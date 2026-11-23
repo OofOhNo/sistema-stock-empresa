@@ -100,15 +100,27 @@ export default function App() {
     };
   }, [cerrarSesion, sincronizarPerfil]);
 
-  // Cierre automático exacto cuando el rol tiene un límite fijo de sesión
+  // Cierre automático exacto cuando el rol tiene un límite fijo de sesión (soporta duraciones > 24 días en meses)
   useEffect(() => {
     if (!usuario?.sesion_expira_en) return;
-    const restanteMs = Number(usuario.sesion_expira_en) - Date.now();
-    const timer = setTimeout(() => {
-      cerrarSesion();
-      toast.error('Tu sesión expiró según el tiempo límite configurado para tu rol. Vuelve a iniciar sesión.');
-    }, Math.max(0, Math.min(restanteMs, 2147483640)));
-    return () => clearTimeout(timer);
+    let timerId;
+    const MAX_TIMEOUT_MS = 2147483640;
+
+    const programarExpiracion = () => {
+      const restanteMs = Number(usuario.sesion_expira_en) - Date.now();
+      if (restanteMs <= 0) {
+        cerrarSesion();
+        toast.error('Tu sesión expiró según el tiempo límite configurado para tu rol. Vuelve a iniciar sesión.');
+        return;
+      }
+      const espera = Math.min(restanteMs, MAX_TIMEOUT_MS);
+      timerId = setTimeout(() => {
+        programarExpiracion();
+      }, espera);
+    };
+
+    programarExpiracion();
+    return () => clearTimeout(timerId);
   }, [usuario?.sesion_expira_en, cerrarSesion]);
 
   const cambiarVista = (nuevaVista) => {
@@ -128,7 +140,18 @@ export default function App() {
     );
   }
 
+  const tieneAccesoVista = (vista) => {
+    if (!vista || vista === 'dashboard') return true;
+    if (usuario?.rol === 'Admin Central' || usuario?.nombre_rol === 'Admin Central') return true;
+    const moduloPermiso = vista === 'despacho' ? 'pedidos' : vista;
+    const perm = usuario?.permisos?.[moduloPermiso];
+    return Boolean(perm?.puede_ver || perm?.puede_editar);
+  };
+
   const renderizarVista = () => {
+    if (!tieneAccesoVista(vistaActual)) {
+      return <Dashboard usuario={usuario} setVistaActual={cambiarVista} />;
+    }
     switch (vistaActual) {
       case 'dashboard':
         return <Dashboard usuario={usuario} setVistaActual={cambiarVista} />;

@@ -52,7 +52,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
   const yaNotificoVencidasRef = useRef(false);
 
   const esProduccion = usuario?.area === 'PRODUCCION';
-  const esAdminCentral = usuario?.rol === 'Admin Central';
+  const esAdminCentral = usuario?.rol === 'Admin Central' || usuario?.nombre_rol === 'Admin Central';
 
   const tienePermisoVer = (modulo) => {
     if (esAdminCentral) return true;
@@ -69,8 +69,7 @@ export default function Layout({ usuario, cerrarSesion, vistaActual, setVistaAct
     usuario?.permisos?.errores?.puede_ver === true ||
     usuario?.permisos?.errores?.puede_editar === true ||
     puedeEditarUsuarios;
-  const puedeUsarMensajes =
-    esAdminCentral || usuario?.permisos?.mensajes?.puede_ver !== false;
+  const puedeUsarMensajes = tienePermisoVer('mensajes');
 
   const cargarContadores = useCallback(async () => {
     if (!localStorage.getItem('token_erp')) return;

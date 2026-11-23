@@ -5,12 +5,13 @@ import {
   ShieldCheck, History, Eye, EyeOff, RefreshCw, X,
   UserPlus, ShieldPlus, Phone, Search, Loader2,
   Trash2, AlertTriangle, Layers, KeyRound, Copy, CheckCircle2,
-  Clock, Mail, Save, Globe
+  Clock, Mail, Save, Globe, Pencil
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PermisosGrid from '../components/PermisosGrid';
+import ModalRolFormulario from '../components/ModalRolFormulario';
+import ModalEliminarRol from '../components/ModalEliminarRol';
 import {
-  OPCIONES_DURACION_SESION,
   formatearDuracionSesionLegible
 } from '../utils/sesionRol';
 import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
@@ -20,6 +21,7 @@ const TRADUCCION_ACCION = {
   CREAR_USUARIO: 'Creó un nuevo empleado',
   ELIMINAR_USUARIO: 'Eliminó / desactivó un empleado',
   CAMBIAR_ROL_USUARIO: 'Cambió el rol de un empleado',
+  ACTUALIZAR_EMAIL_USUARIO: 'Modificó el correo de un empleado',
   MOVER_SEDE_USUARIO: 'Movió a un empleado de sede',
   ACTUALIZAR_CONFIGURACION_USUARIO: 'Actualizó configuración de un empleado',
   CREAR_DIVISION: 'Creó un área / división',
@@ -35,6 +37,8 @@ const TRADUCCION_ACCION = {
   CONFIGURAR_LOGIN_GOOGLE: 'Configuró el acceso con correo corporativo (Google)',
   LOGIN_GOOGLE: 'Inició sesión con correo corporativo (Google)',
   CREAR_ROL: 'Creó un nuevo rol',
+  ACTUALIZAR_ROL: 'Modificó un rol',
+  ELIMINAR_ROL: 'Eliminó un rol',
   CREAR_REUNION: 'Programó una reunión',
   EDITAR_REUNION: 'Editó una reunión',
   ACTUALIZAR_ESTADO_PAGO_COMPROBANTE: 'Actualizó el estado de pago de un comprobante',
@@ -137,7 +141,9 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
   // Modales
   const [modalNuevoUsuario, setModalNuevoUsuario] = useState(false);
   const [verPasswordNuevo, setVerPasswordNuevo] = useState(true);
-  const [modalNuevoRol, setModalNuevoRol] = useState(false);
+  const [modalRolState, setModalRolState] = useState({ abierto: false, rol: null });
+  const [rolAEliminar, setRolAEliminar] = useState({ rol: null, cantidad: 0 });
+  const [permisosListaRoles, setPermisosListaRoles] = useState([]);
   const [guardando, setGuardando] = useState(false);
 
   // Modal Restablecer Contraseña de Empleado (Olvido o cambio por encargado)
@@ -145,6 +151,11 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
   const [nuevaClaveReset, setNuevaClaveReset] = useState('');
   const [verClaveReset, setVerClaveReset] = useState(true);
   const [guardandoReset, setGuardandoReset] = useState(false);
+
+  // Modal Editar Correo de Empleado
+  const [modalEmailUsuario, setModalEmailUsuario] = useState(null);
+  const [nuevoEmailUsuario, setNuevoEmailUsuario] = useState('');
+  const [guardandoEmail, setGuardandoEmail] = useState(false);
 
   // Modal de cambio de rol con confirmación clara
   const [cambioRolPendiente, setCambioRolPendiente] = useState(null); // { user, nuevoRolId, nombreNuevoRol }
@@ -167,13 +178,6 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     puede_ver_celulares: false,
     seccion_facturacion: 'AMBAS',
     telefono_whatsapp: ''
-  });
-
-  const [formRol, setFormRol] = useState({
-    nombre: '',
-    descripcion: '',
-    duracion_sesion_minutos: '',
-    nivel_jerarquia: 4
   });
 
   const [editandoWhatsappUser, setEditandoWhatsappUser] = useState(null); // { id_usuario, telefono }
@@ -216,19 +220,21 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
       const promesas = [
         api.get('/usuarios'),
         api.get('/usuarios/roles'),
-        api.get('/ubicaciones')
+        api.get('/ubicaciones'),
+        api.get('/usuarios/permisos').catch(() => ({ data: { datos: [] } }))
       ];
       if (puedeEditarUsuarios) {
         promesas.push(api.get('/usuarios/recuperaciones').catch(() => ({ data: { solicitudes: [] } })));
       }
 
-      const [resUsers, resRoles, resUbic, resRecup] = await Promise.all(promesas);
+      const [resUsers, resRoles, resUbic, resPermisos, resRecup] = await Promise.all(promesas);
 
       setUsuarios(resUsers.data.datos || []);
       const rolesList = resRoles.data.datos || [];
       setRolesDinamicos(rolesList);
       const ubList = resUbic.data.ubicaciones || resUbic.data.datos || [];
       setUbicaciones(ubList);
+      setPermisosListaRoles(resPermisos?.data?.datos || resPermisos?.data?.permisos || []);
       if (resRecup) {
         setSolicitudesRecuperacion(resRecup.data?.solicitudes || []);
       }
@@ -458,6 +464,54 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
+  // Abrir Modal para Modificar Correo de un Empleado
+  const abrirModalEditarEmail = (empleado) => {
+    setModalEmailUsuario(empleado);
+    setNuevoEmailUsuario(empleado.email || '');
+  };
+
+  const handleGuardarEmail = async (e) => {
+    e.preventDefault();
+    if (!modalEmailUsuario) return;
+
+    const emailLimpio = String(nuevoEmailUsuario || '').trim().toLowerCase();
+    const esEmailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpio);
+    if (!emailLimpio || emailLimpio.length > 150 || !esEmailValido) {
+      toast.error('Ingresa un correo electrónico válido (máximo 150 caracteres).');
+      return;
+    }
+
+    const emailActualNormalizado = String(modalEmailUsuario.email || '').trim().toLowerCase();
+    if (emailLimpio === emailActualNormalizado && modalEmailUsuario.email === emailLimpio) {
+      toast('El correo es el mismo que ya tiene asignado.');
+      setModalEmailUsuario(null);
+      return;
+    }
+
+    setGuardandoEmail(true);
+    try {
+      const res = await api.put(`/usuarios/${modalEmailUsuario.id_usuario}/email`, {
+        nuevo_email: emailLimpio
+      });
+      toast.success(
+        res.data?.mensaje ||
+        `Correo de ${modalEmailUsuario.nombre_completo} actualizado a ${emailLimpio}.`
+      );
+      const eraMismoUsuario =
+        Number(modalEmailUsuario.id_usuario) === Number(usuarioLogueado?.id_usuario);
+      setModalEmailUsuario(null);
+      setNuevoEmailUsuario('');
+      await cargarDatos(true);
+      if (eraMismoUsuario) {
+        onPermisosActualizados?.();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo actualizar el correo electrónico.');
+    } finally {
+      setGuardandoEmail(false);
+    }
+  };
+
   const copiarTexto = async (texto) => {
     if (!texto) return;
     try {
@@ -583,30 +637,47 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
     }
   };
 
-  const handleCrearRol = async (e) => {
-    e.preventDefault();
-    if (!formRol.nombre.trim()) {
-      return toast.error('Escribe un nombre para el nuevo rol.');
+  const obtenerMapaPermisosDeRol = useCallback(
+    (idRol) => {
+      const mapa = {};
+      for (const p of permisosListaRoles) {
+        if (Number(p.rol_id) === Number(idRol)) {
+          mapa[p.modulo] = {
+            puede_ver: Boolean(p.puede_ver),
+            puede_editar: Boolean(p.puede_editar),
+          };
+        }
+      }
+      return mapa;
+    },
+    [permisosListaRoles]
+  );
+
+  const puedeModificarRol = (rol) => {
+    if (!puedeEditarUsuarios || !rol) return false;
+    if (rol.id_rol === 1 || rol.nombre === 'Admin Central') return esAdminCentral;
+    if (!esAdminCentral && Number(rol.nivel_jerarquia || 4) < Number(usuarioLogueado?.nivel_jerarquia || 4)) {
+      return false;
     }
-    setGuardando(true);
-    try {
-      const res = await api.post('/usuarios/roles', {
-        ...formRol,
-        duracion_sesion_minutos: formRol.duracion_sesion_minutos
-          ? parseInt(formRol.duracion_sesion_minutos, 10)
-          : null,
-        nivel_jerarquia: Number(formRol.nivel_jerarquia || 4)
-      });
-      toast.success(res.data.mensaje || 'Rol creado con éxito.');
-      setModalNuevoRol(false);
-      setFormRol({ nombre: '', descripcion: '', duracion_sesion_minutos: '', nivel_jerarquia: 4 });
-      await cargarDatos();
-    } catch (err) {
-      toast.error(err.response?.data?.mensaje || 'No se pudo crear el rol.');
-    } finally {
-      setGuardando(false);
-    }
+    return true;
   };
+
+  const puedeEliminarRol = (rol) => {
+    if (!puedeModificarRol(rol)) return false;
+    if (rol.id_rol === 1 || rol.nombre === 'Admin Central') return false;
+    if (
+      Number(usuarioLogueado?.rol_id) === Number(rol.id_rol) ||
+      usuarioLogueado?.rol === rol.nombre ||
+      usuarioLogueado?.nombre_rol === rol.nombre
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const abrirModalCrearRol = () => setModalRolState({ abierto: true, rol: null });
+  const abrirModalEditarRol = (rol) => setModalRolState({ abierto: true, rol });
+  const abrirModalEliminarRol = (rol, cantidad = 0) => setRolAEliminar({ rol, cantidad });
 
   const handleTogglePermisoOtrasUbicaciones = async (rolId, valorActual) => {
     if (!puedeEditarUsuarios) return;
@@ -664,7 +735,7 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
           {tabActual === 'personal' && puedeEditarUsuarios && (
             <>
               <button
-                onClick={() => setModalNuevoRol(true)}
+                onClick={abrirModalCrearRol}
                 className="flex items-center space-x-2 px-3.5 py-2.5 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 rounded-xl text-sm font-semibold transition-all shadow-xs cursor-pointer"
               >
                 <ShieldPlus size={16} />
@@ -969,11 +1040,38 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                         </p>
                       </div>
                     </div>
-                    {(rol.nombre === 'Admin Central' || rol.puede_ver_otras_ubicaciones) && (
-                      <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 w-max">
-                        🏢 Puede ver todas las sedes
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-bold text-violet-700 bg-violet-50 px-2.5 py-1 rounded-lg border border-violet-200">
+                        Nivel {rol.nombre === 'Admin Central' ? 1 : (rol.nivel_jerarquia || 4)}
                       </span>
-                    )}
+                      {(rol.nombre === 'Admin Central' || rol.puede_ver_otras_ubicaciones) && (
+                        <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 w-max">
+                          🏢 Puede ver todas las sedes
+                        </span>
+                      )}
+                      {puedeModificarRol(rol) && (
+                        <button
+                          type="button"
+                          onClick={() => abrirModalEditarRol(rol)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 transition cursor-pointer"
+                          title="Editar nombre, descripción, jerarquía o secciones visibles"
+                        >
+                          <Pencil size={12} />
+                          <span>Editar</span>
+                        </button>
+                      )}
+                      {puedeEliminarRol(rol) && (
+                        <button
+                          type="button"
+                          onClick={() => abrirModalEliminarRol(rol, empleadosDelRol.length)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 transition cursor-pointer"
+                          title="Eliminar este rol"
+                        >
+                          <Trash2 size={12} />
+                          <span>Eliminar</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {empleadosDelRol.length === 0 ? (
@@ -1012,7 +1110,20 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                                   </div>
                                 </td>
                                 <td className="p-4 text-slate-600 text-xs">
-                                  <div className="font-mono">{user.email}</div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-mono break-all">{user.email}</span>
+                                    {puedeEditarUsuarios && !noPuedoModificarEsteAdmin && (
+                                      <button
+                                        type="button"
+                                        onClick={() => abrirModalEditarEmail(user)}
+                                        title={`Modificar correo de ${user.nombre_completo}`}
+                                        className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-1.5 py-0.5 rounded font-sans shrink-0 cursor-pointer transition-colors"
+                                      >
+                                        <Mail size={10} />
+                                        <span>Editar</span>
+                                      </button>
+                                    )}
+                                  </div>
                                   {editandoWhatsappUser?.id_usuario === user.id_usuario ? (
                                     <div className="mt-1.5 flex items-center gap-1">
                                       <input
@@ -1213,7 +1324,7 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
               </h3>
               {puedeEditarUsuarios && (
                 <button
-                  onClick={() => setModalNuevoRol(true)}
+                  onClick={abrirModalCrearRol}
                   className="text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
                 >
                   + Crear otro rol
@@ -1226,16 +1337,42 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
                   icono: <Shield size={16} className="text-purple-500" />,
                   color: 'bg-purple-100 text-purple-700 border-purple-200'
                 };
+                const totalAsig = Number(rol.total_usuarios || usuarios.filter(u => u.rol_id === rol.id_rol).length || 0);
                 return (
                   <div key={rol.id_rol} className="flex items-start space-x-3 bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
                     <div className="mt-0.5">{estilo.icono}</div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1.5">
                         <p className="font-bold text-slate-800 text-sm truncate">{rol.nombre}</p>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                          {rol.total_usuarios || 0} pers.
-                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                            {totalAsig} pers.
+                          </span>
+                          {puedeModificarRol(rol) && (
+                            <button
+                              type="button"
+                              onClick={() => abrirModalEditarRol(rol)}
+                              title="Editar rol"
+                              className="p-1 text-slate-400 hover:text-indigo-600 rounded transition cursor-pointer"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          )}
+                          {puedeEliminarRol(rol) && (
+                            <button
+                              type="button"
+                              onClick={() => abrirModalEliminarRol(rol, totalAsig)}
+                              title="Eliminar rol"
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded transition cursor-pointer"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
                       </div>
+                      <p className="text-[10px] font-bold text-violet-700 mt-0.5">
+                        Jerarquía: Nivel {rol.nombre === 'Admin Central' ? 1 : (rol.nivel_jerarquia || 4)}
+                      </p>
                       <p className="text-slate-500 text-xs mt-1 line-clamp-2">
                         {rol.descripcion || 'Permisos ajustables en la pestaña "Permisos por Rol".'}
                       </p>
@@ -1762,6 +1899,83 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
         </div>
       )}
 
+      {/* MODAL MODIFICAR CORREO ELECTRÓNICO DE UN EMPLEADO */}
+      {modalEmailUsuario && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-900 text-white">
+              <div className="flex items-center space-x-2.5">
+                <Mail size={20} className="text-indigo-400" />
+                <div>
+                  <h3 className="text-base font-bold text-white">Modificar Correo de Acceso</h3>
+                  <p className="text-[11px] text-slate-300">Actualiza el correo por si hubo un error de tipeo</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalEmailUsuario(null)}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleGuardarEmail} autoComplete="off" className="p-6 space-y-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5">
+                <p className="text-[11px] font-bold text-indigo-600 uppercase">Empleado:</p>
+                <p className="text-sm font-extrabold text-blue-950 mt-0.5">
+                  {modalEmailUsuario.nombre_completo}
+                </p>
+                {modalEmailUsuario.email && (
+                  <p className="text-xs font-mono text-slate-600 mt-0.5">
+                    Actual: {modalEmailUsuario.email}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Nuevo correo electrónico *
+                </label>
+                <input
+                  type="email"
+                  autoFocus
+                  required
+                  maxLength={150}
+                  placeholder="ejemplo@empresa.com"
+                  value={nuevoEmailUsuario}
+                  onChange={(e) => setNuevoEmailUsuario(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-mono font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  {Number(modalEmailUsuario.id_usuario) === Number(usuarioLogueado?.id_usuario)
+                    ? 'Tu sesión actual se actualizará automáticamente con el nuevo correo.'
+                    : 'La persona usará este correo para ingresar al sistema (si tenía una sesión abierta, deberá iniciar sesión de nuevo).'}
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setModalEmailUsuario(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoEmail}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <CheckCircle2 size={15} />
+                  <span>{guardandoEmail ? 'Guardando...' : 'Guardar Nuevo Correo'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL CONFIRMAR CAMBIO DE ROL */}
       {cambioRolPendiente && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
@@ -1790,106 +2004,32 @@ export default function Usuarios({ usuarioLogueado, onPermisosActualizados }) {
         </div>
       )}
 
-      {/* Modal Crear Nuevo Rol */}
-      {modalNuevoRol && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-100 overflow-hidden">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-purple-50 text-purple-600 rounded-lg">
-                  <ShieldPlus size={20} />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-blue-950">Crear Nuevo Rol</h3>
-                  <p className="text-xs text-slate-500">Luego podrás elegir qué pantallas puede ver</p>
-                </div>
-              </div>
-              <button onClick={() => setModalNuevoRol(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X size={20} />
-              </button>
-            </div>
+      <ModalRolFormulario
+        abierto={modalRolState.abierto}
+        onClose={() => setModalRolState({ abierto: false, rol: null })}
+        rolEditar={modalRolState.rol}
+        permisosRolEditar={
+          modalRolState.rol ? obtenerMapaPermisosDeRol(modalRolState.rol.id_rol) : null
+        }
+        usuarioLogueado={usuarioLogueado}
+        onGuardado={async () => {
+          await cargarDatos(true);
+          onPermisosActualizados?.();
+        }}
+      />
 
-            <form onSubmit={handleCrearRol} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Nombre del Rol *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej: Encargado de Almacén, Cajero, Supervisor"
-                  value={formRol.nombre}
-                  onChange={(e) => setFormRol({ ...formRol, nombre: e.target.value })}
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">¿De qué se encarga? (Opcional)</label>
-                <textarea
-                  rows={3}
-                  placeholder="Ej: Registra entradas de mercadería y revisa pedidos..."
-                  value={formRol.descripcion}
-                  onChange={(e) => setFormRol({ ...formRol, descripcion: e.target.value })}
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Nivel jerárquico (Reuniones)
-                </label>
-                <select
-                  value={formRol.nivel_jerarquia}
-                  onChange={(e) => setFormRol({ ...formRol, nivel_jerarquia: Number(e.target.value) })}
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm bg-white focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
-                >
-                  <option value={1}>Nivel 1 — Máxima jerarquía</option>
-                  <option value={2}>Nivel 2 — Gerencia / Subgerencia</option>
-                  <option value={3}>Nivel 3 — Jefatura / Supervisión</option>
-                  <option value={4}>Nivel 4 — Operativo / Base</option>
-                  <option value={5}>Nivel 5 — Apoyo / Auxiliar</option>
-                  <option value={6}>Nivel 6 — Externo / Prácticas</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Tiempo obligatorio para volver a iniciar sesión
-                </label>
-                <select
-                  value={formRol.duracion_sesion_minutos}
-                  onChange={(e) => setFormRol({ ...formRol, duracion_sesion_minutos: e.target.value })}
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm bg-white focus:ring-2 focus:ring-purple-500 focus:outline-hidden"
-                >
-                  {OPCIONES_DURACION_SESION.map(opt => (
-                    <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-xs text-purple-800">
-                Al guardarlo, ve a la pestaña <strong>Permisos por Rol</strong> para marcar con un clic qué pantallas puede ver o editar.
-              </div>
-
-              <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setModalNuevoRol(false)}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardando}
-                  className="px-5 py-2 text-sm font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  {guardando ? 'Guardando...' : 'Crear Rol'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ModalEliminarRol
+        rol={rolAEliminar.rol}
+        cantidadEmpleados={rolAEliminar.cantidad}
+        onClose={() => setRolAEliminar({ rol: null, cantidad: 0 })}
+        onEliminado={async (idRolEliminado) => {
+          if (Number(filtroRolPersonal) === Number(idRolEliminado)) {
+            setFiltroRolPersonal('todos');
+          }
+          await cargarDatos(true);
+          onPermisosActualizados?.();
+        }}
+      />
 
       {/* Modal Detalle de Historial Legible */}
       {detalleModal && (

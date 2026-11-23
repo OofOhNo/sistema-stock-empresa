@@ -15,11 +15,14 @@ router.put('/:id_usuario/restablecer-password', verificarToken, requierePermiso(
 
 router.get('/roles', verificarToken, requierePermiso('usuarios', 'ver'), usuarioController.listarRoles);
 router.post('/roles', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.crearRol);
+router.put('/roles/:id_rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarRol);
+router.delete('/roles/:id_rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.eliminarRol);
 router.put('/roles/:id_rol/ubicaciones-permiso', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarPermisoUbicacionesRol);
 router.put('/roles/:id_rol/duracion-sesion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarDuracionSesionRol);
 router.put('/roles/:id_rol/jerarquia', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarNivelJerarquiaRol);
 
 router.put('/:id_usuario/rol', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarRol);
+router.put('/:id_usuario/email', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarEmail);
 router.put('/:id_usuario/ubicacion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.cambiarUbicacion);
 router.put('/:id_usuario/configuracion', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.actualizarConfiguracion);
 router.delete('/:id_usuario', verificarToken, requierePermiso('usuarios', 'editar'), usuarioController.eliminarUsuario);
