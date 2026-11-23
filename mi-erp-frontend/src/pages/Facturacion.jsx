@@ -12,6 +12,7 @@ import {
 import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
 import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
+import ModalGreSuelta from '../components/facturacion/ModalGreSuelta';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
 import { escaparHtml } from '../utils/htmlPrint';
 import { esUnidadSoloEnteros, obtenerInfoUnidad } from '../utils/unidades';
@@ -180,6 +181,7 @@ export default function Facturacion({ usuario }) {
   const [greFormPedido, setGreFormPedido] = useState(() => crearEstadoGreInicial());
   const [greFormManual, setGreFormManual] = useState(() => crearEstadoGreInicial());
   const [guiaPreview, setGuiaPreview] = useState(null);
+  const [modalGreSuelta, setModalGreSuelta] = useState(false);
   const [procesandoGreId, setProcesandoGreId] = useState(null);
   const yaSeleccionoPedidoRef = useRef(false);
   const catalogosGreRef = useRef({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
@@ -2258,14 +2260,26 @@ export default function Facturacion({ usuario }) {
                 Guías de Remisión Electrónica (Serie {configSunat?.serie_gre_remitente || 'T001'})
               </h3>
               <p className="text-xs text-slate-500">
-                Emitidas automáticamente junto a cada Factura (01) • Envío integrado a SUNAT ({configSunat?.modo_integracion === 'APISPERU' ? 'APIsPERU' : 'Modo Demo'})
+                Emitidas junto a Facturas (01) o de forma independiente • Envío integrado a SUNAT ({configSunat?.modo_integracion === 'APISPERU' ? 'APIsPERU' : configSunat?.modo_integracion === 'NUBEFACT_REAL' ? 'NubeFact' : 'Modo Demo'})
               </p>
             </div>
-            <BotonExportarExcel
-              onClick={exportarGreExcel}
-              label="Exportar Excel (Guías)"
-              cantidad={guiasRemision.length}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              {puedeEditarFacturacion && (
+                <button
+                  type="button"
+                  onClick={() => setModalGreSuelta(true)}
+                  className="inline-flex items-center space-x-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  <Plus size={14} />
+                  <span>Nueva GRE (Sin Factura)</span>
+                </button>
+              )}
+              <BotonExportarExcel
+                onClick={exportarGreExcel}
+                label="Exportar Excel (Guías)"
+                cantidad={guiasRemision.length}
+              />
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
@@ -4129,6 +4143,23 @@ export default function Facturacion({ usuario }) {
           guia={guiaPreview}
           emisor={configSunat || {}}
           onClose={() => setGuiaPreview(null)}
+        />
+      )}
+
+      {modalGreSuelta && (
+        <ModalGreSuelta
+          onClose={() => setModalGreSuelta(false)}
+          clientes={clientes}
+          productos={productos}
+          comprobantes={comprobantes}
+          configSunat={configSunat || {}}
+          catalogosGre={catalogosGre}
+          esAdminCentral={esAdminCentral}
+          onCatalogosActualizados={recargarCatalogosGre}
+          onGreEmitida={async (guiaNueva) => {
+            await cargarDatos();
+            if (guiaNueva) setGuiaPreview(guiaNueva);
+          }}
         />
       )}
 

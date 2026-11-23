@@ -19,7 +19,9 @@ export default function SeccionGreFactura({
   destinatarioNombre = '',
   destinatarioDocumento = '',
   pesoBrutoTotal = 0,
-  bienesResumen = []
+  bienesResumen = [],
+  titulo = 'Guía de Remisión Electrónica Automática',
+  subtitulo = 'Se emitirá y vinculará automáticamente con esta Factura'
 }) {
   const [gestionAbierta, setGestionAbierta] = useState(null); // 'punto' | 'vehiculo' | 'conductor' | null
   const [nuevoPunto, setNuevoPunto] = useState({ tipo: '-', ubigeo: '', domicilio: '' });
@@ -232,10 +234,10 @@ export default function SeccionGreFactura({
           </div>
           <div>
             <h4 className="font-bold text-sky-950 text-xs uppercase tracking-wider">
-              Guía de Remisión Electrónica Automática (Serie EG07)
+              {titulo}
             </h4>
             <p className="text-[11px] text-sky-700">
-              Se emitirá y vinculará automáticamente con esta Factura
+              {subtitulo}
             </p>
           </div>
         </div>
@@ -279,7 +281,7 @@ export default function SeccionGreFactura({
               onChange={(e) => setGreForm({ ...greForm, tipo_gre: e.target.value })}
               className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
             >
-              <option value="REMITENTE">GRE Remitente (EG07)</option>
+              <option value="REMITENTE">GRE Remitente</option>
               <option value="TRANSPORTISTA">GRE Transportista</option>
             </select>
           </div>
@@ -357,27 +359,56 @@ export default function SeccionGreFactura({
             )}
           </div>
           {puntosLlegadaSunat.length > 0 && !modoLlegadaManual ? (
-            <select
-              value={greForm.punto_llegada_direccion || ''}
-              onChange={(e) => handleSelectPuntoLlegada(e.target.value)}
-              className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
-            >
-              {puntosLlegadaSunat.map((pt, idx) => (
-                <option key={pt.id_punto_llegada || idx} value={pt.direccion}>
-                  {pt.ubigeo ? `[${pt.ubigeo}] ` : ''}{pt.tipo ? `${pt.tipo} — ` : ''}{pt.direccion}
-                </option>
-              ))}
-              <option value="__MANUAL__">✏️ Escribir / agregar otra dirección...</option>
-            </select>
+            <div className="space-y-1.5">
+              <select
+                value={greForm.punto_llegada_direccion || ''}
+                onChange={(e) => handleSelectPuntoLlegada(e.target.value)}
+                className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+              >
+                {puntosLlegadaSunat.map((pt, idx) => (
+                  <option key={pt.id_punto_llegada || idx} value={pt.direccion}>
+                    {pt.ubigeo ? `[${pt.ubigeo}] ` : ''}{pt.tipo ? `${pt.tipo} — ` : ''}{pt.direccion}
+                  </option>
+                ))}
+                <option value="__MANUAL__">✏️ Escribir / agregar otra dirección...</option>
+              </select>
+              {!/^\d{6}$/.test(String(greForm.punto_llegada_ubigeo || '').trim()) && (
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-1.5">
+                  <span className="text-[10px] font-bold text-amber-800 whitespace-nowrap">
+                    Ubigeo (6 díg.) *:
+                  </span>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={greForm.punto_llegada_ubigeo || ''}
+                    onChange={(e) => setGreForm({ ...greForm, punto_llegada_ubigeo: e.target.value.replace(/\D/g, '') })}
+                    placeholder="Ej: 040101"
+                    className="w-28 p-1 border border-amber-300 rounded bg-white text-xs font-mono font-bold"
+                  />
+                  <span className="text-[10px] text-amber-700">Requerido por SUNAT</span>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="space-y-1.5">
-              <input
-                type="text"
-                value={greForm.punto_llegada_direccion}
-                onChange={(e) => setGreForm({ ...greForm, punto_llegada_direccion: e.target.value })}
-                placeholder="Dirección exacta de entrega / llegada"
-                className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={greForm.punto_llegada_ubigeo || ''}
+                  onChange={(e) => setGreForm({ ...greForm, punto_llegada_ubigeo: e.target.value.replace(/\D/g, '') })}
+                  placeholder="Ubigeo 6 díg. *"
+                  title="Ubigeo de 6 dígitos del punto de llegada (ej. 040104)"
+                  className="p-2 border border-slate-300 rounded-lg bg-white text-xs font-mono font-bold"
+                />
+                <input
+                  type="text"
+                  value={greForm.punto_llegada_direccion}
+                  onChange={(e) => setGreForm({ ...greForm, punto_llegada_direccion: e.target.value })}
+                  placeholder="Dirección exacta de entrega / llegada *"
+                  className="sm:col-span-2 p-2 border border-slate-300 rounded-lg bg-white text-xs"
+                />
+              </div>
               {destinatarioDocumento && greForm.punto_llegada_direccion?.trim() && (
                 <button
                   type="button"

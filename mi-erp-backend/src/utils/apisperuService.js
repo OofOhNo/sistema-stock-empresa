@@ -422,6 +422,9 @@ function extraerMensajeErrorApisperu(status, data, textFallback = '') {
         const err = data.sunatResponse.error;
         return `SUNAT [${err.code || 'ERR'}]: ${err.message || 'Comprobante rechazado por SUNAT'}`;
     }
+    if (typeof data?.error === 'string' && data.error.trim()) {
+        return data.error.trim();
+    }
     if (data?.error?.message) {
         return `SUNAT [${data.error.code || 'ERR'}]: ${data.error.message}`;
     }
@@ -623,7 +626,9 @@ function construirPayloadApisperuGre({
         if (placaLimpia) {
             envio.vehiculo = { placa: placaLimpia };
             if (vehNumAutoriz) envio.vehiculo.nroAutorizacion = String(vehNumAutoriz).trim();
-            if (vehEntidad) envio.vehiculo.codEmisor = String(vehEntidad).trim();
+            if (vehEntidad && /^\d{2}$/.test(String(vehEntidad).trim())) {
+                envio.vehiculo.codEmisor = String(vehEntidad).trim();
+            }
         }
         if (condNumDoc || !trasladoVehiculoM1L) {
             envio.choferes = [{
