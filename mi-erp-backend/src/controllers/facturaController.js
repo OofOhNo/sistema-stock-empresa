@@ -13,7 +13,9 @@ const {
     DEFAULT_APISPERU_URL,
     resolverModoIntegracion,
     obtenerCredencialesApisperu,
+    normalizarUnidadSunat,
     extraerXmlDeZipBase64,
+    consultarComprobanteEstadoApisperu,
     probarConexionApisperu
 } = require('../utils/apisperuService');
 const {
@@ -70,6 +72,46 @@ async function obtenerConfigEmisor(clientOrPool = pool) {
         enviar_automaticamente_sunat: true,
         enviar_automaticamente_cliente: true
     };
+}
+
+/**
+ * Calcula los parámetros SPOT de detracción según tipo de comprobante, monto y código.
+ */
+function calcularInfoDetraccion(tipoComprobante, montoTotal, aplicaDetraccion, codigoDetraccion = '014') {
+    const detInfo = CATALOGOS_SUNAT.codigos_detraccion.find(d => d.codigo === codigoDetraccion)
+        || CATALOGOS_SUNAT.codigos_detraccion[0];
+    const aplica = Boolean(aplicaDetraccion && tipoComprobante === '01');
+    const porcentaje = aplica ? detInfo.porcentaje : 0;
+    const monto = aplica ? +(Number(montoTotal || 0) * (porcentaje / 100)).toFixed(2) : 0;
+    return {
+        aplica,
+        codigo: aplica ? detInfo.codigo : null,
+        porcentaje,
+        monto,
+        tipoOperacionSunat: aplica ? '1001' : '0101'
+    };
+}
+
+/**
+ * Resuelve un id_ubicacion válido existente en ubicaciones (sin asumir id=1).
+ */
+async function resolverUbicacionValida(clientOrPool, idSolicitado, idUsuario) {
+    const candidatos = [idSolicitado, idUsuario]
+        .map((v) => parseInt(v, 10))
+        .filter((v) => Number.isInteger(v) && v > 0);
+
+    for (const idCand of candidatos) {
+        const check = await clientOrPool.query(
+            'SELECT id_ubicacion FROM ubicaciones WHERE id_ubicacion = $1 LIMIT 1',
+            [idCand]
+        );
+        if (check.rows.length > 0) return check.rows[0].id_ubicacion;
+    }
+
+    const fallback = await clientOrPool.query(
+        'SELECT id_ubicacion FROM ubicaciones ORDER BY activo DESC, id_ubicacion ASC LIMIT 1'
+    );
+    return fallback.rows.length > 0 ? fallback.rows[0].id_ubicacion : null;
 }
 
 /**
@@ -976,12 +1018,11 @@ const facturaController = {
             const montoEnLetras = numeroALetrasSoles(totales.monto_total);
 
             // Detracción SPOT (si aplica y supera S/ 700)
-            const detInfo = CATALOGOS_SUNAT.codigos_detraccion.find(d => d.codigo === codigo_detraccion)
-                || CATALOGOS_SUNAT.codigos_detraccion[0];
-            const aplicaDetFinal = Boolean(aplica_detraccion && tipo_comprobante === '01');
-            const porcentajeDetFinal = aplicaDetFinal ? detInfo.porcentaje : 0;
-            const montoDetFinal = aplicaDetFinal ? +(totales.monto_total * (porcentajeDetFinal / 100)).toFixed(2) : 0;
-            const tipoOperacionSunat = aplicaDetFinal ? '1001' : '0101';
+            const detInfo = calcularInfoDetraccion(tipo_comprobante, totales.monto_total, aplica_detraccion, codigo_detraccion);
+            const aplicaDetFinal = detInfo.aplica;
+            const porcentajeDetFinal = detInfo.porcentaje;
+            const montoDetFinal = detInfo.monto;
+            const tipoOperacionSunat = detInfo.tipoOperacionSunat;
 
             const serie = tipo_comprobante === '01' ? 'F001' : 'B001';
 
@@ -1260,7 +1301,7 @@ const facturaController = {
             };
             let itemsOriginales = [];
 
-            if (compOriginal.id_pedido) {
+            if (compOriginal.id_pedido && !compOriginal.es_pago_dividido) {
                 const resPedCli = await client.query(`
                     SELECT c.tipo_documento, c.numero_documento, c.razon_social_o_nombre, c.direccion, c.email
                     FROM pedidos p
@@ -1293,7 +1334,8 @@ const facturaController = {
                     if (resCliDirecto.rows.length > 0) {
                         clienteDatos = resCliDirecto.rows[0];
                     }
-                } else if (compOriginal.cliente_numero_doc || compOriginal.cliente_nombre) {
+                }
+                if ((!compOriginal.id_cliente || !clienteDatos?.numero_documento) && (compOriginal.cliente_numero_doc || compOriginal.cliente_nombre)) {
                     clienteDatos = {
                         tipo_documento: compOriginal.cliente_tipo_doc || (compOriginal.tipo_comprobante === '01' ? '6' : '1'),
                         numero_documento: compOriginal.cliente_numero_doc || '-',
@@ -1462,46 +1504,61 @@ const facturaController = {
             let seDevolvioStock = false;
             // Devolver el stock físico descontado al inventario y dejar registro de entrada en movimientos
             if (compOriginal.id_pedido) {
-                const resPedido = await client.query(
-                    'SELECT id_pedido, id_ubicacion, COALESCE(stock_descontado, true) AS stock_descontado FROM pedidos WHERE id_pedido = $1 FOR UPDATE',
-                    [compOriginal.id_pedido]
-                );
-
-                if (resPedido.rows.length > 0) {
-                    const ped = resPedido.rows[0];
-                    if (ped.stock_descontado) {
-                        const resItems = await client.query(
-                            'SELECT id_producto, cantidad FROM detalle_pedidos WHERE id_pedido = $1',
-                            [ped.id_pedido]
-                        );
-                        for (const item of resItems.rows) {
-                            await client.query(`
-                                UPDATE inventario
-                                SET cantidad_fisica = cantidad_fisica + $1,
-                                    ultima_actualizacion = CURRENT_TIMESTAMP
-                                WHERE id_producto = $2 AND id_ubicacion = $3;
-                            `, [item.cantidad, item.id_producto, ped.id_ubicacion]);
-
-                            await client.query(`
-                                INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                                VALUES ($1, $2, $3, 'INGRESO', $4, $5);
-                            `, [
-                                item.id_producto,
-                                ped.id_ubicacion,
-                                req.usuario?.id_usuario || 1,
-                                item.cantidad,
-                                `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula ${compOriginal.serie}-${compOriginal.correlativo})`
-                            ]);
-                        }
-                        seDevolvioStock = true;
-                    }
-
-                    await client.query(`
-                        UPDATE pedidos 
-                        SET estado_pedido = 'CANCELADO',
-                            stock_descontado = false
+                let debeProcesarPedido = true;
+                if (compOriginal.es_pago_dividido) {
+                    const resOtrosActivos = await client.query(`
+                        SELECT COUNT(*)::int AS activos
+                        FROM comprobantes
                         WHERE id_pedido = $1
-                    `, [ped.id_pedido]);
+                          AND id_comprobante <> $2
+                          AND tipo_comprobante IN ('01', '03')
+                          AND estado_sunat <> 'ANULADO'
+                    `, [compOriginal.id_pedido, compOriginal.id_comprobante]);
+                    debeProcesarPedido = (resOtrosActivos.rows[0]?.activos || 0) === 0;
+                }
+
+                if (debeProcesarPedido) {
+                    const resPedido = await client.query(
+                        'SELECT id_pedido, id_ubicacion, COALESCE(stock_descontado, true) AS stock_descontado FROM pedidos WHERE id_pedido = $1 FOR UPDATE',
+                        [compOriginal.id_pedido]
+                    );
+
+                    if (resPedido.rows.length > 0) {
+                        const ped = resPedido.rows[0];
+                        if (ped.stock_descontado && motivoCat09.devuelve_stock) {
+                            const resItems = await client.query(
+                                'SELECT id_producto, cantidad FROM detalle_pedidos WHERE id_pedido = $1',
+                                [ped.id_pedido]
+                            );
+                            for (const item of resItems.rows) {
+                                await client.query(`
+                                    UPDATE inventario
+                                    SET cantidad_fisica = cantidad_fisica + $1,
+                                        ultima_actualizacion = CURRENT_TIMESTAMP
+                                    WHERE id_producto = $2 AND id_ubicacion = $3;
+                                `, [item.cantidad, item.id_producto, ped.id_ubicacion]);
+
+                                await client.query(`
+                                    INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                                    VALUES ($1, $2, $3, 'INGRESO', $4, $5);
+                                `, [
+                                    item.id_producto,
+                                    ped.id_ubicacion,
+                                    req.usuario?.id_usuario || null,
+                                    item.cantidad,
+                                    `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula ${compOriginal.serie}-${compOriginal.correlativo})`
+                                ]);
+                            }
+                            seDevolvioStock = true;
+                        }
+
+                        await client.query(`
+                            UPDATE pedidos 
+                            SET estado_pedido = 'CANCELADO',
+                                stock_descontado = CASE WHEN $2 THEN false ELSE stock_descontado END
+                            WHERE id_pedido = $1
+                        `, [ped.id_pedido, seDevolvioStock]);
+                    }
                 }
             } else if (
                 compOriginal.origen_facturacion === 'MANUAL'
@@ -1509,28 +1566,30 @@ const facturaController = {
                 && Array.isArray(compOriginal.items_json)
                 && motivoCat09.devuelve_stock
             ) {
-                const idUbicDev = compOriginal.id_ubicacion || req.usuario?.id_ubicacion || 1;
-                for (const item of compOriginal.items_json) {
-                    const cantDev = Number(item.cantidad) || 0;
-                    if (item.id_producto && cantDev > 0) {
-                        await client.query(`
-                            UPDATE inventario
-                            SET cantidad_fisica = cantidad_fisica + $1,
-                                ultima_actualizacion = CURRENT_TIMESTAMP
-                            WHERE id_producto = $2 AND id_ubicacion = $3;
-                        `, [cantDev, item.id_producto, idUbicDev]);
+                const idUbicDev = compOriginal.id_ubicacion || req.usuario?.id_ubicacion || null;
+                if (idUbicDev) {
+                    for (const item of compOriginal.items_json) {
+                        const cantDev = Number(item.cantidad) || 0;
+                        if (item.id_producto && cantDev > 0) {
+                            await client.query(`
+                                UPDATE inventario
+                                SET cantidad_fisica = cantidad_fisica + $1,
+                                    ultima_actualizacion = CURRENT_TIMESTAMP
+                                WHERE id_producto = $2 AND id_ubicacion = $3;
+                            `, [cantDev, item.id_producto, idUbicDev]);
 
-                        await client.query(`
-                            INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
-                            VALUES ($1, $2, $3, 'INGRESO', $4, $5);
-                        `, [
-                            item.id_producto,
-                            idUbicDev,
-                            req.usuario?.id_usuario || null,
-                            cantDev,
-                            `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula venta manual ${compOriginal.serie}-${compOriginal.correlativo})`
-                        ]);
-                        seDevolvioStock = true;
+                            await client.query(`
+                                INSERT INTO movimientos_kardex (id_producto, id_ubicacion, id_usuario, tipo_movimiento, cantidad, motivo)
+                                VALUES ($1, $2, $3, 'INGRESO', $4, $5);
+                            `, [
+                                item.id_producto,
+                                idUbicDev,
+                                req.usuario?.id_usuario || null,
+                                cantDev,
+                                `Devolución de stock por Nota de Crédito ${serieNC}-${correlativoNC} (Anula venta manual ${compOriginal.serie}-${compOriginal.correlativo})`
+                            ]);
+                            seDevolvioStock = true;
+                        }
                     }
                 }
             }
@@ -1668,7 +1727,7 @@ const facturaController = {
                 comprobante.monto_en_letras = numeroALetrasSoles(comprobante.monto_total);
             }
             if (!comprobante.cadena_qr) {
-                const fechaIso = new Date(comprobante.fecha_emision || Date.now()).toISOString().split('T')[0];
+                const fechaIso = new Date(comprobante.fecha_emision || Date.now()).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
                 comprobante.cadena_qr = `${configEmisor.ruc_emisor}|${comprobante.tipo_comprobante}|${comprobante.serie}|${String(comprobante.correlativo).padStart(8, '0')}|${Number(comprobante.monto_igv || 0).toFixed(2)}|${Number(comprobante.monto_total || 0).toFixed(2)}|${fechaIso}|${comprobante.cliente_tipo_doc || '6'}|${comprobante.cliente_documento || '-'}|${comprobante.codigo_hash || ''}|`;
             }
 
@@ -1978,7 +2037,83 @@ const facturaController = {
                 cliente = resCliente.rows[0];
             }
 
-            const montoCalculadoTotal = items.reduce((sum, it) => sum + (Number(it.cantidad || 1) * Number(it.precio_unitario || 0)), 0);
+            const idsProdSolicitados = [...new Set(
+                items.map((it) => parseInt(it?.id_producto, 10)).filter((id) => Number.isInteger(id) && id > 0)
+            )];
+            const productosDbMap = new Map();
+            if (idsProdSolicitados.length > 0) {
+                const resProds = await client.query(`
+                    SELECT p.id_producto, p.sku, p.nombre, p.unidad_medida, p.tipo_afectacion_igv,
+                           u.codigo AS codigo_unidad_sunat
+                    FROM productos p
+                    LEFT JOIN unidades_medida u ON p.id_unidad = u.id_unidad
+                    WHERE p.id_producto = ANY($1::int[])
+                `, [idsProdSolicitados]);
+                for (const row of resProds.rows) {
+                    productosDbMap.set(Number(row.id_producto), row);
+                }
+            }
+
+            const itemsValidados = [];
+            for (let idx = 0; idx < items.length; idx++) {
+                const item = items[idx] || {};
+                const idProd = parseInt(item.id_producto, 10);
+                const prodDb = Number.isInteger(idProd) && idProd > 0 ? productosDbMap.get(idProd) : null;
+                const descripcion = String(item.descripcion || prodDb?.nombre || '').trim();
+                const cant = Number(item.cantidad);
+                const precio = Number(item.precio_unitario);
+                const peso = Number(item.peso) || 0;
+
+                if (!descripcion) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: `El ítem #${idx + 1} debe tener una descripción válida.`
+                    });
+                }
+                if (!Number.isFinite(cant) || cant <= 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: `La cantidad de "${descripcion}" debe ser mayor a 0.`
+                    });
+                }
+                if (!Number.isFinite(precio) || precio <= 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: `El precio unitario de "${descripcion}" debe ser mayor a S/ 0.00.`
+                    });
+                }
+
+                const codigoUnidadSunat = normalizarUnidadSunat(
+                    item.codigo_unidad_sunat || prodDb?.codigo_unidad_sunat || item.unidad_medida || prodDb?.unidad_medida,
+                    'NIU'
+                );
+                const subtotal = +(cant * precio).toFixed(2);
+
+                itemsValidados.push({
+                    id_producto: Number.isInteger(idProd) && idProd > 0 ? idProd : null,
+                    sku: item.sku || prodDb?.sku || 'PROD',
+                    descripcion,
+                    unidad_medida: item.unidad_medida || prodDb?.unidad_medida || (codigoUnidadSunat === 'KGM' ? 'Kilogramo' : 'Unidad'),
+                    codigo_unidad_sunat: codigoUnidadSunat,
+                    tipo_afectacion_igv: item.tipo_afectacion_igv || prodDb?.tipo_afectacion_igv || '10',
+                    cantidad: cant,
+                    precio_unitario: precio,
+                    peso: peso,
+                    subtotal: subtotal
+                });
+            }
+
+            const montoCalculadoTotal = +itemsValidados.reduce((sum, it) => sum + Number(it.subtotal || 0), 0).toFixed(2);
+            if (montoCalculadoTotal <= 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'El importe total del comprobante debe ser mayor a S/ 0.00.'
+                });
+            }
 
             // Validar reglas tributarias (DNI obligatorio en Boletas, RUC en Facturas)
             const validacionSunat = validarReglasTributarias({
@@ -2006,33 +2141,11 @@ const facturaController = {
                 } else {
                     const f = new Date();
                     f.setDate(f.getDate() + diasCreditoFinal);
-                    fechaVencimientoFinal = f.toISOString().split('T')[0];
+                    fechaVencimientoFinal = f.toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
                 }
             }
 
-            const idUbicacionUsuario = req.body?.id_ubicacion || req.usuario?.id_ubicacion || 1;
-
-            // Procesar ítems y descontar stock SOLO si decreceStock === true
-            const itemsValidados = [];
-            for (const item of items) {
-                const cant = Number(item.cantidad) || 1;
-                const precio = Number(item.precio_unitario) || 0;
-                const peso = Number(item.peso) || 0;
-                const subtotal = +(cant * precio).toFixed(2);
-
-                itemsValidados.push({
-                    id_producto: item.id_producto || null,
-                    sku: item.sku || 'PROD',
-                    descripcion: item.descripcion || 'Producto / Servicio',
-                    unidad_medida: item.unidad_medida || 'Unidad',
-                    codigo_unidad_sunat: item.codigo_unidad_sunat || 'NIU',
-                    tipo_afectacion_igv: item.tipo_afectacion_igv || '10',
-                    cantidad: cant,
-                    precio_unitario: precio,
-                    peso: peso,
-                    subtotal: subtotal
-                });
-            }
+            const idUbicacionUsuario = await resolverUbicacionValida(client, req.body?.id_ubicacion, req.usuario?.id_ubicacion);
 
             if (decreceStock) {
                 await descontarStockPorItems(client, {
@@ -2046,6 +2159,7 @@ const facturaController = {
 
             const { itemsCalculados, totales } = calcularDesgloseTributario(itemsValidados, configEmisor.igv_porcentaje);
             const montoEnLetras = numeroALetrasSoles(totales.monto_total);
+            const detInfo = calcularInfoDetraccion(tipo_comprobante, totales.monto_total, aplica_detraccion, codigo_detraccion);
 
             const serie = tipo_comprobante === '01' ? 'F001' : 'B001';
             const resSerie = await client.query('SELECT ultimo_correlativo FROM series_sunat WHERE serie = $1 FOR UPDATE', [serie]);
@@ -2086,7 +2200,10 @@ const facturaController = {
                 cantidad_cuotas: cuotasFinal,
                 fecha_vencimiento_cuota: fechaVencimientoFinal,
                 medio_pago_sunat: medioPagoFinal,
-                aplica_detraccion: false,
+                aplica_detraccion: detInfo.aplica,
+                codigo_detraccion: detInfo.codigo,
+                porcentaje_detraccion: detInfo.porcentaje,
+                monto_detraccion: detInfo.monto,
                 monto_en_letras: montoEnLetras,
                 configEmisor,
                 datosUbl
@@ -2101,7 +2218,8 @@ const facturaController = {
                     monto_igv, monto_total, 
                     forma_pago, dias_credito, fecha_vencimiento_cuota,
                     medio_pago_sunat, tipo_operacion_sunat,
-                    aplica_detraccion, estado_sunat, codigo_hash, mensaje_cdr,
+                    aplica_detraccion, codigo_detraccion, porcentaje_detraccion, monto_detraccion,
+                    estado_sunat, codigo_hash, mensaje_cdr,
                     cadena_qr, monto_en_letras,
                     enlace_pdf, enlace_xml, enlace_cdr,
                     xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision,
@@ -2114,12 +2232,13 @@ const facturaController = {
                     $11, $12, $13, $14,
                     $15, $16,
                     $17, $18, $19,
-                    $20, '0101',
-                    FALSE, $21, $22, $23,
-                    $24, $25,
+                    $20, $21,
+                    $22, $23, $24, $25,
                     $26, $27, $28,
-                    $29, $30, $31, $32, $33,
-                    $34, $35, 'MANUAL', $36, $37, $38
+                    $29, $30,
+                    $31, $32, $33,
+                    $34, $35, $36, $37, $38,
+                    $39, $40, 'MANUAL', $41, $42, $43
                 )
                 RETURNING *;
             `;
@@ -2145,6 +2264,11 @@ const facturaController = {
                 diasCreditoFinal,
                 fechaVencimientoFinal,
                 medioPagoFinal,
+                detInfo.tipoOperacionSunat,
+                detInfo.aplica,
+                detInfo.codigo,
+                detInfo.porcentaje,
+                detInfo.monto,
                 respuestaOse.estado_sunat,
                 respuestaOse.codigo_hash,
                 respuestaOse.mensaje_cdr,
@@ -3252,6 +3376,78 @@ const facturaController = {
         } catch (error) {
             console.error('Error al actualizar estado de pago del comprobante:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al actualizar el estado de pago.' });
+        }
+    },
+
+    consultarEstadoComprobanteSunat: async (req, res) => {
+        try {
+            const idComprobante = parseInt(req.params.id, 10);
+            if (!idComprobante) {
+                return res.status(400).json({ exito: false, mensaje: 'ID de comprobante inválido.' });
+            }
+            const resComp = await pool.query('SELECT * FROM comprobantes WHERE id_comprobante = $1', [idComprobante]);
+            if (resComp.rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Comprobante no encontrado.' });
+            }
+            const comp = resComp.rows[0];
+            if (comp.tipo_comprobante !== '01' && comp.tipo_comprobante !== '03') {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'La consulta de estado /invoice/status solo aplica a Facturas (01) y Boletas (03).'
+                });
+            }
+
+            const configEmisor = await obtenerConfigEmisor(pool);
+            if (resolverModoIntegracion(configEmisor) !== 'APISPERU') {
+                return res.status(400).json({
+                    exito: false,
+                    mensaje: 'La consulta directa de CDR en SUNAT (/invoice/status) requiere modo de integración APIsPERU.'
+                });
+            }
+
+            const consulta = await consultarComprobanteEstadoApisperu(comp, configEmisor);
+            const enlaceCdrLocal = `/api/facturacion/${idComprobante}/cdr`;
+            const { rows } = await pool.query(`
+                UPDATE comprobantes
+                SET estado_sunat = CASE WHEN estado_sunat = 'ANULADO' THEN 'ANULADO' ELSE $1::varchar END,
+                    mensaje_cdr = COALESCE($2, mensaje_cdr),
+                    cdr_xml = COALESCE($3, cdr_xml),
+                    cdr_zip_base64 = COALESCE($4, cdr_zip_base64),
+                    enlace_cdr = CASE WHEN ($3 IS NOT NULL OR $4 IS NOT NULL) THEN COALESCE(enlace_cdr, $5::text) ELSE enlace_cdr END,
+                    respuesta_ose_json = COALESCE(respuesta_ose_json, '{}'::jsonb) || jsonb_build_object('ultima_consulta_status', $6::jsonb)
+                WHERE id_comprobante = $7
+                RETURNING *;
+            `, [
+                consulta.estado_sunat,
+                consulta.mensaje_cdr,
+                consulta.cdr_xml,
+                consulta.cdr_zip_base64,
+                enlaceCdrLocal,
+                JSON.stringify(consulta.respuesta_ose_json || {}),
+                idComprobante
+            ]);
+
+            await registrarAuditoria(
+                pool,
+                req.usuario?.id_usuario || null,
+                'CONSULTAR_ESTADO_COMPROBANTE_SUNAT',
+                'comprobantes',
+                idComprobante,
+                { estado_sunat: comp.estado_sunat },
+                { estado_sunat: rows[0].estado_sunat, mensaje_cdr: rows[0].mensaje_cdr }
+            );
+
+            return res.status(200).json({
+                exito: true,
+                mensaje: rows[0].mensaje_cdr || `Estado actualizado desde SUNAT: ${rows[0].estado_sunat}.`,
+                comprobante: rows[0]
+            });
+        } catch (error) {
+            console.error('Error al consultar estado CDR de comprobante en APIsPERU:', error);
+            return res.status(500).json({
+                exito: false,
+                mensaje: error.message || 'No se pudo consultar el estado del comprobante en SUNAT.'
+            });
         }
     },
 

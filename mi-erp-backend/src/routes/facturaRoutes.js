@@ -49,6 +49,7 @@ router.post('/gre/:id/reenviar', verificarToken, requierePermiso('facturacion', 
 
 // Detalle completo de un comprobante para vista previa e impresión PDF A4 reglamentaria
 router.get('/:id/detalle', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerDetalleComprobante);
+router.post('/:id/consultar-estado', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.consultarEstadoComprobanteSunat);
 
 // Descarga de XML UBL 2.1 firmado y Constancia de Recepción CDR de SUNAT
 router.get('/:id/xml', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.descargarXmlComprobante);

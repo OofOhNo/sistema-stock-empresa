@@ -559,7 +559,6 @@ async function crearGreInterna(client, {
     const llegadaUbigeo = gre.punto_llegada_ubigeo || '';
     const fechaInicio = gre.fecha_inicio_traslado || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
     const motivoTraslado = gre.motivo_traslado || 'Venta';
-    const modalidadTraslado = gre.modalidad_traslado || 'Privado';
 
     let docRel = null;
     if (id_comprobante) {
@@ -585,8 +584,8 @@ async function crearGreInterna(client, {
         fechaInicio,
         motivoTraslado,
         pesoCalculado,
-        unidadPeso: gre.unidad_peso_bruto || 'KGM',
-        numeroBultos: gre.numero_de_bultos || 1,
+        unidadPeso: normalizarUnidadSunat(gre.unidad_peso_bruto || 'KGM', 'KGM'),
+        numeroBultos,
         modalidadTraslado,
         partidaUbigeo,
         partidaDireccion,
@@ -599,7 +598,13 @@ async function crearGreInterna(client, {
         condNumDoc,
         condNombres,
         condLicencia,
-        observaciones: gre.observaciones || '',
+        transportistaRuc,
+        transportistaRazon,
+        transportistaMtc,
+        remitenteTipoDoc,
+        remitenteNumDoc,
+        remitenteRazonSocial,
+        observaciones: observacionesGre,
         trasladoVehiculoM1L: gre.traslado_vehiculo_m1_l,
         retornoEnvasesVacios: gre.retorno_envases_vacios,
         retornoVehiculoVacio: gre.retorno_vehiculo_vacio,
@@ -663,7 +668,10 @@ async function crearGreInterna(client, {
             xml_firmado, cdr_xml, cdr_zip_base64,
             modo_emision, respuesta_ose_json,
             documento_relacionado_tipo, documento_relacionado_serie, documento_relacionado_numero,
-            creado_por
+            creado_por,
+            transportista_ruc, transportista_razon_social, transportista_nro_mtc,
+            remitente_tipo_doc, remitente_num_doc, remitente_razon_social,
+            numero_de_bultos, observaciones
         )
         VALUES (
             $1, $2, $3,
@@ -681,7 +689,10 @@ async function crearGreInterna(client, {
             $40, $41, $42,
             $43, $44,
             $45, $46, $47,
-            $48
+            $48,
+            $49, $50, $51,
+            $52, $53, $54,
+            $55, $56
         )
         RETURNING *, TO_CHAR(fecha_inicio_traslado, 'YYYY-MM-DD') AS fecha_inicio_traslado_iso;
     `, [
@@ -701,7 +712,7 @@ async function crearGreInterna(client, {
         destTipo,
         destNum,
         destRazon,
-        gre.unidad_peso_bruto || 'KGM',
+        normalizarUnidadSunat(gre.unidad_peso_bruto || 'KGM', 'KGM'),
         pesoCalculado,
         modalidadTraslado,
         Boolean(gre.retorno_envases_vacios),
@@ -732,7 +743,15 @@ async function crearGreInterna(client, {
         docRel?.tipo_comprobante || null,
         docRel?.serie || null,
         docRel?.correlativo ? Number(docRel.correlativo) : null,
-        idUsuario
+        idUsuario,
+        transportistaRuc || null,
+        transportistaRazon || null,
+        transportistaMtc || null,
+        remitenteTipoDoc || null,
+        remitenteNumDoc || null,
+        remitenteRazonSocial || null,
+        numeroBultos,
+        observacionesGre || null
     ]);
 
     const greCreada = rows[0];
@@ -856,6 +875,12 @@ async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
         }
         : null;
 
+    const bienesNormalizados = (Array.isArray(g.bienes_json) ? g.bienes_json : []).map((b, idx) => ({
+        ...b,
+        orden: b.orden || idx + 1,
+        codigo_unidad_sunat: normalizarUnidadSunat(b.codigo_unidad_sunat || b.unidad_medida, 'KGM')
+    }));
+
     const grePayloadParams = {
         tipoGre: g.tipo_gre,
         serie: g.serie,
@@ -868,7 +893,8 @@ async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
         fechaInicio: g.fecha_inicio_traslado_iso,
         motivoTraslado: g.motivo_traslado,
         pesoCalculado: Number(g.peso_bruto_total || 0),
-        unidadPeso: g.unidad_peso_bruto || 'KGM',
+        unidadPeso: normalizarUnidadSunat(g.unidad_peso_bruto || 'KGM', 'KGM'),
+        numeroBultos: g.numero_de_bultos || 1,
         modalidadTraslado: g.modalidad_traslado || 'Privado',
         partidaUbigeo: g.punto_partida_ubigeo,
         partidaDireccion: g.punto_partida_direccion,
@@ -881,12 +907,19 @@ async function reenviarGreEnNubefact(dbPool, idGre, configEmisor) {
         condNumDoc: g.conductor_num_doc,
         condNombres: g.conductor_nombres,
         condLicencia: g.conductor_licencia,
+        transportistaRuc: g.transportista_ruc || '',
+        transportistaRazon: g.transportista_razon_social || '',
+        transportistaMtc: g.transportista_nro_mtc || '',
+        remitenteTipoDoc: g.remitente_tipo_doc || '6',
+        remitenteNumDoc: g.remitente_num_doc || '',
+        remitenteRazonSocial: g.remitente_razon_social || '',
+        observaciones: g.observaciones || '',
         trasladoVehiculoM1L: g.traslado_vehiculo_m1_l,
         retornoEnvasesVacios: g.retorno_envases_vacios,
         retornoVehiculoVacio: g.retorno_vehiculo_vacio,
         transbordoProgramado: g.transbordo_programado,
         documentoRelacionado: docRel,
-        bienes: Array.isArray(g.bienes_json) ? g.bienes_json : [],
+        bienes: bienesNormalizados,
         configEmisor
     };
 

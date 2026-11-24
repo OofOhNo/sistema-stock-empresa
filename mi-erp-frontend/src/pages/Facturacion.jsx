@@ -12,7 +12,7 @@ import {
 import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
 import SelectorDecreceStock from '../components/facturacion/SelectorDecreceStock';
 import SelectorEmitirGre from '../components/facturacion/SelectorEmitirGre';
-import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
+import { crearEstadoGreInicial, validarFormularioGre } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
 import ModalGreSuelta from '../components/facturacion/ModalGreSuelta';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
@@ -121,6 +121,7 @@ export default function Facturacion({ usuario }) {
   const [manualCuotas, setManualCuotas] = useState(1);
   const [manualMedioPago, setManualMedioPago] = useState('008');
   const [manualAplicaDetraccion, setManualAplicaDetraccion] = useState(false);
+  const [manualCodigoDetraccion, setManualCodigoDetraccion] = useState('014');
   const [manualPesoTotal, setManualPesoTotal] = useState('');
   const [manualDecreceStock, setManualDecreceStock] = useState(false);
   const [manualEmitirGre, setManualEmitirGre] = useState(true);
@@ -199,6 +200,7 @@ export default function Facturacion({ usuario }) {
   const [guiaPreview, setGuiaPreview] = useState(null);
   const [modalGreSuelta, setModalGreSuelta] = useState(false);
   const [procesandoGreId, setProcesandoGreId] = useState(null);
+  const [consultandoEstadoId, setConsultandoEstadoId] = useState(null);
   const yaSeleccionoPedidoRef = useRef(false);
   const catalogosGreRef = useRef({ puntos_partida: [], vehiculos: [], conductores: [], bienes_frecuentes: [] });
 
@@ -624,6 +626,17 @@ export default function Facturacion({ usuario }) {
       }
     }
 
+    const llevaGrePedido =
+      (tipoComprobante === '01' || (esPagoDividido && pagosDivididos.some((p) => p.tipo_comprobante === '01')))
+      && pedidoEmitirGre;
+    if (llevaGrePedido) {
+      const errGre = validarFormularioGre({
+        ...greFormPedido,
+        punto_llegada_direccion: greFormPedido.punto_llegada_direccion || pedidoSeleccionado.direccion_cliente || pedidoSeleccionado.direccion || ''
+      }, configSunat);
+      if (errGre) return toast.error(errGre);
+    }
+
     if (tipoComprobante === '01') {
       void verificarEstadoSunat(false);
       setAdvertenciaSunatModal({ origen: 'pedido' });
@@ -661,13 +674,14 @@ export default function Facturacion({ usuario }) {
     setManualRucDireccion('');
     setManualRucEmail('');
     setInfoRucLookup(null);
-    setManualUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || 1);
+    setManualUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || '');
     setManualTipoComp(modo === 'DIRECTO' ? '01' : '03');
     setManualFormaPago('CONTADO');
     setManualDiasCredito(28);
     setManualCuotas(1);
     setManualMedioPago('008');
     setManualAplicaDetraccion(false);
+    setManualCodigoDetraccion('014');
     setManualPesoTotal('');
     setManualDecreceStock(false);
     setManualEmitirGre(true);
@@ -753,9 +767,21 @@ export default function Facturacion({ usuario }) {
         }
       }
     } else if (campo === 'codigo_unidad_sunat') {
-      const esUnidad = valor === 'NIU';
-      copia[idx].codigo_unidad_sunat = esUnidad ? 'NIU' : 'KGM';
-      copia[idx].unidad_medida = esUnidad ? 'Unidad' : 'Kilogramo';
+      const nombresUnidad = {
+        KGM: 'Kilogramo',
+        NIU: 'Unidad',
+        BG: 'Bolsa',
+        BX: 'Caja',
+        LTR: 'Litro',
+        TNE: 'Tonelada',
+        DZN: 'Docena',
+        SA: 'Saco',
+        GLL: 'Galón',
+        ZZ: 'Servicio'
+      };
+      const cod = String(valor || 'KGM').toUpperCase();
+      copia[idx].codigo_unidad_sunat = cod;
+      copia[idx].unidad_medida = nombresUnidad[cod] || cod;
     } else if (campo === 'cantidad' || campo === 'precio_unitario') {
       const c = parseFloat(copia[idx].cantidad) || 0;
       const pu = parseFloat(copia[idx].precio_unitario) || 0;
@@ -791,14 +817,14 @@ export default function Facturacion({ usuario }) {
               email: manualRucEmail.trim()
             }
           : null,
-        id_ubicacion: manualUbicacionId,
+        id_ubicacion: manualUbicacionId || null,
         tipo_comprobante: manualTipoComp,
         forma_pago: manualFormaPago,
         dias_credito: manualFormaPago === 'CREDITO' ? parseInt(manualDiasCredito, 10) : 0,
         cantidad_cuotas: manualFormaPago === 'CREDITO' ? parseInt(manualCuotas, 10) : 1,
         medio_pago_sunat: manualFormaPago === 'CREDITO' ? '006' : manualMedioPago,
         aplica_detraccion: manualTipoComp === '01' ? manualAplicaDetraccion : false,
-        codigo_detraccion: '014',
+        codigo_detraccion: manualTipoComp === '01' && manualAplicaDetraccion ? (manualCodigoDetraccion || '014') : '014',
         peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
         decrece_stock: Boolean(manualDecreceStock),
         items: manualItems,
@@ -861,6 +887,19 @@ export default function Facturacion({ usuario }) {
       return toast.error('El importe total del comprobante debe ser mayor a S/ 0.00.');
     }
 
+    if (manualTipoComp === '01' && manualEmitirGre) {
+      const cliSel = manualClienteModo === 'REGISTRADO'
+        ? clientes.find(c => String(c.id_cliente) === String(manualClienteId))
+        : null;
+      const errGre = validarFormularioGre({
+        ...greFormManual,
+        punto_llegada_direccion: greFormManual.punto_llegada_direccion
+          || (manualClienteModo === 'DIRECTO' ? manualRucDireccion.trim() : cliSel?.direccion)
+          || ''
+      }, configSunat);
+      if (errGre) return toast.error(errGre);
+    }
+
     if (manualTipoComp === '01') {
       void verificarEstadoSunat(false);
       setAdvertenciaSunatModal({ origen: 'manual' });
@@ -873,7 +912,7 @@ export default function Facturacion({ usuario }) {
   // Handlers para Notas de Pedido (Req 13, 16)
   const abrirModalNotaPedido = () => {
     setNotaDecreceStock(false);
-    setNotaUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || 1);
+    setNotaUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || '');
     setFormNota({
       id_cliente: clientes[0]?.id_cliente || '',
       cliente_nombre: clientes[0]?.razon_social_o_nombre || clientes[0]?.nombre_comercial || '',
@@ -1387,6 +1426,19 @@ export default function Facturacion({ usuario }) {
       toast.error(err.response?.data?.mensaje || 'No se pudo reenviar la GRE.');
     } finally {
       setProcesandoGreId(null);
+    }
+  };
+
+  const handleConsultarEstadoComprobante = async (comp) => {
+    setConsultandoEstadoId(comp.id_comprobante);
+    try {
+      const res = await api.post(`/facturacion/${comp.id_comprobante}/consultar-estado`);
+      toast.success(res.data?.mensaje || 'Estado de SUNAT actualizado.');
+      await cargarDatos();
+    } catch (err) {
+      toast.error(err.response?.data?.mensaje || 'No se pudo consultar el CDR en SUNAT.');
+    } finally {
+      setConsultandoEstadoId(null);
     }
   };
 
@@ -2803,7 +2855,7 @@ export default function Facturacion({ usuario }) {
                         })()}
                       </td>
                       <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
+                        <div className="flex flex-wrap items-center justify-center gap-1.5">
                           <button
                             type="button"
                             disabled={cargandoPdf}
@@ -2819,6 +2871,20 @@ export default function Facturacion({ usuario }) {
                             <Eye size={12} />
                             <span>PDF/A4</span>
                           </button>
+                          {configSunat?.modo_integracion === 'APISPERU'
+                            && (comp.tipo_comprobante === '01' || comp.tipo_comprobante === '03')
+                            && (comp.estado_sunat === 'OBSERVADO' || comp.estado_sunat === 'PENDIENTE_ENVIO') && (
+                              <button
+                                type="button"
+                                disabled={consultandoEstadoId === comp.id_comprobante}
+                                onClick={() => handleConsultarEstadoComprobante(comp)}
+                                title="Consultar estado y CDR directo en SUNAT (/invoice/status)"
+                                className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
+                              >
+                                <RefreshCw size={12} className={consultandoEstadoId === comp.id_comprobante ? 'animate-spin' : ''} />
+                                <span>CDR</span>
+                              </button>
+                            )}
                         </div>
                       </td>
                     </tr>
@@ -3510,7 +3576,11 @@ export default function Facturacion({ usuario }) {
                   </label>
                   <select
                     value={manualTipoComp}
-                    onChange={(e) => setManualTipoComp(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setManualTipoComp(val);
+                      if (val !== '01') setManualAplicaDetraccion(false);
+                    }}
                     className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
                   >
                     <option value="01">Factura (01 - Empresas con RUC)</option>
@@ -3533,6 +3603,98 @@ export default function Facturacion({ usuario }) {
                   />
                 </div>
               </div>
+
+              {/* Condición de Pago, Medio SUNAT y Detracción SPOT */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Condición de Pago
+                  </label>
+                  <select
+                    value={manualFormaPago}
+                    onChange={(e) => {
+                      const nuevaForma = e.target.value;
+                      setManualFormaPago(nuevaForma);
+                      if (nuevaForma === 'CREDITO') setManualMedioPago('006');
+                    }}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold"
+                  >
+                    <option value="CONTADO">💵 Al Contado</option>
+                    <option value="CREDITO">🗓️ Al Crédito (Con Cuotas SUNAT)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Medio de Pago (Cat. 59)
+                  </label>
+                  <select
+                    disabled={manualFormaPago === 'CREDITO'}
+                    value={manualMedioPago}
+                    onChange={(e) => setManualMedioPago(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    <option value="008">Transferencia Bancaria (008)</option>
+                    <option value="009">Efectivo (009)</option>
+                    <option value="005">Tarjeta de Débito (005)</option>
+                    <option value="006">Tarjeta de Crédito (006)</option>
+                    <option value="999">Billetera Digital Yape / Plin (999)</option>
+                  </select>
+                </div>
+              </div>
+
+              {manualFormaPago === 'CREDITO' && (
+                <div className="p-3 bg-purple-50/80 rounded-xl border border-purple-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="block font-bold text-purple-950 uppercase mb-1">Plazo de Crédito (días):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={manualDiasCredito}
+                      onChange={(e) => setManualDiasCredito(parseInt(e.target.value, 10) || 1)}
+                      className="w-full p-2 bg-white border border-purple-300 rounded-lg font-mono font-bold text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-purple-950 uppercase mb-1">Cantidad de Cuotas:</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="48"
+                      value={manualCuotas}
+                      onChange={(e) => setManualCuotas(parseInt(e.target.value, 10) || 1)}
+                      className="w-full p-2 bg-white border border-purple-300 rounded-lg font-mono font-bold text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {manualTipoComp === '01' && (
+                <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <label className="flex items-center space-x-2 cursor-pointer font-bold text-amber-950">
+                    <input
+                      type="checkbox"
+                      checked={manualAplicaDetraccion}
+                      onChange={(e) => setManualAplicaDetraccion(e.target.checked)}
+                      className="rounded text-amber-600"
+                    />
+                    <span>Operación sujeta a Detracción SPOT (Op. 1001 · BN)</span>
+                  </label>
+                  {manualAplicaDetraccion && (
+                    <select
+                      value={manualCodigoDetraccion}
+                      onChange={(e) => setManualCodigoDetraccion(e.target.value)}
+                      className="p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-950"
+                    >
+                      <option value="014">014 - Carnes y despojos comestibles (4%)</option>
+                      <option value="027">027 - Servicio de transporte de carga (4%)</option>
+                      <option value="037">037 - Demás servicios gravados con IGV (12%)</option>
+                      <option value="022">022 - Otros servicios empresariales (12%)</option>
+                    </select>
+                  )}
+                </div>
+              )}
 
               {/* Filas de productos */}
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
@@ -3595,8 +3757,15 @@ export default function Facturacion({ usuario }) {
                             title="Unidad SUNAT del ítem"
                             className="p-1.5 border border-slate-300 rounded-lg text-[11px] font-bold bg-white shrink-0"
                           >
-                            <option value="KGM">kg</option>
-                            <option value="NIU">und</option>
+                            <option value="KGM">kg (KGM)</option>
+                            <option value="NIU">und (NIU)</option>
+                            <option value="BG">bolsa (BG)</option>
+                            <option value="BX">caja (BX)</option>
+                            <option value="LTR">litro (LTR)</option>
+                            <option value="TNE">ton (TNE)</option>
+                            <option value="SA">saco (SA)</option>
+                            <option value="DZN">doc (DZN)</option>
+                            <option value="ZZ">serv (ZZ)</option>
                           </select>
                         </div>
                       )}

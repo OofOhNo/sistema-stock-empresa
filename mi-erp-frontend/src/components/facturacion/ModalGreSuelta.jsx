@@ -4,7 +4,7 @@ import { X, Truck, Plus, Trash2, Loader2 } from 'lucide-react';
 import api from '../../api';
 import SeccionGreFactura from './SeccionGreFactura';
 import SelectorDecreceStock from './SelectorDecreceStock';
-import { crearEstadoGreInicial } from './greUtils';
+import { crearEstadoGreInicial, validarFormularioGre } from './greUtils';
 
 const MOTIVOS_GRE = [
   'Venta',
@@ -107,18 +107,9 @@ export default function ModalGreSuelta({
     if (!(Number(pesoBrutoTotal) > 0)) {
       return toast.error('El peso bruto total debe ser mayor a 0.');
     }
-    if (!greForm.punto_llegada_direccion?.trim()) {
-      return toast.error('Completa la dirección del punto de llegada.');
-    }
-
-    const modoReal = configSunat?.modo_integracion === 'APISPERU' || configSunat?.modo_integracion === 'NUBEFACT_REAL';
-    if (modoReal) {
-      if (!/^\d{6}$/.test(String(greForm.punto_partida_ubigeo || '').trim())) {
-        return toast.error('El Ubigeo del punto de partida debe tener 6 dígitos.');
-      }
-      if (!/^\d{6}$/.test(String(greForm.punto_llegada_ubigeo || '').trim())) {
-        return toast.error('Ingresa el Ubigeo (6 dígitos) del punto de llegada antes de emitir la GRE.');
-      }
+    const errGre = validarFormularioGre(greForm, configSunat);
+    if (errGre) {
+      return toast.error(errGre);
     }
 
     setEnviando(true);
@@ -134,7 +125,7 @@ export default function ModalGreSuelta({
         destinatario_num_doc: destNumDoc.trim(),
         destinatario_razon_social: destRazon.trim(),
         peso_bruto_total: Number(pesoBrutoTotal),
-        observaciones: observaciones.trim(),
+        observaciones: observaciones.trim() || String(greForm.observaciones || '').trim(),
         bienes: bienesValidos.map((it, idx) => ({
           orden: idx + 1,
           bien_normalizado: Boolean(greForm.bien_normalizado),

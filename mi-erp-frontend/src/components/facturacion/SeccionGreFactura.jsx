@@ -271,9 +271,9 @@ export default function SeccionGreFactura({
         </div>
       </div>
 
-      {/* Opciones exclusivas Admin Central: Tipo GRE y Comercio Exterior */}
-      {esAdminCentral && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-white p-3 rounded-xl border border-indigo-100">
+      {/* Modalidad de Traslado, Bultos y opciones Admin Central (Tipo GRE y Comercio Exterior) */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-white p-3 rounded-xl border border-indigo-100">
+        {esAdminCentral && (
           <div>
             <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">Tipo de GRE</label>
             <select
@@ -281,10 +281,12 @@ export default function SeccionGreFactura({
               onChange={(e) => setGreForm({ ...greForm, tipo_gre: e.target.value })}
               className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
             >
-              <option value="REMITENTE">GRE Remitente</option>
-              <option value="TRANSPORTISTA">GRE Transportista</option>
+              <option value="REMITENTE">GRE Remitente (09)</option>
+              <option value="TRANSPORTISTA">GRE Transportista (31)</option>
             </select>
           </div>
+        )}
+        {esAdminCentral && (
           <div>
             <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">Comercio Exterior</label>
             <select
@@ -296,16 +298,110 @@ export default function SeccionGreFactura({
               <option value="SI">Sí (Comercio Exterior)</option>
             </select>
           </div>
-          <div>
-            <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">Modalidad de Traslado</label>
-            <select
-              value={greForm.modalidad_traslado}
-              onChange={(e) => setGreForm({ ...greForm, modalidad_traslado: e.target.value })}
-              className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
-            >
-              <option value="Privado">Transporte Privado</option>
-              <option value="Publico">Transporte Público</option>
-            </select>
+        )}
+        <div>
+          <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">Modalidad de Traslado</label>
+          <select
+            value={greForm.modalidad_traslado}
+            onChange={(e) => setGreForm({ ...greForm, modalidad_traslado: e.target.value })}
+            className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+          >
+            <option value="Privado">Transporte Privado (02)</option>
+            <option value="Publico">Transporte Público (01)</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-slate-600 uppercase mb-1">Nro. de Bultos</label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={greForm.numero_de_bultos ?? 1}
+            onChange={(e) => setGreForm({ ...greForm, numero_de_bultos: e.target.value })}
+            className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-mono font-bold"
+          />
+        </div>
+      </div>
+
+      {/* Datos del Remitente (obligatorio en GRE Transportista - Cod. 31) */}
+      {greForm.tipo_gre === 'TRANSPORTISTA' && (
+        <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3 space-y-2">
+          <div className="text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+            Datos del Remitente / Cargador (GRE Transportista 31) *
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">Tipo Doc.</label>
+              <select
+                value={greForm.remitente_tipo_doc || '6'}
+                onChange={(e) => setGreForm({ ...greForm, remitente_tipo_doc: e.target.value })}
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+              >
+                <option value="6">RUC (6)</option>
+                <option value="1">DNI (1)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">Nro. Documento *</label>
+              <input
+                type="text"
+                value={greForm.remitente_num_doc || ''}
+                onChange={(e) => setGreForm({ ...greForm, remitente_num_doc: e.target.value.replace(/\D/g, '').slice(0, 11) })}
+                placeholder="20..."
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold bg-white"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">Razón Social / Nombre Remitente *</label>
+              <input
+                type="text"
+                value={greForm.remitente_razon_social || ''}
+                onChange={(e) => setGreForm({ ...greForm, remitente_razon_social: e.target.value })}
+                placeholder="Quien encarga el traslado"
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Datos del Transportista Público (obligatorio en Modalidad Público - 01) */}
+      {greForm.tipo_gre !== 'TRANSPORTISTA' && greForm.modalidad_traslado === 'Publico' && (
+        <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-2">
+          <div className="text-[11px] font-bold text-amber-950 uppercase tracking-wider">
+            Empresa Transportista (Transporte Público 01) *
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">RUC Transportista *</label>
+              <input
+                type="text"
+                value={greForm.transportista_ruc || ''}
+                onChange={(e) => setGreForm({ ...greForm, transportista_ruc: e.target.value.replace(/\D/g, '').slice(0, 11) })}
+                placeholder="20... (11 dígitos)"
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono font-bold bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">Razón Social Transportista *</label>
+              <input
+                type="text"
+                value={greForm.transportista_razon_social || ''}
+                onChange={(e) => setGreForm({ ...greForm, transportista_razon_social: e.target.value })}
+                placeholder="Empresa de transportes S.A.C."
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs font-semibold bg-white"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-600 mb-1">Nro. Registro MTC (Opcional)</label>
+              <input
+                type="text"
+                value={greForm.transportista_nro_mtc || ''}
+                onChange={(e) => setGreForm({ ...greForm, transportista_nro_mtc: e.target.value.toUpperCase() })}
+                placeholder="Ej: 151234CNG"
+                className="w-full p-2 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+              />
+            </div>
           </div>
         </div>
       )}
@@ -457,64 +553,68 @@ export default function SeccionGreFactura({
         </div>
       )}
 
-      {/* Vehículo frecuente, Conductor frecuente, Fecha inicio traslado (Visible para todos) */}
+      {/* Vehículo frecuente, Conductor frecuente, Fecha inicio traslado */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="font-bold text-slate-700">Vehículo (Placa) *</label>
-            {esAdminCentral && (
-              <button
-                type="button"
-                onClick={() => setGestionAbierta(gestionAbierta === 'vehiculo' ? null : 'vehiculo')}
-                className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
-              >
-                <Plus size={11} />
-                <span>Nuevo</span>
-              </button>
-            )}
+        {((greForm.modalidad_traslado !== 'Publico' && !greForm.traslado_vehiculo_m1_l) || greForm.tipo_gre === 'TRANSPORTISTA') && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-bold text-slate-700">Vehículo (Placa) *</label>
+              {esAdminCentral && (
+                <button
+                  type="button"
+                  onClick={() => setGestionAbierta(gestionAbierta === 'vehiculo' ? null : 'vehiculo')}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                >
+                  <Plus size={11} />
+                  <span>Nuevo</span>
+                </button>
+              )}
+            </div>
+            <select
+              value={greForm.id_vehiculo}
+              onChange={(e) => handleSelectVehiculo(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs font-semibold"
+            >
+              {vehiculos.map((v) => (
+                <option key={v.id_vehiculo} value={v.id_vehiculo}>
+                  {v.placa}{v.descripcion ? ` — ${v.descripcion}` : ''}
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            value={greForm.id_vehiculo}
-            onChange={(e) => handleSelectVehiculo(e.target.value)}
-            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs font-semibold"
-          >
-            {vehiculos.map((v) => (
-              <option key={v.id_vehiculo} value={v.id_vehiculo}>
-                {v.placa}{v.descripcion ? ` — ${v.descripcion}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+        )}
 
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="font-bold text-slate-700 flex items-center gap-1">
-              <UserCheck size={12} className="text-sky-600" />
-              <span>Conductor *</span>
-            </label>
-            {esAdminCentral && (
-              <button
-                type="button"
-                onClick={() => setGestionAbierta(gestionAbierta === 'conductor' ? null : 'conductor')}
-                className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
-              >
-                <Plus size={11} />
-                <span>Nuevo</span>
-              </button>
-            )}
+        {((greForm.modalidad_traslado !== 'Publico' && !greForm.traslado_vehiculo_m1_l) || greForm.tipo_gre === 'TRANSPORTISTA') && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="font-bold text-slate-700 flex items-center gap-1">
+                <UserCheck size={12} className="text-sky-600" />
+                <span>Conductor *</span>
+              </label>
+              {esAdminCentral && (
+                <button
+                  type="button"
+                  onClick={() => setGestionAbierta(gestionAbierta === 'conductor' ? null : 'conductor')}
+                  className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer flex items-center gap-0.5"
+                >
+                  <Plus size={11} />
+                  <span>Nuevo</span>
+                </button>
+              )}
+            </div>
+            <select
+              value={greForm.id_conductor}
+              onChange={(e) => handleSelectConductor(e.target.value)}
+              className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+            >
+              {conductores.map((c) => (
+                <option key={c.id_conductor} value={c.id_conductor}>
+                  {c.apellidos_nombres} ({c.licencia})
+                </option>
+              ))}
+            </select>
           </div>
-          <select
-            value={greForm.id_conductor}
-            onChange={(e) => handleSelectConductor(e.target.value)}
-            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
-          >
-            {conductores.map((c) => (
-              <option key={c.id_conductor} value={c.id_conductor}>
-                {c.apellidos_nombres} ({c.licencia})
-              </option>
-            ))}
-          </select>
-        </div>
+        )}
 
         <div>
           <label className="block font-bold text-slate-700 mb-1">Fecha Inicio Traslado *</label>
@@ -525,7 +625,37 @@ export default function SeccionGreFactura({
             className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs font-mono"
           />
         </div>
+
+        {(greForm.modalidad_traslado === 'Publico' || greForm.traslado_vehiculo_m1_l) && greForm.tipo_gre !== 'TRANSPORTISTA' && (
+          <div className="sm:col-span-2">
+            <label className="block font-bold text-slate-700 mb-1">Observaciones GRE (Opcional)</label>
+            <input
+              type="text"
+              maxLength={250}
+              value={greForm.observaciones || ''}
+              onChange={(e) => setGreForm({ ...greForm, observaciones: e.target.value })}
+              placeholder={greForm.traslado_vehiculo_m1_l
+                ? 'Vehículo categoría M1/L exonerado de placa/conductor obligatorio'
+                : 'Indicaciones adicionales de despacho'}
+              className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+            />
+          </div>
+        )}
       </div>
+
+      {!((greForm.modalidad_traslado === 'Publico' || greForm.traslado_vehiculo_m1_l) && greForm.tipo_gre !== 'TRANSPORTISTA') && (
+        <div>
+          <label className="block font-bold text-slate-700 mb-1">Observaciones GRE (Opcional)</label>
+          <input
+            type="text"
+            maxLength={250}
+            value={greForm.observaciones || ''}
+            onChange={(e) => setGreForm({ ...greForm, observaciones: e.target.value })}
+            placeholder="Ej: Precinto #4421 / Entrega en puerta posterior"
+            className="w-full p-2 border border-slate-300 rounded-lg bg-white text-xs"
+          />
+        </div>
+      )}
 
       {/* Inline Admin forms: Vehículo y Conductor */}
       {esAdminCentral && gestionAbierta === 'vehiculo' && (
@@ -692,6 +822,10 @@ export default function SeccionGreFactura({
           </div>
         </div>
       )}
+
+      <div className="text-[10px] text-sky-900 bg-sky-100/70 border border-sky-200 rounded-lg px-2.5 py-1.5">
+        Recuerda que para enviar Guías de Remisión reales a SUNAT vía APIsPERU debes tener registrados tu <strong>client_id</strong> y <strong>client_secret</strong> de API SUNAT en la configuración de tu empresa en APIsPERU.
+      </div>
     </div>
   );
 }
