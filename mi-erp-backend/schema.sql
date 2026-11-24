@@ -203,6 +203,12 @@ CREATE TABLE IF NOT EXISTS series_sunat (
 CREATE TABLE IF NOT EXISTS comprobantes (
     id_comprobante SERIAL PRIMARY KEY,
     id_pedido INTEGER REFERENCES pedidos(id_pedido) ON DELETE SET NULL,
+    id_cliente INTEGER REFERENCES clientes(id_cliente),
+    cliente_tipo_doc VARCHAR(2),
+    cliente_numero_doc VARCHAR(20),
+    cliente_nombre VARCHAR(255),
+    cliente_direccion VARCHAR(255),
+    cliente_email VARCHAR(150),
     tipo_comprobante VARCHAR(2) NOT NULL CHECK (tipo_comprobante IN ('01', '03', '07', '08')),
     serie VARCHAR(4) NOT NULL,
     correlativo INTEGER NOT NULL,

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import SeccionGreFactura from '../components/facturacion/SeccionGreFactura';
 import SelectorDecreceStock from '../components/facturacion/SelectorDecreceStock';
+import SelectorEmitirGre from '../components/facturacion/SelectorEmitirGre';
 import { crearEstadoGreInicial } from '../components/facturacion/greUtils';
 import GrePdfModal from '../components/facturacion/GrePdfModal';
 import ModalGreSuelta from '../components/facturacion/ModalGreSuelta';
@@ -96,6 +97,7 @@ export default function Facturacion({ usuario }) {
   const [pesoTotalFactura, setPesoTotalFactura] = useState('');
   const [itemsEditables, setItemsEditables] = useState([]);
   const [pedidoDecreceStock, setPedidoDecreceStock] = useState(false);
+  const [pedidoEmitirGre, setPedidoEmitirGre] = useState(true);
   const [procesando, setProcesando] = useState(false);
 
   // Pago dividido entre múltiples clientes (Req 2 - Opción A)
@@ -104,7 +106,14 @@ export default function Facturacion({ usuario }) {
 
   // Modal Facturación Manual (Sin Pedido Previo)
   const [modalManual, setModalManual] = useState(false);
+  const [manualClienteModo, setManualClienteModo] = useState('REGISTRADO'); // 'REGISTRADO' | 'DIRECTO'
   const [manualClienteId, setManualClienteId] = useState('');
+  const [manualRucDoc, setManualRucDoc] = useState('');
+  const [manualRucNombre, setManualRucNombre] = useState('');
+  const [manualRucDireccion, setManualRucDireccion] = useState('');
+  const [manualRucEmail, setManualRucEmail] = useState('');
+  const [buscandoRucSunat, setBuscandoRucSunat] = useState(false);
+  const [infoRucLookup, setInfoRucLookup] = useState(null);
   const [manualUbicacionId, setManualUbicacionId] = useState('');
   const [manualTipoComp, setManualTipoComp] = useState('01');
   const [manualFormaPago, setManualFormaPago] = useState('CONTADO');
@@ -114,6 +123,7 @@ export default function Facturacion({ usuario }) {
   const [manualAplicaDetraccion, setManualAplicaDetraccion] = useState(false);
   const [manualPesoTotal, setManualPesoTotal] = useState('');
   const [manualDecreceStock, setManualDecreceStock] = useState(false);
+  const [manualEmitirGre, setManualEmitirGre] = useState(true);
   const [manualItems, setManualItems] = useState([
     { id_producto: '', descripcion: '', cantidad: 1, peso: '', precio_unitario: 0, subtotal: 0 }
   ]);
@@ -243,6 +253,7 @@ export default function Facturacion({ usuario }) {
     setEsPagoDividido(false);
     setPagosDivididos([]);
     setPedidoDecreceStock(false);
+    setPedidoEmitirGre(true);
     setGreFormPedido(crearEstadoGreInicial(catGre || catalogosGreRef.current, ped.direccion_cliente || ''));
   }, []);
 
@@ -543,6 +554,7 @@ export default function Facturacion({ usuario }) {
     setMedioPagoSunat('008');
     setAplicaDetraccion(false);
     setPedidoDecreceStock(false);
+    setPedidoEmitirGre(true);
     setModalEmitir(true);
   };
 
@@ -550,6 +562,10 @@ export default function Facturacion({ usuario }) {
   const ejecutarEmisionPedido = async () => {
     setProcesando(true);
     try {
+      const aplicaGrePedido =
+        tipoComprobante === '01' ||
+        (esPagoDividido && pagosDivididos.some((p) => p.tipo_comprobante === '01'));
+
       const payload = {
         id_pedido: pedidoSeleccionado.id_pedido,
         tipo_comprobante: tipoComprobante,
@@ -564,7 +580,8 @@ export default function Facturacion({ usuario }) {
         items: itemsEditables,
         es_pago_dividido: esPagoDividido,
         pagos: esPagoDividido ? pagosDivididos : null,
-        gre: tipoComprobante === '01' ? greFormPedido : null
+        emitir_gre: Boolean(aplicaGrePedido && pedidoEmitirGre),
+        gre: aplicaGrePedido && pedidoEmitirGre ? greFormPedido : null
       };
 
       const res = await api.post('/facturacion/emitir', payload);
@@ -617,10 +634,17 @@ export default function Facturacion({ usuario }) {
   };
 
   // Handlers para Facturación Manual
-  const abrirModalManual = () => {
-    setManualClienteId('CLIENTES_VARIOS');
+  const abrirModalManual = (modoInicial = 'REGISTRADO') => {
+    const modo = modoInicial === 'DIRECTO' ? 'DIRECTO' : 'REGISTRADO';
+    setManualClienteModo(modo);
+    setManualClienteId(modo === 'DIRECTO' ? '' : 'CLIENTES_VARIOS');
+    setManualRucDoc('');
+    setManualRucNombre('');
+    setManualRucDireccion('');
+    setManualRucEmail('');
+    setInfoRucLookup(null);
     setManualUbicacionId(usuario?.id_ubicacion || ubicaciones[0]?.id_ubicacion || 1);
-    setManualTipoComp('03');
+    setManualTipoComp(modo === 'DIRECTO' ? '01' : '03');
     setManualFormaPago('CONTADO');
     setManualDiasCredito(28);
     setManualCuotas(1);
@@ -628,11 +652,54 @@ export default function Facturacion({ usuario }) {
     setManualAplicaDetraccion(false);
     setManualPesoTotal('');
     setManualDecreceStock(false);
+    setManualEmitirGre(true);
     setManualItems([
       { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || '', cantidad: 1, peso: '', precio_unitario: productos[0]?.precio_venta || 0, subtotal: productos[0]?.precio_venta || 0 }
     ]);
     setGreFormManual(crearEstadoGreInicial(catalogosGre, ''));
     setModalManual(true);
+  };
+
+  const buscarRucEnSunat = async (rucInput = manualRucDoc, silencioso = false) => {
+    const rucLimpio = String(rucInput || '').trim();
+    if (!/^(10|15|16|17|20)\d{9}$/.test(rucLimpio)) {
+      if (!silencioso) {
+        toast.error('Ingresa un RUC válido de 11 dígitos (inicia con 10, 15, 16, 17 o 20).');
+      }
+      return;
+    }
+
+    setBuscandoRucSunat(true);
+    try {
+      const res = await api.get(`/facturacion/consultar-ruc/${encodeURIComponent(rucLimpio)}`);
+      const info = res.data || {};
+      setInfoRucLookup(info);
+      if (info.razon_social) {
+        setManualRucNombre(info.razon_social);
+      } else if (!silencioso) {
+        toast('No se pudo obtener la razón social desde SUNAT; escríbela manualmente abajo.', { icon: 'ℹ️' });
+      }
+      if (info.direccion) {
+        setManualRucDireccion(info.direccion);
+        setGreFormManual((prev) => ({
+          ...prev,
+          punto_llegada_ubigeo: info.ubigeo || prev.punto_llegada_ubigeo,
+          punto_llegada_direccion: prev.punto_llegada_direccion || info.direccion
+        }));
+      }
+      if (info.email && !manualRucEmail) {
+        setManualRucEmail(info.email);
+      }
+      if (info.razon_social && !silencioso) {
+        toast.success(`RUC encontrado: ${info.razon_social}`);
+      }
+    } catch (err) {
+      if (!silencioso) {
+        toast.error(err.response?.data?.mensaje || 'No se pudo consultar el RUC en SUNAT.');
+      }
+    } finally {
+      setBuscandoRucSunat(false);
+    }
   };
 
   const agregarFilaManual = () => {
@@ -678,8 +745,21 @@ export default function Facturacion({ usuario }) {
   const ejecutarEmisionManual = async () => {
     setProcesando(true);
     try {
+      const esDirecto = manualClienteModo === 'DIRECTO';
+      const docDirecto = manualRucDoc.trim();
+      const emitirGreAhora = Boolean(manualTipoComp === '01' && manualEmitirGre);
+
       const res = await api.post('/facturacion/emitir-manual', {
-        id_cliente: manualClienteId,
+        id_cliente: esDirecto ? null : manualClienteId,
+        cliente_directo: esDirecto
+          ? {
+              tipo_documento: manualTipoComp === '01' ? '6' : (/^\d{8}$/.test(docDirecto) ? '1' : '6'),
+              numero_documento: docDirecto,
+              razon_social_o_nombre: manualRucNombre.trim(),
+              direccion: manualRucDireccion.trim(),
+              email: manualRucEmail.trim()
+            }
+          : null,
         id_ubicacion: manualUbicacionId,
         tipo_comprobante: manualTipoComp,
         forma_pago: manualFormaPago,
@@ -691,7 +771,8 @@ export default function Facturacion({ usuario }) {
         peso_total: manualPesoTotal ? parseFloat(manualPesoTotal) : null,
         decrece_stock: Boolean(manualDecreceStock),
         items: manualItems,
-        gre: manualTipoComp === '01' ? greFormManual : null
+        emitir_gre: emitirGreAhora,
+        gre: emitirGreAhora ? greFormManual : null
       });
 
       if (res.data?.gre_observada) {
@@ -710,18 +791,27 @@ export default function Facturacion({ usuario }) {
 
   const handleEmitirManual = async (e) => {
     e.preventDefault();
-    if (!manualClienteId) return toast.error('Selecciona un cliente o "Clientes Varios".');
-    if (manualClienteId === 'CLIENTES_VARIOS') {
-      if (manualTipoComp === '01') {
-        return toast.error('No se puede emitir Factura (01) a Clientes Varios. Debe emitirse con Boleta de Venta (03).');
-      }
-      if (totalManualCalculado >= 700) {
-        return toast.error('Por normativa de SUNAT (RS 007-99), para importes de S/ 700.00 a más en Boleta es obligatorio ingresar el DNI del cliente.');
+    if (manualClienteModo === 'DIRECTO') {
+      const docDir = manualRucDoc.trim();
+      const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, docDir, totalManualCalculado);
+      if (errorTrib) return toast.error(errorTrib);
+      if (manualRucNombre.trim().length < 2) {
+        return toast.error('Ingresa la Razón Social o Nombre del destinatario para emitir sin registrar en clientes.');
       }
     } else {
-      const cli = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
-      const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
-      if (errorTrib) return toast.error(errorTrib);
+      if (!manualClienteId) return toast.error('Selecciona un cliente o "Clientes Varios".');
+      if (manualClienteId === 'CLIENTES_VARIOS') {
+        if (manualTipoComp === '01') {
+          return toast.error('No se puede emitir Factura (01) a Clientes Varios. Debe emitirse con Boleta de Venta (03).');
+        }
+        if (totalManualCalculado >= 700) {
+          return toast.error('Por normativa de SUNAT (RS 007-99), para importes de S/ 700.00 a más en Boleta es obligatorio ingresar el DNI del cliente.');
+        }
+      } else {
+        const cli = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
+        const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
+        if (errorTrib) return toast.error(errorTrib);
+      }
     }
 
     if (manualTipoComp === '01') {
@@ -2165,24 +2255,34 @@ export default function Facturacion({ usuario }) {
           ) : (
             /* MODO DETALLADO A CLIENTE ESPECÍFICO (RUC O DNI) */
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h3 className="text-base font-bold text-blue-950">Facturación Detallada por Cliente</h3>
                   <p className="text-xs text-slate-500">
-                    Para clientes corporativos con RUC (Factura) o clientes que soliciten Boleta a su nombre con DNI.
+                    Para clientes corporativos con RUC (Factura), RUC directo sin agregar a tu base de clientes, o Boletas con DNI.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={abrirModalManual}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  <Plus size={15} />
-                  <span>Abrir Formulario de Emisión Completo</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => abrirModalManual('DIRECTO')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Search size={14} />
+                    <span>Facturar con RUC Directo (Sin Registrar)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => abrirModalManual('REGISTRADO')}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
+                  >
+                    <Plus size={15} />
+                    <span>Abrir Formulario Completo</span>
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-slate-600">
-                Haz clic en el botón superior para ingresar los datos del comprobante corporativo, plazos de crédito a 7, 14, 21 o 28 días, cuotas o detracciones tributarias.
+                Elige un cliente guardado, ingresa directamente un RUC ocasional sin añadirlo a Clientes y decide si deseas emitir Guía de Remisión (GRE) o solo la Factura.
               </p>
             </div>
           )}
@@ -2991,18 +3091,26 @@ export default function Facturacion({ usuario }) {
                 )}
               </div>
 
-              {tipoComprobante === '01' && (
-                <SeccionGreFactura
-                  greForm={greFormPedido}
-                  setGreForm={setGreFormPedido}
-                  catalogosGre={catalogosGre}
-                  esAdminCentral={esAdminCentral}
-                  onCatalogosActualizados={recargarCatalogosGre}
-                  destinatarioNombre={pedidoSeleccionado.cliente}
-                  destinatarioDocumento={pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente}
-                  pesoBrutoTotal={pesoTotalFactura || itemsEditables.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
-                  bienesResumen={itemsEditables}
-                />
+              {(tipoComprobante === '01' || (esPagoDividido && pagosDivididos.some((p) => p.tipo_comprobante === '01'))) && (
+                <div className="space-y-3">
+                  <SelectorEmitirGre
+                    value={pedidoEmitirGre}
+                    onChange={setPedidoEmitirGre}
+                  />
+                  {pedidoEmitirGre && (
+                    <SeccionGreFactura
+                      greForm={greFormPedido}
+                      setGreForm={setGreFormPedido}
+                      catalogosGre={catalogosGre}
+                      esAdminCentral={esAdminCentral}
+                      onCatalogosActualizados={recargarCatalogosGre}
+                      destinatarioNombre={pedidoSeleccionado.cliente}
+                      destinatarioDocumento={pedidoSeleccionado.ruc_cliente || pedidoSeleccionado.documento_cliente}
+                      pesoBrutoTotal={pesoTotalFactura || itemsEditables.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
+                      bienesResumen={itemsEditables}
+                    />
+                  )}
+                </div>
               )}
 
               {/* 6. Resumen de Precios y Peso (Req 11 & 12) */}
@@ -3116,11 +3224,139 @@ export default function Facturacion({ usuario }) {
             </div>
 
             <form onSubmit={handleEmitirManual} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Cliente *
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Cliente / Destinatario *
                   </label>
+                  <div className="inline-flex p-0.5 bg-slate-100 rounded-xl border border-slate-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setManualClienteModo('REGISTRADO')}
+                      className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                        manualClienteModo === 'REGISTRADO'
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Cliente registrado / Varios
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualClienteModo('DIRECTO');
+                        if (manualTipoComp !== '01') setManualTipoComp('01');
+                      }}
+                      className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                        manualClienteModo === 'DIRECTO'
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      RUC directo (sin registrar)
+                    </button>
+                  </div>
+                </div>
+
+                {manualClienteModo === 'DIRECTO' ? (
+                  <div className="p-3.5 bg-emerald-50/50 border border-emerald-200 rounded-xl space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="sm:col-span-5">
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          RUC (11 díg.) o DNI (8 díg.) *
+                        </label>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            maxLength={11}
+                            required
+                            value={manualRucDoc}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, '').slice(0, 11);
+                              setManualRucDoc(val);
+                              setInfoRucLookup(null);
+                              if (/^(10|15|16|17|20)\d{9}$/.test(val)) {
+                                setManualTipoComp('01');
+                                void buscarRucEnSunat(val, true);
+                              } else if (/^\d{8}$/.test(val)) {
+                                setManualTipoComp('03');
+                              }
+                            }}
+                            placeholder="Ej: 20100047218"
+                            className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            disabled={buscandoRucSunat || !/^(10|15|16|17|20)\d{9}$/.test(manualRucDoc.trim())}
+                            onClick={() => void buscarRucEnSunat(manualRucDoc, false)}
+                            title="Consultar Razón Social y Dirección en SUNAT"
+                            className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[11px] font-bold inline-flex items-center gap-1 shrink-0 disabled:opacity-40 cursor-pointer"
+                          >
+                            {buscandoRucSunat ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                            <span>SUNAT</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="sm:col-span-7">
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Razón Social o Nombre Completo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={manualRucNombre}
+                          onChange={(e) => setManualRucNombre(e.target.value)}
+                          placeholder="Se completa automático desde SUNAT o escríbelo aquí"
+                          className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Dirección Fiscal / Entrega (Opcional)
+                        </label>
+                        <input
+                          type="text"
+                          value={manualRucDireccion}
+                          onChange={(e) => {
+                            const dir = e.target.value;
+                            setManualRucDireccion(dir);
+                            setGreFormManual((prev) => ({ ...prev, punto_llegada_direccion: dir }));
+                          }}
+                          placeholder="Av. / Calle / Distrito..."
+                          className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Correo electrónico (Opcional)
+                        </label>
+                        <input
+                          type="email"
+                          value={manualRucEmail}
+                          onChange={(e) => setManualRucEmail(e.target.value)}
+                          placeholder="facturacion@empresa.com"
+                          className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <span className="text-emerald-900 font-medium">
+                        No se agregará a tu base de clientes; solo quedará registrado en este comprobante.
+                      </span>
+                      {infoRucLookup?.encontrado && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-300">
+                          {infoRucLookup.estado ? `SUNAT: ${infoRucLookup.estado}` : 'Datos obtenidos'}
+                          {infoRucLookup.condicion ? ` · ${infoRucLookup.condicion}` : ''}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
                   <select
                     value={manualClienteId}
                     onChange={(e) => {
@@ -3130,6 +3366,8 @@ export default function Facturacion({ usuario }) {
                         setManualTipoComp('03');
                       } else {
                         const cliObj = clientes.find(c => String(c.id_cliente) === String(val));
+                        const esRuc = cliObj && cliObj.tipo_documento === '6' && /^(10|15|16|17|20)\d{9}$/.test(String(cliObj.numero_documento || '').trim());
+                        if (cliObj) setManualTipoComp(esRuc ? '01' : '03');
                         if (cliObj?.direccion) {
                           setGreFormManual((prev) => ({ ...prev, punto_llegada_direccion: cliObj.direccion }));
                         }
@@ -3145,7 +3383,7 @@ export default function Facturacion({ usuario }) {
                       </option>
                     ))}
                   </select>
-                </div>
+                )}
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -3286,19 +3524,35 @@ export default function Facturacion({ usuario }) {
               </div>
 
               {manualTipoComp === '01' && (() => {
-                const cliManualObj = clientes.find(c => String(c.id_cliente) === String(manualClienteId));
+                const cliManualObj = manualClienteModo === 'REGISTRADO'
+                  ? clientes.find(c => String(c.id_cliente) === String(manualClienteId))
+                  : null;
+                const destNombre = manualClienteModo === 'DIRECTO'
+                  ? (manualRucNombre.trim() || 'Cliente')
+                  : (cliManualObj?.razon_social_o_nombre || cliManualObj?.nombre_comercial || 'Cliente');
+                const destDoc = manualClienteModo === 'DIRECTO'
+                  ? manualRucDoc.trim()
+                  : (cliManualObj?.numero_documento || '');
                 return (
-                  <SeccionGreFactura
-                    greForm={greFormManual}
-                    setGreForm={setGreFormManual}
-                    catalogosGre={catalogosGre}
-                    esAdminCentral={esAdminCentral}
-                    onCatalogosActualizados={recargarCatalogosGre}
-                    destinatarioNombre={cliManualObj?.razon_social_o_nombre || cliManualObj?.nombre_comercial || 'Cliente'}
-                    destinatarioDocumento={cliManualObj?.numero_documento || ''}
-                    pesoBrutoTotal={manualPesoTotal || manualItems.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
-                    bienesResumen={manualItems}
-                  />
+                  <div className="space-y-3">
+                    <SelectorEmitirGre
+                      value={manualEmitirGre}
+                      onChange={setManualEmitirGre}
+                    />
+                    {manualEmitirGre && (
+                      <SeccionGreFactura
+                        greForm={greFormManual}
+                        setGreForm={setGreFormManual}
+                        catalogosGre={catalogosGre}
+                        esAdminCentral={esAdminCentral}
+                        onCatalogosActualizados={recargarCatalogosGre}
+                        destinatarioNombre={destNombre}
+                        destinatarioDocumento={destDoc}
+                        pesoBrutoTotal={manualPesoTotal || manualItems.reduce((acc, it) => acc + (Number(it.peso || it.cantidad || 0)), 0)}
+                        bienesResumen={manualItems}
+                      />
+                    )}
+                  </div>
                 );
               })()}
 
@@ -3360,7 +3614,11 @@ export default function Facturacion({ usuario }) {
                   className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   {procesando && <Loader2 size={14} className="animate-spin" />}
-                  <span>{procesando ? 'Emitiendo...' : 'Emitir Factura Manual'}</span>
+                  <span>
+                    {procesando
+                      ? 'Emitiendo...'
+                      : (manualTipoComp === '01' ? 'Emitir Factura Manual' : 'Emitir Boleta Manual')}
+                  </span>
                 </button>
               </div>
             </form>
@@ -3739,6 +3997,9 @@ export default function Facturacion({ usuario }) {
                 <div><strong>Fecha:</strong> {new Date(modalPdf.comprobante.fecha_emision).toLocaleDateString('es-PE')}</div>
                 <div><strong>Doc:</strong> {modalPdf.comprobante.cliente_documento || modalPdf.comprobante.documento_cliente || '-'}</div>
                 <div><strong>Forma Pago:</strong> {modalPdf.comprobante.forma_pago || 'CONTADO'}</div>
+                {modalPdf.comprobante.cliente_direccion && (
+                  <div className="col-span-2"><strong>Dirección:</strong> {modalPdf.comprobante.cliente_direccion}</div>
+                )}
                 {modalPdf.comprobante.peso_total && (
                   <div><strong>Peso Total:</strong> {Number(modalPdf.comprobante.peso_total).toFixed(2)} kg</div>
                 )}

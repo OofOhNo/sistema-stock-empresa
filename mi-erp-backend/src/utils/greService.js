@@ -1034,10 +1034,109 @@ async function consultarPuntosLlegadaPorRuc(dbPool, rucRaw) {
     return await resultadosExistentes();
 }
 
+/**
+ * Consulta datos básicos (Razón Social y Dirección) de un RUC peruano en base local o SUNAT/APIs.net.pe
+ * sin registrar obligatoriamente al destinatario en la tabla clientes.
+ */
+async function consultarDatosRucSunat(dbPool, rucRaw) {
+    const ruc = String(rucRaw || '').trim();
+    if (!/^(10|15|16|17|20)\d{9}$/.test(ruc)) {
+        return {
+            valido: false,
+            encontrado: false,
+            ruc,
+            mensaje: 'El RUC debe tener exactamente 11 dígitos válidos (iniciar con 10, 15, 16, 17 o 20).'
+        };
+    }
+
+    let cliLocal = null;
+    try {
+        const resCli = await dbPool.query(
+            'SELECT id_cliente, razon_social_o_nombre, nombre_comercial, direccion, email FROM clientes WHERE numero_documento = $1 LIMIT 1',
+            [ruc]
+        );
+        if (resCli.rows.length > 0) cliLocal = resCli.rows[0];
+    } catch {
+        // Ignorar error de consulta local
+    }
+
+    let razonSocial = '';
+    let direccion = '';
+    let ubigeo = '';
+    let estado = '';
+    let condicion = '';
+
+    const intentarParsearSunat = (data) => {
+        if (!data || typeof data !== 'object') return;
+        const nombre = String(data.nombre || data.razonSocial || data.razon_social || '').trim();
+        const dirBase = String(data.direccion || '').trim();
+        const locPartes = [data.departamento, data.provincia, data.distrito]
+            .map((s) => String(s || '').trim())
+            .filter((s) => s && s !== '-');
+        const dirComp = [dirBase, locPartes.join(' - ')].filter(Boolean).join(' ').trim();
+        if (nombre) razonSocial = nombre;
+        if (dirComp) direccion = dirComp;
+        if (data.ubigeo) ubigeo = String(data.ubigeo).trim();
+        if (data.estado) estado = String(data.estado).trim();
+        if (data.condicion) condicion = String(data.condicion).trim();
+    };
+
+    const tokenV2 = process.env.APISNET_TOKEN || '';
+    if (tokenV2) {
+        try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 4500);
+            const resp = await fetch(`https://api.apis.net.pe/v2/sunat/ruc?numero=${encodeURIComponent(ruc)}`, {
+                headers: { Authorization: `Bearer ${tokenV2}` },
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (resp.ok) intentarParsearSunat(await resp.json());
+        } catch {
+            // Intentar fallback v1
+        }
+    }
+
+    if (!razonSocial) {
+        try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 4500);
+            const resp = await fetch(`https://api.apis.net.pe/v1/ruc?numero=${encodeURIComponent(ruc)}`, {
+                signal: ctrl.signal
+            });
+            clearTimeout(timer);
+            if (resp.ok) intentarParsearSunat(await resp.json());
+        } catch {
+            // Silencioso: el usuario igual puede escribir razón social manualmente
+        }
+    }
+
+    if (!razonSocial && cliLocal) {
+        razonSocial = String(cliLocal.razon_social_o_nombre || cliLocal.nombre_comercial || '').trim();
+    }
+    if (!direccion && cliLocal?.direccion) {
+        direccion = String(cliLocal.direccion).trim();
+    }
+
+    return {
+        valido: true,
+        encontrado: Boolean(razonSocial),
+        ruc,
+        razon_social: razonSocial,
+        direccion,
+        ubigeo,
+        estado,
+        condicion,
+        email: cliLocal?.email || '',
+        en_base_clientes: Boolean(cliLocal)
+    };
+}
+
 module.exports = {
     obtenerCatalogosGre,
     crearGreInterna,
     consultarGreEnNubefact,
     reenviarGreEnNubefact,
-    consultarPuntosLlegadaPorRuc
+    consultarPuntosLlegadaPorRuc,
+    consultarDatosRucSunat
 };

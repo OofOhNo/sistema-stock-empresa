@@ -110,9 +110,9 @@ const busquedaController = {
             }
             if (cliente) {
                 whereComprobantes.push(`(
-                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR
-                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) ILIKE $${pIdxComp} OR
-                    COALESCE(cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp}
+                    COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial, c.cliente_nombre) ILIKE $${pIdxComp} OR
+                    COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp}
                 )`);
                 paramsComp.push(`%${cliente}%`);
                 pIdxComp++;
@@ -124,9 +124,9 @@ const busquedaController = {
                     CONCAT(c.serie, '-', c.correlativo) ILIKE $${pIdxComp} OR 
                     CONCAT(c.serie, '-', LPAD(c.correlativo::text, 6, '0')) ILIKE $${pIdxComp} OR
                     CONCAT(c.serie, '-', LPAD(c.correlativo::text, 8, '0')) ILIKE $${pIdxComp} OR
-                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR 
-                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) ILIKE $${pIdxComp} OR 
-                    COALESCE(cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp} OR 
+                    COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) ILIKE $${pIdxComp} OR 
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial, c.cliente_nombre) ILIKE $${pIdxComp} OR 
+                    COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento) ILIKE $${pIdxComp} OR 
                     c.tipo_comprobante ILIKE $${pIdxComp}
                 )`);
                 paramsComp.push(`%${terminoLibre}%`);
@@ -145,9 +145,9 @@ const busquedaController = {
                     c.monto_total,
                     c.estado_sunat,
                     c.fecha_emision,
-                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) AS cliente_nombre,
-                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) AS cliente_comercial,
-                    COALESCE(cl_comp.numero_documento, cl.numero_documento) AS cliente_ruc
+                    COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre) AS cliente_nombre,
+                    COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial, c.cliente_nombre) AS cliente_comercial,
+                    COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento) AS cliente_ruc
                 FROM comprobantes c
                 LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
                 LEFT JOIN clientes cl ON p.id_cliente = cl.id_cliente

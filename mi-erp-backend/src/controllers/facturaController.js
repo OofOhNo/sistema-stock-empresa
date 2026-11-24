@@ -27,8 +27,17 @@ const {
     crearGreInterna,
     consultarGreEnNubefact,
     reenviarGreEnNubefact,
-    consultarPuntosLlegadaPorRuc
+    consultarPuntosLlegadaPorRuc,
+    consultarDatosRucSunat
 } = require('../utils/greService');
+
+function debeEmitirGreParaComprobante(body, tipoComprobante) {
+    if (tipoComprobante !== '01') return false;
+    if (body?.emitir_gre !== undefined && body?.emitir_gre !== null && body?.emitir_gre !== '') {
+        return parsearDecreceStock(body.emitir_gre);
+    }
+    return body?.gre !== null;
+}
 
 async function obtenerConfigEmisor(clientOrPool = pool) {
     try {
@@ -154,7 +163,11 @@ async function descargarArchivoSunatComprobante(req, res, tipoArchivo) {
     try {
         const { id } = req.params;
         const resComp = await pool.query(`
-            SELECT c.*, cl.tipo_documento, cl.numero_documento, cl.razon_social_o_nombre
+            SELECT c.*,
+                COALESCE(c.cliente_tipo_doc, cl.tipo_documento, '6') AS tipo_documento,
+                COALESCE(c.cliente_numero_doc, cl.numero_documento, '-') AS numero_documento,
+                COALESCE(c.cliente_nombre, cl.razon_social_o_nombre, 'CLIENTE GENERAL') AS razon_social_o_nombre,
+                COALESCE(c.cliente_direccion, cl.direccion, '') AS direccion
             FROM comprobantes c
             LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
             LEFT JOIN clientes cl ON COALESCE(c.id_cliente, p.id_cliente) = cl.id_cliente
@@ -812,7 +825,9 @@ const facturaController = {
 
                     const resC = await client.query(`
                         INSERT INTO comprobantes (
-                            id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo,
+                            id_pedido, id_cliente, id_ubicacion,
+                            cliente_tipo_doc, cliente_numero_doc, cliente_nombre, cliente_direccion, cliente_email,
+                            tipo_comprobante, serie, correlativo,
                             monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                             monto_igv, monto_total, forma_pago, dias_credito, medio_pago_sunat,
                             estado_sunat, codigo_hash, mensaje_cdr, cadena_qr, monto_en_letras,
@@ -821,17 +836,24 @@ const facturaController = {
                             porcentaje_dividido, stock_descontado, items_json
                         )
                         VALUES (
-                            $1, $2, $3, $4, $5, $6,
-                            $7, $8, $9, $10,
-                            $11, $12, $13, $14, $15,
+                            $1, $2, $3,
+                            $4, $5, $6, $7, $8,
+                            $9, $10, $11,
+                            $12, $13, $14, $15,
                             $16, $17, $18, $19, $20,
-                            $21, $22, $23, $24, $25, $26,
-                            $27, $28, $29, TRUE, $30, $31, $32, $33
+                            $21, $22, $23, $24, $25,
+                            $26, $27, $28, $29, $30, $31,
+                            $32, $33, $34, TRUE, $35, $36, $37, $38
                         ) RETURNING *;
                     `, [
                         id_pedido,
                         pago.id_cliente,
                         pedido.id_ubicacion,
+                        cliDividido.tipo_documento || '6',
+                        cliDividido.numero_documento || '',
+                        cliDividido.razon_social_o_nombre || '',
+                        cliDividido.direccion || '',
+                        cliDividido.email || '',
                         tipoComp,
                         serieDividida,
                         correlativoDiv,
@@ -864,7 +886,7 @@ const facturaController = {
                         JSON.stringify(itemDiv)
                     ]);
                     const compDivCreado = resC.rows[0];
-                    if (tipoComp === '01') {
+                    if (debeEmitirGreParaComprobante(req.body, tipoComp)) {
                         const pesoProp = ((Number(req.body.peso_total || pedido.peso_total || 0)) * (porcPago / 100));
                         compDivCreado.guia_remision = await crearGreInterna(client, {
                             id_comprobante: compDivCreado.id_comprobante,
@@ -1020,7 +1042,9 @@ const facturaController = {
 
             const queryComprobante = `
                 INSERT INTO comprobantes (
-                    id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo, 
+                    id_pedido, id_cliente, id_ubicacion,
+                    cliente_tipo_doc, cliente_numero_doc, cliente_nombre, cliente_direccion, cliente_email,
+                    tipo_comprobante, serie, correlativo, 
                     monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                     monto_igv, monto_total, 
                     forma_pago, dias_credito, fecha_vencimiento_cuota,
@@ -1033,17 +1057,19 @@ const facturaController = {
                     peso_total, cantidad_cuotas, stock_descontado, items_json, estado_pago
                 )
                 VALUES (
-                    $1, $2, $3, $4, $5, $6,
-                    $7, $8, $9, $10,
-                    $11, $12,
-                    $13, $14, $15,
+                    $1, $2, $3,
+                    $4, $5, $6, $7, $8,
+                    $9, $10, $11,
+                    $12, $13, $14, $15,
                     $16, $17,
-                    $18, $19, $20, $21,
-                    $22, $23, $24,
-                    $25, $26,
+                    $18, $19, $20,
+                    $21, $22,
+                    $23, $24, $25, $26,
                     $27, $28, $29,
-                    $30, $31, $32, $33, $34,
-                    $35, $36, $37, $38, $39
+                    $30, $31,
+                    $32, $33, $34,
+                    $35, $36, $37, $38, $39,
+                    $40, $41, $42, $43, $44
                 )
                 RETURNING *;
             `;
@@ -1051,6 +1077,11 @@ const facturaController = {
                 id_pedido,
                 pedido.id_cliente,
                 pedido.id_ubicacion,
+                pedido.tipo_documento || '6',
+                pedido.numero_documento || '',
+                pedido.razon_social_o_nombre || '',
+                pedido.direccion || '',
+                pedido.email || '',
                 tipo_comprobante,
                 serie,
                 correlativo,
@@ -1128,7 +1159,7 @@ const facturaController = {
             `, [nuevoEstadoPedido, descontarAhora, id_pedido]);
 
             let guiaRemisionCreada = null;
-            if (tipo_comprobante === '01') {
+            if (debeEmitirGreParaComprobante(req.body, tipo_comprobante)) {
                 guiaRemisionCreada = await crearGreInterna(client, {
                     id_comprobante: compCreado.id_comprobante,
                     id_pedido,
@@ -1261,6 +1292,14 @@ const facturaController = {
                     if (resCliDirecto.rows.length > 0) {
                         clienteDatos = resCliDirecto.rows[0];
                     }
+                } else if (compOriginal.cliente_numero_doc || compOriginal.cliente_nombre) {
+                    clienteDatos = {
+                        tipo_documento: compOriginal.cliente_tipo_doc || (compOriginal.tipo_comprobante === '01' ? '6' : '1'),
+                        numero_documento: compOriginal.cliente_numero_doc || '-',
+                        razon_social_o_nombre: compOriginal.cliente_nombre || 'CLIENTE GENERAL',
+                        direccion: compOriginal.cliente_direccion || '',
+                        email: compOriginal.cliente_email || ''
+                    };
                 }
                 if (Array.isArray(compOriginal.items_json) && compOriginal.items_json.length > 0) {
                     itemsOriginales = compOriginal.items_json;
@@ -1338,7 +1377,9 @@ const facturaController = {
 
             const resNC = await client.query(`
                 INSERT INTO comprobantes (
-                    id_pedido, tipo_comprobante, serie, correlativo,
+                    id_pedido, id_cliente, id_ubicacion,
+                    cliente_tipo_doc, cliente_numero_doc, cliente_nombre, cliente_direccion, cliente_email,
+                    tipo_comprobante, serie, correlativo,
                     monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                     monto_igv, monto_total,
                     id_comprobante_referencia, codigo_motivo_nc, descripcion_motivo_nc,
@@ -1348,18 +1389,27 @@ const facturaController = {
                     xml_firmado, cdr_xml, cdr_zip_base64, respuesta_ose_json, modo_emision
                 )
                 VALUES (
-                    $1, '07', $2, $3,
-                    $4, $5, $6, $7,
-                    $8, $9,
-                    $10, $11, $12,
-                    $13, $14, $15,
-                    $16, $17,
-                    $18, $19, $20,
-                    $21, $22, $23, $24, $25
+                    $1, $2, $3,
+                    $4, $5, $6, $7, $8,
+                    '07', $9, $10,
+                    $11, $12, $13, $14,
+                    $15, $16,
+                    $17, $18, $19,
+                    $20, $21, $22,
+                    $23, $24,
+                    $25, $26, $27,
+                    $28, $29, $30, $31, $32
                 )
                 RETURNING *;
             `, [
                 compOriginal.id_pedido,
+                compOriginal.id_cliente || null,
+                compOriginal.id_ubicacion || null,
+                clienteDatos.tipo_documento || '6',
+                clienteDatos.numero_documento || '-',
+                clienteDatos.razon_social_o_nombre || 'CLIENTE GENERAL',
+                clienteDatos.direccion || '',
+                clienteDatos.email || '',
                 serieNC,
                 correlativoNC,
                 totales.monto_subtotal.toFixed(2),
@@ -1548,10 +1598,10 @@ const facturaController = {
                     c.es_pago_dividido, c.monto_dividido, c.porcentaje_dividido,
                     COALESCE(c.id_ubicacion, p.id_ubicacion) AS id_ubicacion_final, 
                     COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion, 
-                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
-                    COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente,
-                    COALESCE(cl_comp.tipo_documento, cl.tipo_documento, '6') AS tipo_documento_cliente,
-                    COALESCE(cl_comp.direccion, cl.direccion, '') AS direccion_cliente,
+                    COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
+                    COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente,
+                    COALESCE(c.cliente_tipo_doc, cl_comp.tipo_documento, cl.tipo_documento, '6') AS tipo_documento_cliente,
+                    COALESCE(c.cliente_direccion, cl_comp.direccion, cl.direccion, '') AS direccion_cliente,
                     ref.serie AS ref_serie,
                     ref.correlativo AS ref_correlativo
                 FROM comprobantes c
@@ -1586,12 +1636,12 @@ const facturaController = {
                         COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion,
                         COALESCE(u.direccion_completa, u_comp.direccion_completa, '') AS direccion_ubicacion,
                         COALESCE(u.telefono_contacto, u_comp.telefono_contacto, '') AS telefono_ubicacion,
-                        COALESCE(cl_comp.tipo_documento, cl.tipo_documento, '6') AS cliente_tipo_doc,
-                        COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS cliente_documento,
-                        COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'CLIENTE GENERAL') AS nombre_cliente,
-                        COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial) AS cliente_comercial,
-                        COALESCE(cl_comp.direccion, cl.direccion, '') AS cliente_direccion,
-                        COALESCE(cl_comp.email, cl.email, '') AS cliente_email,
+                        COALESCE(c.cliente_tipo_doc, cl_comp.tipo_documento, cl.tipo_documento, '6') AS cliente_tipo_doc,
+                        COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento, '-') AS cliente_documento,
+                        COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'CLIENTE GENERAL') AS nombre_cliente,
+                        COALESCE(cl_comp.nombre_comercial, cl.nombre_comercial, c.cliente_nombre) AS cliente_comercial,
+                        COALESCE(c.cliente_direccion, cl_comp.direccion, cl.direccion, '') AS cliente_direccion,
+                        COALESCE(c.cliente_email, cl_comp.email, cl.email, '') AS cliente_email,
                         ref.tipo_comprobante AS ref_tipo_comprobante,
                         ref.serie AS ref_serie,
                         ref.correlativo AS ref_correlativo,
@@ -1834,6 +1884,7 @@ const facturaController = {
             await client.query('BEGIN');
             const {
                 id_cliente,
+                cliente_directo,
                 tipo_comprobante,
                 forma_pago,
                 dias_credito,
@@ -1862,7 +1913,50 @@ const facturaController = {
             }
 
             let cliente;
-            if (id_cliente === 'CLIENTES_VARIOS' || id_cliente === 'VARIOS' || id_cliente === '0' || !id_cliente) {
+            const usaClienteDirecto =
+                (cliente_directo && typeof cliente_directo === 'object' && String(cliente_directo.numero_documento || '').trim() !== '')
+                || id_cliente === 'DIRECTO';
+
+            if (usaClienteDirecto) {
+                const cd = cliente_directo && typeof cliente_directo === 'object' ? cliente_directo : {};
+                const numDoc = String(cd.numero_documento || req.body.cliente_numero_doc || '').trim();
+                const esRuc = /^(10|15|16|17|20)\d{9}$/.test(numDoc);
+                const tipoDoc = cd.tipo_documento
+                    ? String(cd.tipo_documento).trim()
+                    : (esRuc ? '6' : (/^\d{8}$/.test(numDoc) ? '1' : '6'));
+
+                let razonSocial = String(cd.razon_social_o_nombre || req.body.cliente_nombre || '').trim();
+                let direccionDir = String(cd.direccion || req.body.cliente_direccion || '').trim();
+                let emailDir = String(cd.email || req.body.cliente_email || '').trim();
+
+                if (!razonSocial && esRuc) {
+                    const lookup = await consultarDatosRucSunat(pool, numDoc).catch(() => null);
+                    if (lookup?.encontrado && lookup.razon_social) {
+                        razonSocial = lookup.razon_social;
+                        if (!direccionDir && lookup.direccion) direccionDir = lookup.direccion;
+                        if (!emailDir && lookup.email) emailDir = lookup.email;
+                    }
+                }
+
+                if (!razonSocial || razonSocial.length < 2) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'Ingresa la Razón Social o Nombre Completo para emitir el comprobante sin registrar al cliente.'
+                    });
+                }
+
+                // Cliente ocasional en memoria: NO se inserta en la tabla clientes (id_cliente queda NULL)
+                cliente = {
+                    id_cliente: null,
+                    tipo_documento: tipoDoc,
+                    numero_documento: numDoc,
+                    razon_social_o_nombre: razonSocial,
+                    nombre_comercial: razonSocial,
+                    direccion: direccionDir || '-',
+                    email: emailDir || ''
+                };
+            } else if (id_cliente === 'CLIENTES_VARIOS' || id_cliente === 'VARIOS' || id_cliente === '0' || !id_cliente) {
                 const resVarios = await client.query("SELECT * FROM clientes WHERE numero_documento = '00000000' OR razon_social_o_nombre ILIKE '%CLIENTES VARIOS%' LIMIT 1");
                 if (resVarios.rows.length > 0) {
                     cliente = resVarios.rows[0];
@@ -1999,7 +2093,9 @@ const facturaController = {
 
             const queryComprobante = `
                 INSERT INTO comprobantes (
-                    id_pedido, id_cliente, id_ubicacion, tipo_comprobante, serie, correlativo, 
+                    id_pedido, id_cliente, id_ubicacion,
+                    cliente_tipo_doc, cliente_numero_doc, cliente_nombre, cliente_direccion, cliente_email,
+                    tipo_comprobante, serie, correlativo, 
                     monto_subtotal, monto_gravada, monto_exonerada, monto_inafecta,
                     monto_igv, monto_total, 
                     forma_pago, dias_credito, fecha_vencimiento_cuota,
@@ -2011,23 +2107,30 @@ const facturaController = {
                     peso_total, cantidad_cuotas, origen_facturacion, stock_descontado, items_json, estado_pago
                 )
                 VALUES (
-                    NULL, $1, $2, $3, $4, $5,
-                    $6, $7, $8, $9,
-                    $10, $11,
-                    $12, $13, $14,
-                    $15, '0101',
-                    FALSE, $16, $17, $18,
-                    $19, $20,
-                    $21, $22, $23,
-                    $24, $25, $26, $27, $28,
-                    $29, $30, 'MANUAL', $31, $32, $33
+                    NULL, $1, $2,
+                    $3, $4, $5, $6, $7,
+                    $8, $9, $10,
+                    $11, $12, $13, $14,
+                    $15, $16,
+                    $17, $18, $19,
+                    $20, '0101',
+                    FALSE, $21, $22, $23,
+                    $24, $25,
+                    $26, $27, $28,
+                    $29, $30, $31, $32, $33,
+                    $34, $35, 'MANUAL', $36, $37, $38
                 )
                 RETURNING *;
             `;
 
             const resComp = await client.query(queryComprobante, [
-                cliente.id_cliente,
+                cliente.id_cliente || null,
                 idUbicacionUsuario,
+                cliente.tipo_documento || '6',
+                cliente.numero_documento || '',
+                cliente.razon_social_o_nombre || '',
+                cliente.direccion || '',
+                cliente.email || '',
                 tipo_comprobante,
                 serie,
                 correlativo,
@@ -2078,7 +2181,7 @@ const facturaController = {
             }
 
             let guiaRemisionCreada = null;
-            if (tipo_comprobante === '01') {
+            if (debeEmitirGreParaComprobante(req.body, tipo_comprobante)) {
                 guiaRemisionCreada = await crearGreInterna(client, {
                     id_comprobante: compCreado.id_comprobante,
                     id_pedido: null,
@@ -2826,8 +2929,8 @@ const facturaController = {
                     ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima')::date - c.fecha_vencimiento_cuota)::int AS dias_vencido,
                     COALESCE(c.id_ubicacion, p.id_ubicacion) AS id_ubicacion_final,
                     COALESCE(u.nombre, u_comp.nombre, 'Sede Principal') AS nombre_ubicacion,
-                    COALESCE(cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
-                    COALESCE(cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente
+                    COALESCE(c.cliente_nombre, cl_comp.razon_social_o_nombre, cl.razon_social_o_nombre, 'Cliente General') AS nombre_cliente,
+                    COALESCE(c.cliente_numero_doc, cl_comp.numero_documento, cl.numero_documento, '-') AS documento_cliente
                 FROM comprobantes c
                 LEFT JOIN pedidos p ON c.id_pedido = p.id_pedido
                 LEFT JOIN ubicaciones u ON p.id_ubicacion = u.id_ubicacion
@@ -2921,6 +3024,19 @@ const facturaController = {
         } catch (error) {
             console.error('Error al actualizar estado de pago del comprobante:', error);
             return res.status(500).json({ exito: false, mensaje: 'Error al actualizar el estado de pago.' });
+        }
+    },
+
+    consultarRucPublico: async (req, res) => {
+        try {
+            const resultado = await consultarDatosRucSunat(pool, req.params.ruc);
+            if (!resultado.valido) {
+                return res.status(400).json({ exito: false, ...resultado });
+            }
+            return res.status(200).json({ exito: true, ...resultado });
+        } catch (error) {
+            console.error('Error al consultar RUC SUNAT:', error);
+            return res.status(500).json({ exito: false, mensaje: 'No se pudo consultar el RUC en SUNAT.' });
         }
     },
 
