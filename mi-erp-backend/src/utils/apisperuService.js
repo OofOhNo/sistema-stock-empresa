@@ -967,6 +967,57 @@ async function consultarGreTicketApisperu(greRow, configEmisor) {
 }
 
 /**
+ * Consulta el CDR de una Factura (01) o Boleta (03) emitida mediante APIsPERU GET /invoice/status.
+ */
+async function consultarComprobanteEstadoApisperu(compRow, configEmisor) {
+    if (!compRow?.tipo_comprobante || !compRow?.serie || !compRow?.correlativo) {
+        throw new Error('Faltan tipo, serie o correlativo para consultar el comprobante en SUNAT.');
+    }
+    const { baseUrl, token } = obtenerCredencialesApisperu(configEmisor);
+    const ruc = String(configEmisor?.ruc_emisor || '').trim();
+    const qs = `tipo=${encodeURIComponent(compRow.tipo_comprobante)}&serie=${encodeURIComponent(compRow.serie)}&numero=${encodeURIComponent(String(compRow.correlativo))}${ruc ? `&ruc=${encodeURIComponent(ruc)}` : ''}`;
+
+    const data = await llamarApisperuJson(baseUrl, `/invoice/status?${qs}`, {
+        method: 'GET',
+        token,
+        timeoutMs: 15000
+    });
+
+    const cdrResp = data.cdrResponse || null;
+    const aceptada = cdrResp?.accepted === true || (data.success === true && cdrResp?.code === '0');
+    const tieneError = Boolean(data.error) || (cdrResp && cdrResp.accepted === false);
+
+    let estadoNuevo = compRow.estado_sunat || 'PENDIENTE_ENVIO';
+    if (aceptada) estadoNuevo = 'ACEPTADO';
+    else if (tieneError) estadoNuevo = 'OBSERVADO';
+
+    const cdrZipBase64 = data.cdrZip || null;
+    const cdrXml = extraerXmlDeZipBase64(cdrZipBase64);
+    const notasCdr = Array.isArray(cdrResp?.notes) && cdrResp.notes.length > 0
+        ? ` | Observaciones SUNAT: ${cdrResp.notes.join('; ')}`
+        : '';
+
+    const mensajeCdr = data.error
+        ? `SUNAT [${data.error.code || 'ERR'}]: ${data.error.message || 'Sin detalle'}`
+        : (cdrResp?.description
+            ? `${cdrResp.description}${notasCdr}`
+            : compRow.mensaje_cdr || null);
+
+    return {
+        estado_sunat: estadoNuevo,
+        mensaje_cdr: mensajeCdr,
+        cdr_xml: cdrXml,
+        cdr_zip_base64: cdrZipBase64,
+        respuesta_ose_json: {
+            code: data.code,
+            success: data.success,
+            cdrResponse: cdrResp,
+            error: data.error || null
+        }
+    };
+}
+
+/**
  * Prueba de conectividad y token real contra APIsPERU sin emitir comprobantes fiscales en SUNAT.
  */
 async function probarConexionApisperu({ configEmisor = {}, apisperuUrl, apisperuToken }) {
@@ -1066,6 +1117,7 @@ module.exports = {
     DEFAULT_APISPERU_URL,
     resolverModoIntegracion,
     obtenerCredencialesApisperu,
+    normalizarUnidadSunat,
     formatearFechaHoraPeru,
     formatearFechaSoloPeru,
     extraerXmlDeZipBase64,
@@ -1073,6 +1125,7 @@ module.exports = {
     construirClientApisperu,
     construirPayloadApisperuComprobante,
     enviarComprobanteApisperu,
+    consultarComprobanteEstadoApisperu,
     construirPayloadApisperuGre,
     enviarGreApisperu,
     consultarGreTicketApisperu,

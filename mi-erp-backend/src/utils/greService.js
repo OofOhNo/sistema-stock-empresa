@@ -2,7 +2,8 @@ const {
     resolverModoIntegracion,
     construirPayloadApisperuGre,
     enviarGreApisperu,
-    consultarGreTicketApisperu
+    consultarGreTicketApisperu,
+    normalizarUnidadSunat
 } = require('./apisperuService');
 
 function esModoDemoNubefact(configEmisor = {}) {
@@ -319,6 +320,8 @@ function armarApisperuGreParams({
     fechaInicio, motivoTraslado, pesoCalculado, unidadPeso, numeroBultos,
     modalidadTraslado, partidaUbigeo, partidaDireccion, llegadaUbigeo, llegadaDir,
     vehPlaca, vehEntidad, vehNumAutoriz, condTipoDoc, condNumDoc, condNombres, condLicencia,
+    transportistaRuc = '', transportistaRazon = '', transportistaMtc = '',
+    remitenteTipoDoc = '6', remitenteNumDoc = '', remitenteRazonSocial = '',
     observaciones, trasladoVehiculoM1L, retornoEnvasesVacios, retornoVehiculoVacio, transbordoProgramado,
     documentoRelacionado, bienes, configEmisor
 }) {
@@ -340,7 +343,7 @@ function armarApisperuGreParams({
         motivoCodigo: mapearMotivoTrasladoSunat(motivoTraslado),
         desTraslado: motivoTraslado || 'Venta',
         pesoCalculado,
-        unidadPeso,
+        unidadPeso: normalizarUnidadSunat(unidadPeso, 'KGM'),
         numeroBultos,
         tipoTransporte,
         partidaUbigeo,
@@ -355,6 +358,12 @@ function armarApisperuGreParams({
         condNombre: nombre,
         condApellidos: apellidos,
         condLicencia,
+        transportistaRuc,
+        transportistaRazon,
+        transportistaMtc,
+        remitenteTipoDoc,
+        remitenteNumDoc,
+        remitenteRazonSocial,
         observaciones,
         trasladoVehiculoM1L: Boolean(trasladoVehiculoM1L),
         retornoEnvasesVacios: Boolean(retornoEnvasesVacios),
@@ -430,7 +439,13 @@ async function crearGreInterna(client, {
         }
     }
 
-    // Vehículo frecuente o manual
+    const modalidadTraslado = gre.modalidad_traslado || 'Privado';
+    const esTransportePublico = String(modalidadTraslado || '').toLowerCase().includes('p') &&
+        String(modalidadTraslado || '').toLowerCase().includes('blic');
+    const esM1L = Boolean(gre.traslado_vehiculo_m1_l);
+    const requiereVehiculoYChofer = (!esTransportePublico && !esM1L) || tipoGre === 'TRANSPORTISTA';
+
+    // Vehículo frecuente o manual (no autocompletar en transporte público ni en M1/L)
     let vehPlaca = gre.vehiculo_placa || '';
     let vehEntidad = gre.vehiculo_entidad_autoriz || '';
     let vehNumAutoriz = gre.vehiculo_num_autoriz || '';
@@ -441,7 +456,7 @@ async function crearGreInterna(client, {
             vehEntidad = vRes.rows[0].entidad_emisora || '';
             vehNumAutoriz = vRes.rows[0].numero_autorizacion || '';
         }
-    } else if (!vehPlaca) {
+    } else if (!vehPlaca && requiereVehiculoYChofer) {
         const defV = await client.query('SELECT * FROM gre_vehiculos WHERE activo = TRUE ORDER BY id_vehiculo ASC LIMIT 1');
         if (defV.rows.length > 0) vehPlaca = defV.rows[0].placa;
     }
@@ -459,7 +474,7 @@ async function crearGreInterna(client, {
             condNombres = cRes.rows[0].apellidos_nombres;
             condLicencia = cRes.rows[0].licencia;
         }
-    } else if (!condNumDoc && !condNombres) {
+    } else if (!condNumDoc && !condNombres && requiereVehiculoYChofer) {
         const defC = await client.query('SELECT * FROM gre_conductores WHERE activo = TRUE ORDER BY id_conductor ASC LIMIT 1');
         if (defC.rows.length > 0) {
             condTipoDoc = defC.rows[0].tipo_documento;
@@ -469,10 +484,26 @@ async function crearGreInterna(client, {
         }
     }
 
+    const transportistaRuc = String(gre.transportista_ruc || '').trim();
+    const transportistaRazon = String(gre.transportista_razon_social || '').trim();
+    const transportistaMtc = String(gre.transportista_nro_mtc || '').trim();
+    const remitenteTipoDoc = String(gre.remitente_tipo_doc || '6').trim();
+    const remitenteNumDoc = String(gre.remitente_num_doc || '').trim();
+    const remitenteRazonSocial = String(gre.remitente_razon_social || '').trim();
+    const numeroBultos = Math.max(1, parseInt(gre.numero_de_bultos, 10) || 1);
+    const observacionesGre = String(gre.observaciones || '').trim();
+
     const bienes = Array.isArray(gre.bienes) && gre.bienes.length > 0
-        ? gre.bienes
+        ? gre.bienes.map((b, idx) => ({
+            ...b,
+            orden: b.orden || idx + 1,
+            codigo_unidad_sunat: normalizarUnidadSunat(b.codigo_unidad_sunat || b.unidad_medida, 'KGM')
+        }))
         : (Array.isArray(items) ? items : []).map((it, idx) => {
-            const codigoUnidadSunat = it.codigo_unidad_sunat || (it.unidad_medida ? 'NIU' : 'KGM');
+            const codigoUnidadSunat = normalizarUnidadSunat(
+                it.codigo_unidad_sunat || (it.unidad_medida ? it.unidad_medida : 'KGM'),
+                'KGM'
+            );
             const unidadMedida = it.unidad_medida || (codigoUnidadSunat === 'KGM' ? 'Kilogramo' : 'Unidad');
             const cant = Number(it.cantidad);
             const peso = Number(it.peso);
