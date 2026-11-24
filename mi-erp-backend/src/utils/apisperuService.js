@@ -71,6 +71,54 @@ function sumarDiasYmd(ymd, dias) {
     return utc.toISOString().slice(0, 10);
 }
 
+const EQUIVALENCIAS_UNIDAD_SUNAT = {
+    BLS: 'BG',
+    BOL: 'BG',
+    BOLSA: 'BG',
+    SAC: 'SA',
+    SACO: 'SA',
+    DOC: 'DZN',
+    MLL: 'MIL',
+    KG: 'KGM',
+    KGS: 'KGM',
+    KILO: 'KGM',
+    KILOGRAMO: 'KGM',
+    KILOGRAMOS: 'KGM',
+    GR: 'GRM',
+    GRAMO: 'GRM',
+    GRAMOS: 'GRM',
+    L: 'LTR',
+    LT: 'LTR',
+    LITRO: 'LTR',
+    LITROS: 'LTR',
+    U: 'NIU',
+    UN: 'NIU',
+    UND: 'NIU',
+    UNID: 'NIU',
+    UNIDAD: 'NIU',
+    UNIDADES: 'NIU',
+    CAJA: 'BX',
+    CAJAS: 'BX',
+    PAQ: 'PK',
+    PAQUETE: 'PK',
+    TM: 'TNE',
+    TON: 'TNE',
+    TONELADA: 'TNE'
+};
+
+/**
+ * Normaliza códigos de unidad internos al estándar Catálogo 03 / UN-ECE Rec 20 exigido por SUNAT.
+ */
+function normalizarUnidadSunat(codigo, fallback = 'NIU') {
+    const limpio = String(codigo || '').trim().toUpperCase();
+    if (!limpio) return fallback;
+    return EQUIVALENCIAS_UNIDAD_SUNAT[limpio] || limpio;
+}
+
+function esEmailValido(valor) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(valor || '').trim());
+}
+
 /**
  * Extrae el archivo XML contenido dentro de un CDR ZIP en Base64 devuelto por SUNAT/APIsPERU.
  * No requiere librerías externas: lee el Central Directory y descomprime Deflate (método 8) o Stored (0).
@@ -171,18 +219,25 @@ function construirClientApisperu(cliente = {}) {
     const tipoRaw = String(cliente.tipo_documento || '').trim();
     const nombreRaw = String(cliente.razon_social_o_nombre || 'CLIENTES VARIOS').trim();
 
+    const esExtranjeroSinDoc = tipoRaw === '0' && numRaw === '-';
     const esVarios =
-        !numRaw ||
-        numRaw === '-' ||
-        numRaw === '00000000' ||
-        tipoRaw === '-' ||
-        tipoRaw === '0' ||
-        nombreRaw.toUpperCase().includes('VARIOS');
+        !esExtranjeroSinDoc && (
+            !numRaw ||
+            numRaw === '-' ||
+            numRaw === '00000000' ||
+            tipoRaw === '-' ||
+            tipoRaw === '0' ||
+            nombreRaw.toUpperCase().includes('VARIOS')
+        );
 
-    const tipoDoc = esVarios
+    const tipoDoc = esExtranjeroSinDoc
         ? '0'
-        : (/^(10|15|16|17|20)\d{9}$/.test(numRaw) ? '6' : (tipoRaw || '1'));
-    const numDoc = esVarios ? '00000000' : numRaw;
+        : (esVarios
+            ? '1'
+            : (/^(10|15|16|17|20)\d{9}$/.test(numRaw) ? '6' : (tipoRaw || '1')));
+    const numDoc = esExtranjeroSinDoc
+        ? '-'
+        : (esVarios ? '00000000' : numRaw);
 
     const clientObj = {
         tipoDoc,
@@ -192,7 +247,7 @@ function construirClientApisperu(cliente = {}) {
             direccion: String(cliente.direccion || '-').trim() || '-'
         }
     };
-    if (cliente.email && String(cliente.email).includes('@')) {
+    if (esEmailValido(cliente.email)) {
         clientObj.email = String(cliente.email).trim();
     }
     return clientObj;
@@ -300,7 +355,7 @@ function construirPayloadApisperuComprobante({
 
         return {
             codProducto: String(it.codigo || it.sku || 'PROD').slice(0, 30),
-            unidad: String(it.unidad_de_medida || 'NIU').toUpperCase(),
+            unidad: normalizarUnidadSunat(it.unidad_de_medida || it.codigo_unidad_sunat, 'NIU'),
             descripcion: String(it.descripcion || 'PRODUCTO').trim().slice(0, 250),
             cantidad: +cant.toFixed(4),
             mtoValorUnitario: +valorUnit.toFixed(6),
@@ -322,6 +377,10 @@ function construirPayloadApisperuComprobante({
     const valorVenta = +(mtoOperGravadas + mtoOperExoneradas + mtoOperInafectas + mtoOperExportacion).toFixed(2);
     const totalCalculado = +(valorVenta + mtoIGV).toFixed(2);
     const mtoImpVenta = totalCalculado > 0 ? totalCalculado : +Number(totales.monto_total || 0).toFixed(2);
+
+    if (!(mtoImpVenta > 0)) {
+        throw new Error('El importe total del comprobante debe ser mayor a S/ 0.00 para emitirlo ante SUNAT.');
+    }
 
     const textoLetras = String(monto_en_letras || '').replace(/^SON:\s*/i, 'SON ').trim() || 'SON CERO CON 00/100 SOLES';
     const legends = [{ code: '1000', value: textoLetras }];
@@ -347,15 +406,19 @@ function construirPayloadApisperuComprobante({
     if (mtoOperInafectas > 0) basePayload.mtoOperInafectas = mtoOperInafectas;
     if (mtoOperExportacion > 0) basePayload.mtoOperExportacion = mtoOperExportacion;
 
-    if (tipo_comprobante === '07') {
+    if (tipo_comprobante === '07' || tipo_comprobante === '08') {
         const refSerie = comprobante_referencia?.serie || 'F001';
         const refCorr = String(comprobante_referencia?.correlativo || 1);
+        const motivoDefault = tipo_comprobante === '08' ? '02' : '01';
+        const descDefault = tipo_comprobante === '08' ? 'AUMENTO EN EL VALOR' : 'ANULACIÓN DE LA OPERACIÓN';
         return {
             ...basePayload,
+            valorVenta,
+            subTotal: mtoImpVenta,
             tipDocAfectado: String(comprobante_referencia?.tipo_comprobante || '01'),
             numDocfectado: `${refSerie}-${refCorr}`,
-            codMotivo: String(codigo_motivo_nc || '01').padStart(2, '0'),
-            desMotivo: String(descripcion_motivo_nc || 'ANULACIÓN DE LA OPERACIÓN').trim().slice(0, 250)
+            codMotivo: String(codigo_motivo_nc || motivoDefault).padStart(2, '0'),
+            desMotivo: String(descripcion_motivo_nc || descDefault).trim().slice(0, 250)
         };
     }
 
@@ -584,7 +647,10 @@ function construirPayloadApisperuGre({
     configEmisor = {},
     transportistaRuc = '',
     transportistaRazon = '',
-    transportistaMtc = ''
+    transportistaMtc = '',
+    remitenteTipoDoc = '6',
+    remitenteNumDoc = '',
+    remitenteRazonSocial = ''
 }) {
     const company = construirCompanyApisperu(configEmisor);
     const tipoDoc = tipoGre === 'TRANSPORTISTA' ? '31' : '09';
@@ -605,7 +671,7 @@ function construirPayloadApisperuGre({
         fecEntregaBienes: fecTrasladoIso,
         indTransbordo: Boolean(transbordoProgramado),
         pesoTotal: +Number(pesoCalculado || 0.1).toFixed(2),
-        undPesoTotal: String(unidadPeso || 'KGM').toUpperCase(),
+        undPesoTotal: normalizarUnidadSunat(unidadPeso, 'KGM'),
         numBultos: Math.max(1, parseInt(numeroBultos, 10) || 1),
         partida: {
             ubigeo: String(partidaUbigeo || '').trim(),
@@ -622,7 +688,8 @@ function construirPayloadApisperuGre({
     }
 
     const placaLimpia = String(vehPlaca || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    if (tipoTransporte === '02') {
+    const incluirVehiculoYChofer = tipoTransporte === '02' || tipoDoc === '31';
+    if (incluirVehiculoYChofer) {
         if (placaLimpia) {
             envio.vehiculo = { placa: placaLimpia };
             if (vehNumAutoriz) envio.vehiculo.nroAutorizacion = String(vehNumAutoriz).trim();
@@ -640,11 +707,19 @@ function construirPayloadApisperuGre({
                 licencia: String(condLicencia || '').trim().toUpperCase()
             }];
         }
-    } else {
+    }
+
+    if (tipoTransporte === '01' || tipoDoc === '31') {
+        const transpRucFinal = String(
+            transportistaRuc || (tipoDoc === '31' ? company.ruc : '')
+        ).trim();
+        const transpRazonFinal = String(
+            transportistaRazon || (tipoDoc === '31' ? company.razonSocial : '')
+        ).trim();
         envio.transportista = {
             tipoDoc: '6',
-            numDoc: String(transportistaRuc || configEmisor.ruc_emisor || '').trim(),
-            rznSocial: String(transportistaRazon || configEmisor.razon_social || '').trim()
+            numDoc: transpRucFinal,
+            rznSocial: transpRazonFinal
         };
         if (transportistaMtc) envio.transportista.nroMtc = String(transportistaMtc).trim();
         if (placaLimpia) envio.transportista.placa = placaLimpia;
@@ -658,7 +733,7 @@ function construirPayloadApisperuGre({
             direccion: String(destDireccion || llegadaDir || '-').trim()
         }
     };
-    if (destEmail && String(destEmail).includes('@')) {
+    if (esEmailValido(destEmail)) {
         destinatario.email = String(destEmail).trim();
     }
 
@@ -674,7 +749,7 @@ function construirPayloadApisperuGre({
         details: (Array.isArray(bienes) ? bienes : []).map((b, idx) => ({
             codigo: String(b.codigo_bien || b.sku || `BIEN-${idx + 1}`).trim().slice(0, 30),
             descripcion: String(b.descripcion || 'PRODUCTO').trim().slice(0, 250),
-            unidad: String(b.codigo_unidad_sunat || 'KGM').toUpperCase(),
+            unidad: normalizarUnidadSunat(b.codigo_unidad_sunat || b.unidad_medida, 'KGM'),
             cantidad: +Number(b.cantidad || 1).toFixed(4)
         }))
     };
@@ -685,9 +760,9 @@ function construirPayloadApisperuGre({
 
     if (tipoDoc === '31') {
         payload.remitente = {
-            tipoDoc: '6',
-            numDoc: company.ruc,
-            rznSocial: company.razonSocial
+            tipoDoc: String(remitenteTipoDoc || '6').trim() || '6',
+            numDoc: String(remitenteNumDoc || '').trim(),
+            rznSocial: String(remitenteRazonSocial || '').trim()
         };
     }
 
@@ -719,9 +794,20 @@ async function enviarGreApisperu({ payloadApisperu, configEmisor, cadenaQrLocal 
     if (!payloadApisperu.destinatario?.numDoc) {
         throw new Error('Falta el número de documento (RUC/DNI) del destinatario de la GRE.');
     }
+    if (payloadApisperu.tipoDoc === '31') {
+        if (!payloadApisperu.remitente?.numDoc || !payloadApisperu.remitente?.rznSocial) {
+            throw new Error('Para emitir una GRE Transportista (31) debes ingresar el documento y razón social del Remitente.');
+        }
+    }
     const esM1L = Array.isArray(payloadApisperu.envio?.indicadores)
         && payloadApisperu.envio.indicadores.includes('SUNAT_Envio_IndicadorTrasladoVehiculoM1L');
-    if (payloadApisperu.envio?.modTraslado === '02' && !esM1L) {
+    if (payloadApisperu.envio?.modTraslado === '01') {
+        const rucTransp = String(payloadApisperu.envio?.transportista?.numDoc || '').trim();
+        const rznTransp = String(payloadApisperu.envio?.transportista?.rznSocial || '').trim();
+        if (!/^(10|15|16|17|20)\d{9}$/.test(rucTransp) || !rznTransp) {
+            throw new Error('Para Transporte Público (01) debes ingresar el RUC (11 díg.) y Razón Social de la empresa transportista.');
+        }
+    } else if (payloadApisperu.envio?.modTraslado === '02' && !esM1L) {
         if (!payloadApisperu.envio?.vehiculo?.placa) {
             throw new Error('Falta la placa del vehículo para transporte privado en la GRE.');
         }

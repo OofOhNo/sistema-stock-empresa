@@ -22,6 +22,8 @@ router.get('/graficos', verificarToken, requierePermiso('facturacion', 'ver'), f
 // Boletas automáticas y cola de impresión en segundo plano
 router.get('/boletas-auto/config', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerConfigBoletasAuto);
 router.put('/boletas-auto/config', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.actualizarConfigBoletasAuto);
+router.post('/boletas-auto/reiniciar-tope', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.reiniciarTopeBoletasAuto);
+router.get('/boletas-auto/resumen', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.obtenerResumenBoletasAuto);
 router.post('/boletas-auto/generar-ahora', verificarToken, requierePermiso('facturacion', 'editar'), facturaController.generarBoletaAutoAhora);
 router.get('/boletas-auto/cola', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.listarColaImpresion);
 router.patch('/boletas-auto/cola/:id/estado', verificarToken, requierePermiso('facturacion', 'ver'), facturaController.actualizarEstadoColaImpresion);

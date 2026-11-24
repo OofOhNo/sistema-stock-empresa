@@ -17,7 +17,7 @@ import GrePdfModal from '../components/facturacion/GrePdfModal';
 import ModalGreSuelta from '../components/facturacion/ModalGreSuelta';
 import PanelBoletasAutomaticas from '../components/facturacion/PanelBoletasAutomaticas';
 import { escaparHtml } from '../utils/htmlPrint';
-import { esUnidadSoloEnteros, obtenerInfoUnidad } from '../utils/unidades';
+import { obtenerInfoUnidad } from '../utils/unidades';
 import { exportarTablaExcel, fechaHoraLocalTexto } from '../utils/excelExport';
 import BotonExportarExcel from '../components/BotonExportarExcel';
 import { descargarArchivoSunat } from '../utils/sunatDownload';
@@ -633,6 +633,24 @@ export default function Facturacion({ usuario }) {
     await ejecutarEmisionPedido();
   };
 
+  const crearItemManualBase = (prod = null) => {
+    const precio = parseFloat(prod?.precio_venta || 0);
+    const infoUnidad = prod ? obtenerInfoUnidad(prod) : { nombre: 'Kilogramo', simbolo: 'kg', esEntero: false };
+    const codigoUnidadSunat = prod?.codigo_unidad || (infoUnidad.esEntero ? 'NIU' : 'KGM');
+    return {
+      id_producto: prod?.id_producto ? String(prod.id_producto) : '',
+      sku: prod?.sku || '',
+      descripcion: prod?.nombre || '',
+      unidad_medida: prod?.unidad_medida_nombre || prod?.unidad_medida || infoUnidad.nombre,
+      codigo_unidad_sunat: codigoUnidadSunat,
+      tipo_afectacion_igv: prod?.tipo_afectacion_igv || '10',
+      cantidad: 1,
+      peso: '',
+      precio_unitario: precio,
+      subtotal: precio
+    };
+  };
+
   // Handlers para Facturación Manual
   const abrirModalManual = (modoInicial = 'REGISTRADO') => {
     const modo = modoInicial === 'DIRECTO' ? 'DIRECTO' : 'REGISTRADO';
@@ -653,9 +671,7 @@ export default function Facturacion({ usuario }) {
     setManualPesoTotal('');
     setManualDecreceStock(false);
     setManualEmitirGre(true);
-    setManualItems([
-      { id_producto: productos[0]?.id_producto || '', descripcion: productos[0]?.nombre || '', cantidad: 1, peso: '', precio_unitario: productos[0]?.precio_venta || 0, subtotal: productos[0]?.precio_venta || 0 }
-    ]);
+    setManualItems([crearItemManualBase(productos[0] || null)]);
     setGreFormManual(crearEstadoGreInicial(catalogosGre, ''));
     setModalManual(true);
   };
@@ -703,10 +719,9 @@ export default function Facturacion({ usuario }) {
   };
 
   const agregarFilaManual = () => {
-    const prod = productos[0];
     setManualItems([
       ...manualItems,
-      { id_producto: prod?.id_producto || '', descripcion: prod?.nombre || '', cantidad: 1, peso: '', precio_unitario: prod?.precio_venta || 0, subtotal: prod?.precio_venta || 0 }
+      crearItemManualBase(productos[0] || null)
     ]);
   };
 
@@ -714,17 +729,33 @@ export default function Facturacion({ usuario }) {
     const copia = [...manualItems];
     copia[idx] = { ...copia[idx], [campo]: valor };
     if (campo === 'id_producto') {
-      const p = productos.find(prod => String(prod.id_producto) === String(valor));
-      if (p) {
-        let cantAjustada = parseFloat(copia[idx].cantidad) || 1;
-        if (esUnidadSoloEnteros(p)) {
-          cantAjustada = Math.max(1, Math.round(cantAjustada));
-          copia[idx].cantidad = cantAjustada;
+      if (!valor) {
+        copia[idx].id_producto = '';
+        copia[idx].sku = '';
+        copia[idx].unidad_medida = copia[idx].unidad_medida || 'Kilogramo';
+        copia[idx].codigo_unidad_sunat = copia[idx].codigo_unidad_sunat || 'KGM';
+      } else {
+        const p = productos.find(prod => String(prod.id_producto) === String(valor));
+        if (p) {
+          let cantAjustada = parseFloat(copia[idx].cantidad) || 1;
+          const infoUnidad = obtenerInfoUnidad(p);
+          if (infoUnidad.esEntero) {
+            cantAjustada = Math.max(1, Math.round(cantAjustada));
+            copia[idx].cantidad = cantAjustada;
+          }
+          copia[idx].sku = p.sku || '';
+          copia[idx].descripcion = p.nombre;
+          copia[idx].unidad_medida = p.unidad_medida_nombre || p.unidad_medida || infoUnidad.nombre;
+          copia[idx].codigo_unidad_sunat = p.codigo_unidad || (infoUnidad.esEntero ? 'NIU' : 'KGM');
+          copia[idx].tipo_afectacion_igv = p.tipo_afectacion_igv || '10';
+          copia[idx].precio_unitario = parseFloat(p.precio_venta || 0);
+          copia[idx].subtotal = Number((cantAjustada * parseFloat(p.precio_venta || 0)).toFixed(2));
         }
-        copia[idx].descripcion = p.nombre;
-        copia[idx].precio_unitario = parseFloat(p.precio_venta || 0);
-        copia[idx].subtotal = Number((cantAjustada * parseFloat(p.precio_venta || 0)).toFixed(2));
       }
+    } else if (campo === 'codigo_unidad_sunat') {
+      const esUnidad = valor === 'NIU';
+      copia[idx].codigo_unidad_sunat = esUnidad ? 'NIU' : 'KGM';
+      copia[idx].unidad_medida = esUnidad ? 'Unidad' : 'Kilogramo';
     } else if (campo === 'cantidad' || campo === 'precio_unitario') {
       const c = parseFloat(copia[idx].cantidad) || 0;
       const pu = parseFloat(copia[idx].precio_unitario) || 0;
@@ -812,6 +843,22 @@ export default function Facturacion({ usuario }) {
         const errorTrib = validarTributarioAntesDeEmitir(manualTipoComp, cli?.numero_documento, totalManualCalculado);
         if (errorTrib) return toast.error(errorTrib);
       }
+    }
+
+    for (let i = 0; i < manualItems.length; i += 1) {
+      const it = manualItems[i];
+      if (!String(it.descripcion || '').trim() || String(it.descripcion).trim().length < 2) {
+        return toast.error(`Ingresa una descripción válida para el ítem #${i + 1}.`);
+      }
+      if (!(Number(it.cantidad) > 0)) {
+        return toast.error(`La cantidad del ítem #${i + 1} debe ser mayor a 0.`);
+      }
+      if (!(Number(it.precio_unitario) > 0)) {
+        return toast.error(`El precio unitario del ítem #${i + 1} debe ser mayor a S/ 0.00.`);
+      }
+    }
+    if (!(totalManualCalculado > 0)) {
+      return toast.error('El importe total del comprobante debe ser mayor a S/ 0.00.');
     }
 
     if (manualTipoComp === '01') {
@@ -1057,6 +1104,28 @@ export default function Facturacion({ usuario }) {
       case '07': return 'bg-purple-100 text-purple-700 border-purple-200';
       default: return 'bg-slate-100 text-slate-700 border-slate-200';
     }
+  };
+
+  const obtenerInfoModoEmision = (modo) => {
+    const mapaModos = {
+      APISPERU: {
+        etiqueta: 'APIsPERU · SUNAT Real',
+        esReal: true,
+        clase: 'bg-sky-50 text-sky-800 border-sky-200'
+      },
+      NUBEFACT_REAL: {
+        etiqueta: 'NubeFact · SUNAT Real',
+        esReal: true,
+        clase: 'bg-indigo-50 text-indigo-800 border-indigo-200'
+      },
+      DEMO_NUBEFACT: {
+        etiqueta: 'Demo Sandbox (No SUNAT)',
+        esReal: false,
+        clase: 'bg-amber-50 text-amber-800 border-amber-200'
+      }
+    };
+    const clave = String(modo || 'DEMO_NUBEFACT').trim().toUpperCase();
+    return mapaModos[clave] || mapaModos.DEMO_NUBEFACT;
   };
 
   // Clic secreto en el título o icono para desbloquear (5 clics en 3 segundos)
@@ -1446,9 +1515,10 @@ export default function Facturacion({ usuario }) {
   };
 
   const exportarGreExcel = () => {
+    const serieGre = configSunat?.serie_gre_remitente || 'T001';
     exportarTablaExcel({
       nombreArchivo: 'facturacion_guias_remision',
-      nombreHoja: 'Guías EG07',
+      nombreHoja: `Guías ${serieGre}`,
       filas: guiasRemision,
       columnas: [
         { header: 'GRE N°', value: (g) => `${g.serie}-${String(g.correlativo).padStart(8, '0')}` },
@@ -1483,7 +1553,9 @@ export default function Facturacion({ usuario }) {
         { header: 'Vencida', value: (c) => (c.esta_vencida ? `SÍ (${c.dias_vencido}d)` : 'No') },
         { header: 'Peso Total (kg)', value: (c) => Number(c.peso_total || 0) },
         { header: 'Importe Total (S/)', value: (c) => Number(c.monto_total || 0) },
-        { header: 'Estado SUNAT', key: 'estado_sunat' }
+        { header: 'Estado SUNAT', key: 'estado_sunat' },
+        { header: 'Canal / Modo Emisión', value: (c) => obtenerInfoModoEmision(c.modo_emision).etiqueta },
+        { header: 'Respuesta CDR SUNAT', value: (c) => c.mensaje_cdr || '' }
       ]
     });
   };
@@ -1790,7 +1862,7 @@ export default function Facturacion({ usuario }) {
           }`}
         >
           <Truck size={14} />
-          <span>Guías de Remisión EG07 ({guiasRemision.length})</span>
+          <span>Guías de Remisión {configSunat?.serie_gre_remitente || 'T001'} ({guiasRemision.length})</span>
         </button>
 
         {!modoEmergencia && (
@@ -2691,17 +2763,44 @@ export default function Facturacion({ usuario }) {
                         S/ {parseFloat(comp.monto_total || 0).toFixed(2)}
                       </td>
                       <td className="p-4 text-center">
-                        {estaAnulado ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200">
-                            <X size={13} />
-                            <span>Anulado</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                            <CheckCircle2 size={13} />
-                            <span>Aceptado</span>
-                          </span>
-                        )}
+                        {(() => {
+                          const infoModo = obtenerInfoModoEmision(comp.modo_emision);
+                          const esObservado = comp.estado_sunat === 'OBSERVADO';
+                          return (
+                            <div className="flex flex-col items-center gap-1">
+                              {estaAnulado ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200">
+                                  <X size={13} />
+                                  <span>Anulado</span>
+                                </span>
+                              ) : esObservado ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-300">
+                                  <AlertTriangle size={13} />
+                                  <span>Observado</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                                  <CheckCircle2 size={13} />
+                                  <span>Aceptado</span>
+                                </span>
+                              )}
+                              <span
+                                title={comp.mensaje_cdr || infoModo.etiqueta}
+                                className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold border ${infoModo.clase}`}
+                              >
+                                {infoModo.etiqueta}
+                              </span>
+                              {comp.mensaje_cdr && (
+                                <span
+                                  title={comp.mensaje_cdr}
+                                  className="text-[10px] text-slate-500 max-w-[210px] truncate"
+                                >
+                                  {comp.mensaje_cdr}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
@@ -3450,24 +3549,57 @@ export default function Facturacion({ usuario }) {
                   </button>
                 </div>
 
+                {productos.length === 0 && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900">
+                    No hay productos activos en tu catálogo ahora mismo. Puedes escribir libremente la descripción de cada producto o servicio abajo, o reactivar productos en el módulo <strong>Productos</strong>.
+                  </div>
+                )}
+
                 {manualItems.map((it, idx) => {
                   const prodManual = productos.find(pr => String(pr.id_producto) === String(it.id_producto));
-                  const infoUnidadManual = obtenerInfoUnidad(prodManual);
+                  const infoUnidadManual = obtenerInfoUnidad(prodManual || it);
+                  const usaDescripcionLibre = !it.id_producto || productos.length === 0;
                   return (
-                  <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
-                    <div className="sm:col-span-4">
-                      <label className="block text-[10px] text-slate-400 mb-0.5">Producto:</label>
-                      <select
-                        value={it.id_producto}
-                        onChange={(e) => actualizarFilaManual(idx, 'id_producto', e.target.value)}
-                        className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-medium bg-white"
-                      >
-                        {productos.map(pr => (
-                          <option key={pr.id_producto} value={pr.id_producto}>
-                            {pr.nombre} ({obtenerInfoUnidad(pr).simbolo})
-                          </option>
-                        ))}
-                      </select>
+                  <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2 items-start text-xs">
+                    <div className="sm:col-span-4 space-y-1.5">
+                      <label className="block text-[10px] text-slate-400 mb-0.5">
+                        {usaDescripcionLibre ? 'Producto / Descripción libre *:' : 'Producto:'}
+                      </label>
+                      {productos.length > 0 && (
+                        <select
+                          value={it.id_producto || ''}
+                          onChange={(e) => actualizarFilaManual(idx, 'id_producto', e.target.value)}
+                          className="w-full p-1.5 border border-slate-300 rounded-lg text-xs font-medium bg-white"
+                        >
+                          <option value="">-- Descripción libre (sin catálogo) --</option>
+                          {productos.map(pr => (
+                            <option key={pr.id_producto} value={pr.id_producto}>
+                              {pr.nombre} ({obtenerInfoUnidad(pr).simbolo})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {usaDescripcionLibre && (
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            required
+                            value={it.descripcion || ''}
+                            onChange={(e) => actualizarFilaManual(idx, 'descripcion', e.target.value)}
+                            placeholder="Ej: Costilla de cerdo fresca"
+                            className="w-full p-1.5 border border-indigo-300 bg-indigo-50/30 rounded-lg text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                          />
+                          <select
+                            value={it.codigo_unidad_sunat || 'KGM'}
+                            onChange={(e) => actualizarFilaManual(idx, 'codigo_unidad_sunat', e.target.value)}
+                            title="Unidad SUNAT del ítem"
+                            className="p-1.5 border border-slate-300 rounded-lg text-[11px] font-bold bg-white shrink-0"
+                          >
+                            <option value="KGM">kg</option>
+                            <option value="NIU">und</option>
+                          </select>
+                        </div>
+                      )}
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-[10px] text-slate-400 mb-0.5">Cant ({infoUnidadManual.simbolo}):</label>
@@ -3509,7 +3641,7 @@ export default function Facturacion({ usuario }) {
                         {parseFloat(it.subtotal || 0).toFixed(2)}
                       </span>
                     </div>
-                    <div className="sm:col-span-1 text-center">
+                    <div className="sm:col-span-1 text-center pt-4">
                       <button
                         type="button"
                         onClick={() => eliminarFilaManual(idx)}
@@ -3997,11 +4129,24 @@ export default function Facturacion({ usuario }) {
                 <div><strong>Fecha:</strong> {new Date(modalPdf.comprobante.fecha_emision).toLocaleDateString('es-PE')}</div>
                 <div><strong>Doc:</strong> {modalPdf.comprobante.cliente_documento || modalPdf.comprobante.documento_cliente || '-'}</div>
                 <div><strong>Forma Pago:</strong> {modalPdf.comprobante.forma_pago || 'CONTADO'}</div>
+                <div>
+                  <strong>Canal Emisión:</strong>{' '}
+                  {obtenerInfoModoEmision(modalPdf.comprobante.modo_emision).etiqueta}
+                </div>
+                <div>
+                  <strong>Estado SUNAT:</strong>{' '}
+                  {modalPdf.comprobante.estado_sunat || 'ACEPTADO'}
+                </div>
                 {modalPdf.comprobante.cliente_direccion && (
                   <div className="col-span-2"><strong>Dirección:</strong> {modalPdf.comprobante.cliente_direccion}</div>
                 )}
                 {modalPdf.comprobante.peso_total && (
                   <div><strong>Peso Total:</strong> {Number(modalPdf.comprobante.peso_total).toFixed(2)} kg</div>
+                )}
+                {modalPdf.comprobante.mensaje_cdr && (
+                  <div className="col-span-2 text-emerald-800">
+                    <strong>Respuesta SUNAT (CDR):</strong> {modalPdf.comprobante.mensaje_cdr}
+                  </div>
                 )}
               </div>
 

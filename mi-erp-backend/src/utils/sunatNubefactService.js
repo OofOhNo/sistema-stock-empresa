@@ -4,7 +4,8 @@ const {
     formatearFechaHoraPeru,
     formatearFechaSoloPeru,
     construirPayloadApisperuComprobante,
-    enviarComprobanteApisperu
+    enviarComprobanteApisperu,
+    normalizarUnidadSunat
 } = require('./apisperuService');
 
 // ============================================================================
@@ -252,7 +253,7 @@ function calcularDesgloseTributario(items, igvPorcentaje = 18.00) {
 
         return {
             ...item,
-            unidad_de_medida: (item.codigo_unidad_sunat || 'NIU').toUpperCase(),
+            unidad_de_medida: normalizarUnidadSunat(item.codigo_unidad_sunat || item.unidad_medida, 'NIU'),
             codigo: item.sku || `PROD-${item.id_producto}`,
             descripcion: item.descripcion,
             cantidad,

@@ -68,6 +68,98 @@ function calcularProximaEjecucionAleatoria(minMinutos = 5, maxMinutos = 10) {
     };
 }
 
+/**
+ * Calcula el avance actual hacia el tope máximo configurado sumando
+ * boletas automáticas válidas (no anuladas) emitidas desde `tope_acumulado_desde`.
+ */
+async function obtenerProgresoTopeActual(dbClient, cfg) {
+    const montoTope = cfg?.monto_tope_total != null ? Number(cfg.monto_tope_total) : null;
+    const desde = cfg?.tope_acumulado_desde || null;
+    const tieneTope = Number.isFinite(montoTope) && montoTope > 0;
+
+    if (!tieneTope) {
+        return {
+            tiene_tope: false,
+            monto_tope_total: null,
+            acumulado_actual: 0,
+            restante_tope: null,
+            cantidad_ciclo: 0,
+            porcentaje_avance: null,
+            tope_alcanzado: false,
+            tope_acumulado_desde: desde
+        };
+    }
+
+    const res = await dbClient.query(`
+        SELECT
+            COUNT(*)::int AS cantidad_ciclo,
+            COALESCE(SUM(monto_total), 0)::numeric(12,2) AS acumulado_actual
+        FROM comprobantes
+        WHERE origen_facturacion = 'AUTOMATICA'
+          AND tipo_comprobante = '03'
+          AND estado_sunat != 'ANULADO'
+          AND ($1::timestamptz IS NULL OR (fecha_emision AT TIME ZONE 'UTC') >= $1::timestamptz);
+    `, [desde]);
+
+    const acumulado = Number(res.rows[0]?.acumulado_actual || 0);
+    const cantidad = Number(res.rows[0]?.cantidad_ciclo || 0);
+    const restante = +Math.max(0, montoTope - acumulado).toFixed(2);
+    const porcentaje = +Math.min(100, Math.max(0, (acumulado / montoTope) * 100)).toFixed(1);
+
+    return {
+        tiene_tope: true,
+        monto_tope_total: +montoTope.toFixed(2),
+        acumulado_actual: +acumulado.toFixed(2),
+        restante_tope: restante,
+        cantidad_ciclo: cantidad,
+        porcentaje_avance: porcentaje,
+        tope_alcanzado: Boolean(cfg?.tope_alcanzado) || restante <= 0,
+        tope_acumulado_desde: desde
+    };
+}
+
+async function hayProductoCompatibleParaSaldo(dbClient, pesoMinItem, montoMaxPermitido) {
+    if (!(montoMaxPermitido > 0)) return false;
+    const { rows } = await dbClient.query(`
+        SELECT 1
+        FROM productos
+        WHERE activo = TRUE
+          AND precio_venta > 0
+          AND (precio_venta * $1::numeric) <= $2::numeric
+        LIMIT 1;
+    `, [pesoMinItem, +montoMaxPermitido.toFixed(2)]);
+    return rows.length > 0;
+}
+
+async function detenerPorTopeAlcanzado(
+    dbClient,
+    { idUsuario = null, progresoTope, motivo = 'Meta de facturación alcanzada.' }
+) {
+    await dbClient.query(`
+        UPDATE config_boletas_automaticas
+        SET activo = FALSE,
+            proxima_ejecucion = NULL,
+            tope_alcanzado = TRUE,
+            actualizado_en = CURRENT_TIMESTAMP
+        WHERE id_config = 1;
+    `);
+
+    await registrarAuditoria(
+        dbClient,
+        idUsuario,
+        'BOLETA_AUTO_TOPE_ALCANZADO',
+        'config_boletas_automaticas',
+        1,
+        null,
+        {
+            monto_tope_total: progresoTope?.monto_tope_total ?? null,
+            acumulado_actual: progresoTope?.acumulado_actual ?? 0,
+            cantidad_ciclo: progresoTope?.cantidad_ciclo ?? 0,
+            motivo
+        }
+    );
+}
+
 async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } = {}) {
     const client = await pool.connect();
     try {
@@ -82,11 +174,25 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         const cfg = cfgRes.rows[0];
         const minMin = Math.max(1, parseInt(cfg.intervalo_min_minutos ?? cfg.intervalo_minutos ?? 5, 10) || 5);
         const maxMin = Math.max(minMin, parseInt(cfg.intervalo_max_minutos ?? cfg.intervalo_minutos ?? 10, 10) || minMin);
+        const progresoTope = await obtenerProgresoTopeActual(client, cfg);
 
         if (!forzar) {
             if (!cfg.activo) {
                 await client.query('ROLLBACK');
                 return { generada: false, motivo: 'Generador desactivado.' };
+            }
+            if (progresoTope.tiene_tope && progresoTope.restante_tope <= 0) {
+                await detenerPorTopeAlcanzado(client, {
+                    idUsuario,
+                    progresoTope,
+                    motivo: `Meta alcanzada (S/ ${progresoTope.acumulado_actual.toFixed(2)} / S/ ${progresoTope.monto_tope_total.toFixed(2)}).`
+                });
+                await client.query('COMMIT');
+                return {
+                    generada: false,
+                    tope_alcanzado: true,
+                    motivo: `Meta alcanzada: se detuvo al llegar a S/ ${progresoTope.acumulado_actual.toFixed(2)} de S/ ${progresoTope.monto_tope_total.toFixed(2)}.`
+                };
             }
             if (cfg.solo_horario_laboral && !dentroDeHorarioLima(cfg.hora_inicio, cfg.hora_fin)) {
                 // Quedarse en espera durante la noche y limpiar proxima_ejecucion para iniciar limpio al día siguiente
@@ -117,8 +223,19 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         // Peso mínimo nunca menor a 0.50 kg por requerimiento estricto
         const pesoMinItem = Math.max(0.50, Number(cfg.peso_minimo_item || 0.50));
         const pesoMaxItem = Math.max(pesoMinItem, Number(cfg.peso_maximo_item || 8.00));
-        const montoMaxLimite = Math.min(695.00, Number(cfg.monto_maximo || 680.00));
-        const montoMinObjetivo = Math.max(20.00, Math.min(montoMaxLimite - 5, Number(cfg.monto_minimo || 35.00)));
+
+        const limitarPorTope = !forzar && progresoTope.tiene_tope;
+        const restanteTope = limitarPorTope ? progresoTope.restante_tope : null;
+        const limitePrecioMaximo = limitarPorTope ? Math.min(699.99, restanteTope) : 699.99;
+
+        const montoMaxConfig = Math.min(695.00, Number(cfg.monto_maximo || 680.00));
+        const montoMaxLimite = limitarPorTope
+            ? Math.max(0.01, Math.min(montoMaxConfig, restanteTope))
+            : montoMaxConfig;
+        const montoMinConfig = Math.max(20.00, Math.min(montoMaxConfig - 5, Number(cfg.monto_minimo || 35.00)));
+        const montoMinObjetivo = limitarPorTope
+            ? Math.min(montoMinConfig, montoMaxLimite)
+            : montoMinConfig;
 
         // Seleccionar cualquier producto activo con precio > 0 sin revisar inventario ni descontar stock
         const prodRes = await client.query(`
@@ -131,11 +248,26 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             WHERE p.activo = TRUE
               AND p.precio_venta > 0
               AND p.precio_venta * $1::numeric < 700
+              AND p.precio_venta * $1::numeric <= $2::numeric
             ORDER BY RANDOM()
-            LIMIT 12;
-        `, [pesoMinItem]);
+            LIMIT 25;
+        `, [pesoMinItem, +limitePrecioMaximo.toFixed(2)]);
 
         if (prodRes.rows.length === 0) {
+            if (limitarPorTope) {
+                await detenerPorTopeAlcanzado(client, {
+                    idUsuario,
+                    progresoTope,
+                    motivo: `Meta alcanzada (saldo restante S/ ${restanteTope.toFixed(2)} menor al mínimo posible por producto).`
+                });
+                await client.query('COMMIT');
+                return {
+                    generada: false,
+                    tope_alcanzado: true,
+                    motivo: `Meta alcanzada: acumulado S/ ${progresoTope.acumulado_actual.toFixed(2)} de S/ ${progresoTope.monto_tope_total.toFixed(2)}.`
+                };
+            }
+
             const siguiente = calcularProximaEjecucionAleatoria(minMin, maxMin);
             await client.query(
                 `UPDATE config_boletas_automaticas
@@ -150,11 +282,12 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             };
         }
 
-        // Elegir un objetivo realista entre montoMinObjetivo y montoMaxLimite (< 700)
-        const objetivoMonto = +(
-            montoMinObjetivo + Math.random() * (montoMaxLimite - montoMinObjetivo)
-        ).toFixed(2);
+        // Elegir un objetivo realista entre montoMinObjetivo y montoMaxLimite (< 700 y sin exceder tope)
+        const objetivoMonto = limitarPorTope && restanteTope <= montoMinConfig
+            ? +montoMaxLimite.toFixed(2)
+            : +(montoMinObjetivo + Math.random() * Math.max(0, montoMaxLimite - montoMinObjetivo)).toFixed(2);
 
+        const topeAcumuladoTicket = limitarPorTope ? Math.min(699.50, restanteTope) : 698;
         const maxProductos = Math.min(3, prodRes.rows.length);
         const itemsElegidos = [];
         let acumulado = 0;
@@ -162,13 +295,13 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         for (let idx = 0; idx < prodRes.rows.length && itemsElegidos.length < maxProductos; idx++) {
             const prod = prodRes.rows[idx];
             const precio = Number(prod.precio_venta);
-            const restanteDinero = Math.min(698 - acumulado, objetivoMonto - acumulado);
+            const restanteDinero = Math.min(topeAcumuladoTicket - acumulado, objetivoMonto - acumulado);
 
             if (restanteDinero < precio * pesoMinItem && itemsElegidos.length > 0) {
                 continue;
             }
 
-            const maxKgPosiblePorMonto = Math.floor(((698 - acumulado) / precio) / 0.25) * 0.25;
+            const maxKgPosiblePorMonto = Math.floor((((topeAcumuladoTicket - acumulado) / precio) + 1e-6) / 0.25) * 0.25;
             const maxKgPosible = Math.min(pesoMaxItem, maxKgPosiblePorMonto);
 
             if (maxKgPosible < pesoMinItem) continue;
@@ -187,6 +320,7 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
 
             const subtotal = +(kg * precio).toFixed(2);
             if (acumulado + subtotal >= 700) continue;
+            if (limitarPorTope && acumulado + subtotal > restanteTope + 0.001) continue;
 
             itemsElegidos.push({
                 id_producto: prod.id_producto,
@@ -205,7 +339,20 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             if (acumulado >= objetivoMonto * 0.85) break;
         }
 
-        if (itemsElegidos.length === 0 || acumulado >= 700) {
+        if (itemsElegidos.length === 0 || acumulado >= 700 || (limitarPorTope && acumulado > restanteTope + 0.001)) {
+            if (limitarPorTope && itemsElegidos.length === 0) {
+                await detenerPorTopeAlcanzado(client, {
+                    idUsuario,
+                    progresoTope,
+                    motivo: `Meta alcanzada (saldo restante S/ ${restanteTope.toFixed(2)} sin combinación válida sin exceder tope).`
+                });
+                await client.query('COMMIT');
+                return {
+                    generada: false,
+                    tope_alcanzado: true,
+                    motivo: `Meta alcanzada: acumulado S/ ${progresoTope.acumulado_actual.toFixed(2)} de S/ ${progresoTope.monto_tope_total.toFixed(2)}.`
+                };
+            }
             await client.query('ROLLBACK');
             return { generada: false, motivo: 'No se pudo armar una boleta válida menor a S/ 700 con porciones >= 0.50 kg.' };
         }
@@ -230,9 +377,9 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
         const configEmisor = await obtenerConfigEmisor(client);
         const { itemsCalculados, totales } = calcularDesgloseTributario(itemsElegidos, configEmisor.igv_porcentaje);
 
-        if (totales.monto_total >= 700) {
+        if (totales.monto_total >= 700 || (limitarPorTope && totales.monto_total > restanteTope + 0.001)) {
             await client.query('ROLLBACK');
-            return { generada: false, motivo: 'El monto calculado alcanzó S/ 700.' };
+            return { generada: false, motivo: 'El monto calculado superó el límite permitido.' };
         }
 
         const montoEnLetras = numeroALetrasSoles(totales.monto_total);
@@ -350,17 +497,6 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             RETURNING *;
         `, [comprobante.id_comprobante, forzar ? 'PRUEBA_MANUAL' : 'AUTOMATICA']);
 
-        const siguiente = calcularProximaEjecucionAleatoria(minMin, maxMin);
-        const nuevaProxima = cfg.activo ? siguiente.fecha.toISOString() : null;
-
-        await client.query(`
-            UPDATE config_boletas_automaticas
-            SET ultima_ejecucion = CURRENT_TIMESTAMP,
-                proxima_ejecucion = $1::timestamptz,
-                actualizado_en = CURRENT_TIMESTAMP
-            WHERE id_config = 1;
-        `, [nuevaProxima]);
-
         await registrarAuditoria(
             client,
             idUsuario,
@@ -368,12 +504,64 @@ async function generarUnaBoletaAutomatica({ forzar = false, idUsuario = null } =
             'comprobantes',
             comprobante.id_comprobante,
             null,
-            { serie, correlativo, monto_total: totales.monto_total, peso_total: pesoTotal, descuenta_stock: false }
+            { serie, correlativo, monto_total: totales.monto_total, peso_total: pesoTotal, descuenta_stock: decreceStockAuto }
         );
+
+        const nuevoAcumulado = +(progresoTope.acumulado_actual + Number(totales.monto_total)).toFixed(2);
+        const nuevaCantidadCiclo = progresoTope.cantidad_ciclo + 1;
+        const restanteDespues = progresoTope.tiene_tope
+            ? +Math.max(0, progresoTope.monto_tope_total - nuevoAcumulado).toFixed(2)
+            : null;
+
+        let topeAlcanzadoAhora = false;
+        if (progresoTope.tiene_tope) {
+            if (restanteDespues <= 0) {
+                topeAlcanzadoAhora = true;
+            } else {
+                const cabeOtra = await hayProductoCompatibleParaSaldo(
+                    client,
+                    pesoMinItem,
+                    Math.min(699.99, restanteDespues)
+                );
+                if (!cabeOtra) {
+                    topeAlcanzadoAhora = true;
+                }
+            }
+        }
+
+        if (topeAlcanzadoAhora) {
+            await client.query(`
+                UPDATE config_boletas_automaticas
+                SET ultima_ejecucion = CURRENT_TIMESTAMP
+                WHERE id_config = 1;
+            `);
+            await detenerPorTopeAlcanzado(client, {
+                idUsuario,
+                progresoTope: {
+                    ...progresoTope,
+                    acumulado_actual: nuevoAcumulado,
+                    cantidad_ciclo: nuevaCantidadCiclo,
+                    restante_tope: restanteDespues
+                },
+                motivo: `Meta alcanzada tras emitir ${serie}-${String(correlativo).padStart(8, '0')}.`
+            });
+        } else {
+            const siguiente = calcularProximaEjecucionAleatoria(minMin, maxMin);
+            const nuevaProxima = cfg.activo ? siguiente.fecha.toISOString() : null;
+
+            await client.query(`
+                UPDATE config_boletas_automaticas
+                SET ultima_ejecucion = CURRENT_TIMESTAMP,
+                    proxima_ejecucion = $1::timestamptz,
+                    actualizado_en = CURRENT_TIMESTAMP
+                WHERE id_config = 1;
+            `, [nuevaProxima]);
+        }
 
         await client.query('COMMIT');
         return {
             generada: true,
+            tope_alcanzado: topeAlcanzadoAhora,
             comprobante,
             cola: colaRes.rows[0]
         };
@@ -401,7 +589,7 @@ async function ejecutarCicloAutomatico() {
 
 /**
  * Programa un temporizador exacto al segundo para la próxima boleta automática,
- * respetando el rango aleatorio y el horario configurado.
+ * respetando el rango aleatorio, el tope acumulado y el horario configurado.
  */
 async function reprogramarBoletasAutomaticas() {
     if (timeoutHandle) {
@@ -413,6 +601,15 @@ async function reprogramarBoletasAutomaticas() {
         const resCfg = await pool.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1');
         const cfg = resCfg.rows[0];
         if (!cfg || !cfg.activo) return;
+
+        const progresoTope = await obtenerProgresoTopeActual(pool, cfg);
+        if (progresoTope.tiene_tope && progresoTope.restante_tope <= 0) {
+            await detenerPorTopeAlcanzado(pool, {
+                progresoTope,
+                motivo: 'Meta de facturación alcanzada al reprogramar temporizador.'
+            });
+            return;
+        }
 
         if (cfg.solo_horario_laboral && !dentroDeHorarioLima(cfg.hora_inicio, cfg.hora_fin)) {
             if (cfg.proxima_ejecucion) {
@@ -469,5 +666,6 @@ module.exports = {
     reprogramarBoletasAutomaticas,
     generarUnaBoletaAutomatica,
     calcularProximaEjecucionAleatoria,
-    dentroDeHorarioLima
+    dentroDeHorarioLima,
+    obtenerProgresoTopeActual
 };

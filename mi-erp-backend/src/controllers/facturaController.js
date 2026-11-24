@@ -20,7 +20,8 @@ const {
     generarUnaBoletaAutomatica,
     reprogramarBoletasAutomaticas,
     calcularProximaEjecucionAleatoria,
-    dentroDeHorarioLima
+    dentroDeHorarioLima,
+    obtenerProgresoTopeActual
 } = require('../utils/boletaAutoService');
 const {
     obtenerCatalogosGre,
@@ -2450,13 +2451,16 @@ const facturaController = {
                 LEFT JOIN ubicaciones u ON c.id_ubicacion = u.id_ubicacion
                 WHERE c.id_config = 1;
             `);
-            res.json({ exito: true, config: resCfg.rows[0] || null });
+            const cfg = resCfg.rows[0] || null;
+            const progresoTope = cfg ? await obtenerProgresoTopeActual(pool, cfg) : null;
+            res.json({ exito: true, config: cfg, progreso_tope: progresoTope });
         } catch (error) {
             res.status(500).json({ exito: false, mensaje: 'Error al leer configuración de boletas automáticas.' });
         }
     },
 
     actualizarConfigBoletasAuto: async (req, res) => {
+        const client = await pool.connect();
         try {
             const {
                 activo,
@@ -2472,11 +2476,32 @@ const facturaController = {
                 solo_horario_laboral,
                 id_ubicacion,
                 auto_imprimir_navegador,
-                decrece_stock
+                decrece_stock,
+                monto_tope_total,
+                reiniciar_tope
             } = req.body;
 
-            const resActual = await pool.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1');
+            await client.query('BEGIN');
+
+            const resActual = await client.query('SELECT * FROM config_boletas_automaticas WHERE id_config = 1 FOR UPDATE');
             const actual = resActual.rows[0] || {};
+
+            let finalMontoTope = actual.monto_tope_total != null ? Number(actual.monto_tope_total) : null;
+            if (monto_tope_total !== undefined) {
+                if (monto_tope_total === null || String(monto_tope_total).trim() === '') {
+                    finalMontoTope = null;
+                } else {
+                    const parsedTope = Number(monto_tope_total);
+                    if (!Number.isFinite(parsedTope) || parsedTope < 1 || parsedTope > 999999999.99) {
+                        await client.query('ROLLBACK');
+                        return res.status(400).json({
+                            exito: false,
+                            mensaje: 'El monto máximo acumulado debe ser al menos S/ 1.00 (o déjalo vacío si no deseas límite).'
+                        });
+                    }
+                    finalMontoTope = +parsedTope.toFixed(2);
+                }
+            }
 
             const minRaw = intervalo_min_minutos ?? intervalo_minutos ?? actual.intervalo_min_minutos ?? actual.intervalo_minutos ?? 5;
             const maxRaw = intervalo_max_minutos ?? intervalo_minutos ?? actual.intervalo_max_minutos ?? actual.intervalo_minutos ?? 10;
@@ -2488,17 +2513,57 @@ const facturaController = {
             const montoMax = Math.min(699.00, Math.max(25.00, Number(monto_maximo ?? actual.monto_maximo ?? 680.00)));
             const montoMin = Math.max(15.00, Math.min(montoMax - 5, Number(monto_minimo ?? actual.monto_minimo ?? 35.00)));
 
-            const finalActivo = activo !== undefined ? Boolean(activo) : Boolean(actual.activo);
+            let finalActivo = activo !== undefined ? Boolean(activo) : Boolean(actual.activo);
             const finalSoloHorario = solo_horario_laboral !== undefined ? Boolean(solo_horario_laboral) : Boolean(actual.solo_horario_laboral);
             const finalHoraInicio = hora_inicio || actual.hora_inicio || '08:00';
             const finalHoraFin = hora_fin || actual.hora_fin || '20:00';
+
+            let reiniciarDesdeAhora = false;
+            let finalTopeAlcanzado = false;
+            let mensajeExtra = '';
+
+            if (finalMontoTope && finalMontoTope > 0) {
+                const teniaTopePrevio = actual.monto_tope_total != null && Number(actual.monto_tope_total) > 0;
+                const sinMarcaInicio = !actual.tope_acumulado_desde;
+                const pidioReinicio = Boolean(reiniciar_tope);
+
+                if (!teniaTopePrevio || sinMarcaInicio || pidioReinicio) {
+                    reiniciarDesdeAhora = true;
+                    finalTopeAlcanzado = false;
+                } else {
+                    const progresoPrevio = await obtenerProgresoTopeActual(client, {
+                        ...actual,
+                        monto_tope_total: finalMontoTope
+                    });
+                    const acumuladoPrev = Number(progresoPrevio.acumulado_actual || 0);
+
+                    if (Boolean(actual.tope_alcanzado)) {
+                        if (finalActivo && finalMontoTope <= acumuladoPrev) {
+                            // Ya había completado el lote anterior y volvió a pulsar Play: iniciar ciclo nuevo desde S/ 0.00
+                            reiniciarDesdeAhora = true;
+                            finalTopeAlcanzado = false;
+                            mensajeExtra = ' El contador de la meta comenzó un nuevo ciclo desde S/ 0.00.';
+                        } else if (finalMontoTope > acumuladoPrev) {
+                            // Subió la meta por encima de lo ya emitido: continuar acumulando
+                            finalTopeAlcanzado = false;
+                        } else {
+                            finalTopeAlcanzado = true;
+                            finalActivo = false;
+                        }
+                    } else if (acumuladoPrev >= finalMontoTope) {
+                        finalTopeAlcanzado = true;
+                        finalActivo = false;
+                        mensajeExtra = ' El acumulado actual ya alcanzó este tope, por lo que quedó detenido.';
+                    }
+                }
+            }
 
             let proximaEjecucion = null;
             if (finalActivo && (!finalSoloHorario || dentroDeHorarioLima(finalHoraInicio, finalHoraFin))) {
                 proximaEjecucion = calcularProximaEjecucionAleatoria(minMin, maxMin).fecha.toISOString();
             }
 
-            const { rows } = await pool.query(`
+            const { rows } = await client.query(`
                 UPDATE config_boletas_automaticas
                 SET activo = $1::boolean,
                     intervalo_minutos = $2::int,
@@ -2515,6 +2580,13 @@ const facturaController = {
                     auto_imprimir_navegador = COALESCE($12::boolean, auto_imprimir_navegador),
                     decrece_stock = COALESCE($13::boolean, decrece_stock),
                     proxima_ejecucion = $14::timestamptz,
+                    monto_tope_total = $15::numeric,
+                    tope_acumulado_desde = CASE
+                        WHEN $15::numeric IS NULL THEN NULL
+                        WHEN $16::boolean THEN CURRENT_TIMESTAMP
+                        ELSE COALESCE(tope_acumulado_desde, CURRENT_TIMESTAMP)
+                    END,
+                    tope_alcanzado = $17::boolean,
                     actualizado_en = CURRENT_TIMESTAMP
                 WHERE id_config = 1
                 RETURNING *;
@@ -2532,14 +2604,169 @@ const facturaController = {
                 id_ubicacion ? parseInt(id_ubicacion, 10) : null,
                 auto_imprimir_navegador !== undefined ? Boolean(auto_imprimir_navegador) : null,
                 decrece_stock !== undefined ? parsearDecreceStock(decrece_stock) : null,
-                proximaEjecucion
+                proximaEjecucion,
+                finalMontoTope,
+                reiniciarDesdeAhora,
+                finalTopeAlcanzado
             ]);
 
+            await client.query('COMMIT');
             await reprogramarBoletasAutomaticas();
 
-            res.json({ exito: true, mensaje: 'Configuración de boletas automáticas actualizada.', config: rows[0] });
+            const progresoTope = await obtenerProgresoTopeActual(pool, rows[0]);
+            res.json({
+                exito: true,
+                mensaje: `Configuración de boletas automáticas actualizada.${mensajeExtra}`,
+                config: rows[0],
+                progreso_tope: progresoTope
+            });
         } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
             res.status(500).json({ exito: false, mensaje: error.message || 'Error al actualizar configuración.' });
+        } finally {
+            client.release();
+        }
+    },
+
+    reiniciarTopeBoletasAuto: async (req, res) => {
+        try {
+            const { rows } = await pool.query(`
+                UPDATE config_boletas_automaticas
+                SET tope_acumulado_desde = CURRENT_TIMESTAMP,
+                    tope_alcanzado = FALSE,
+                    actualizado_en = CURRENT_TIMESTAMP
+                WHERE id_config = 1
+                RETURNING *;
+            `);
+            if (rows.length === 0) {
+                return res.status(404).json({ exito: false, mensaje: 'Configuración de boletas no encontrada.' });
+            }
+
+            await registrarAuditoria(
+                pool,
+                req.usuario?.id_usuario || null,
+                'BOLETA_AUTO_REINICIAR_TOPE',
+                'config_boletas_automaticas',
+                1,
+                null,
+                { monto_tope_total: rows[0].monto_tope_total }
+            );
+
+            await reprogramarBoletasAutomaticas();
+            const progresoTope = await obtenerProgresoTopeActual(pool, rows[0]);
+            res.json({
+                exito: true,
+                mensaje: 'Contador del tope máximo reiniciado a S/ 0.00.',
+                config: rows[0],
+                progreso_tope: progresoTope
+            });
+        } catch (error) {
+            res.status(500).json({ exito: false, mensaje: 'No se pudo reiniciar el contador del tope.' });
+        }
+    },
+
+    obtenerResumenBoletasAuto: async (req, res) => {
+        try {
+            const { fecha_inicio, fecha_fin, todo } = req.query;
+            const incluirTodo = todo === '1' || todo === 'true';
+
+            const validarYmd = (valor) => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(String(valor || ''))) return false;
+                const [y, m, d] = String(valor).split('-').map(Number);
+                const dt = new Date(Date.UTC(y, m - 1, d));
+                return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+            };
+
+            let inicioParam = null;
+            let finParam = null;
+
+            if (!incluirTodo) {
+                if (fecha_inicio && !validarYmd(fecha_inicio)) {
+                    return res.status(400).json({ exito: false, mensaje: 'Fecha de inicio inválida (usa formato YYYY-MM-DD).' });
+                }
+                if (fecha_fin && !validarYmd(fecha_fin)) {
+                    return res.status(400).json({ exito: false, mensaje: 'Fecha de fin inválida (usa formato YYYY-MM-DD).' });
+                }
+
+                const hoyLimaRes = await pool.query(
+                    "SELECT to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS hoy"
+                );
+                const hoyLima = hoyLimaRes.rows[0].hoy;
+                inicioParam = fecha_inicio || hoyLima;
+                finParam = fecha_fin || fecha_inicio || hoyLima;
+
+                if (inicioParam > finParam) {
+                    return res.status(400).json({
+                        exito: false,
+                        mensaje: 'La fecha de inicio no puede ser mayor que la fecha fin.'
+                    });
+                }
+            }
+
+            const [resTotal, resPorDia] = await Promise.all([
+                pool.query(`
+                    SELECT
+                        COUNT(*) FILTER (WHERE c.estado_sunat != 'ANULADO')::int AS cantidad_boletas,
+                        COALESCE(SUM(c.monto_total) FILTER (WHERE c.estado_sunat != 'ANULADO'), 0)::numeric(12,2) AS total_facturado,
+                        COALESCE(SUM(c.monto_igv) FILTER (WHERE c.estado_sunat != 'ANULADO'), 0)::numeric(12,2) AS total_igv,
+                        COALESCE(AVG(c.monto_total) FILTER (WHERE c.estado_sunat != 'ANULADO'), 0)::numeric(12,2) AS promedio_boleta,
+                        COUNT(*) FILTER (WHERE c.estado_sunat = 'ANULADO')::int AS cantidad_anuladas,
+                        COALESCE(SUM(c.monto_total) FILTER (WHERE c.estado_sunat = 'ANULADO'), 0)::numeric(12,2) AS total_anulado,
+                        to_char(MIN((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima'), 'DD/MM/YYYY HH24:MI') AS primera_emision_lima,
+                        to_char(MAX((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima'), 'DD/MM/YYYY HH24:MI') AS ultima_emision_lima
+                    FROM comprobantes c
+                    WHERE c.origen_facturacion = 'AUTOMATICA'
+                      AND c.tipo_comprobante = '03'
+                      AND ($1::date IS NULL OR ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date >= $1::date)
+                      AND ($2::date IS NULL OR ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date <= $2::date);
+                `, [inicioParam, finParam]),
+                pool.query(`
+                    SELECT
+                        to_char(((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date, 'YYYY-MM-DD') AS fecha,
+                        to_char(((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date, 'DD/MM/YYYY') AS fecha_formato,
+                        COUNT(*) FILTER (WHERE c.estado_sunat != 'ANULADO')::int AS cantidad_boletas,
+                        COALESCE(SUM(c.monto_total) FILTER (WHERE c.estado_sunat != 'ANULADO'), 0)::numeric(12,2) AS total_facturado,
+                        COUNT(*) FILTER (WHERE c.estado_sunat = 'ANULADO')::int AS cantidad_anuladas
+                    FROM comprobantes c
+                    WHERE c.origen_facturacion = 'AUTOMATICA'
+                      AND c.tipo_comprobante = '03'
+                      AND ($1::date IS NULL OR ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date >= $1::date)
+                      AND ($2::date IS NULL OR ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date <= $2::date)
+                    GROUP BY ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date
+                    ORDER BY ((c.fecha_emision AT TIME ZONE 'UTC') AT TIME ZONE 'America/Lima')::date DESC
+                    LIMIT 120;
+                `, [inicioParam, finParam])
+            ]);
+
+            const fila = resTotal.rows[0] || {};
+            res.json({
+                exito: true,
+                periodo: {
+                    todo: incluirTodo,
+                    fecha_inicio: inicioParam,
+                    fecha_fin: finParam
+                },
+                resumen: {
+                    cantidad_boletas: Number(fila.cantidad_boletas || 0),
+                    total_facturado: Number(fila.total_facturado || 0),
+                    total_igv: Number(fila.total_igv || 0),
+                    promedio_boleta: Number(fila.promedio_boleta || 0),
+                    cantidad_anuladas: Number(fila.cantidad_anuladas || 0),
+                    total_anulado: Number(fila.total_anulado || 0),
+                    primera_emision_lima: fila.primera_emision_lima || null,
+                    ultima_emision_lima: fila.ultima_emision_lima || null
+                },
+                por_dia: resPorDia.rows.map((r) => ({
+                    fecha: r.fecha,
+                    fecha_formato: r.fecha_formato,
+                    cantidad_boletas: Number(r.cantidad_boletas || 0),
+                    total_facturado: Number(r.total_facturado || 0),
+                    cantidad_anuladas: Number(r.cantidad_anuladas || 0)
+                }))
+            });
+        } catch (error) {
+            console.error('Error al obtener resumen de boletas automáticas:', error);
+            res.status(500).json({ exito: false, mensaje: 'No se pudo consultar el resumen de boletas automáticas.' });
         }
     },
 
@@ -2555,7 +2782,8 @@ const facturaController = {
             await reprogramarBoletasAutomaticas();
             res.status(201).json({
                 exito: true,
-                mensaje: `Boleta automática ${resultado.comprobante.serie}-${String(resultado.comprobante.correlativo).padStart(8, '0')} generada (S/ ${Number(resultado.comprobante.monto_total).toFixed(2)}) y enviada a la cola de impresión.`,
+                tope_alcanzado: Boolean(resultado.tope_alcanzado),
+                mensaje: `Boleta automática ${resultado.comprobante.serie}-${String(resultado.comprobante.correlativo).padStart(8, '0')} generada (S/ ${Number(resultado.comprobante.monto_total).toFixed(2)}) y enviada a la cola de impresión.${resultado.tope_alcanzado ? ' Además se alcanzó la meta máxima y el automático quedó detenido.' : ''}`,
                 comprobante: resultado.comprobante,
                 cola: resultado.cola
             });
